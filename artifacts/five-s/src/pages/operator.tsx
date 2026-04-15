@@ -1,8 +1,8 @@
-import { useGetCurrentShift, useGetOperatorStatus, useCreateSubmission, AreaStatus, getGetOperatorStatusQueryKey } from "@workspace/api-client-react";
+import { useGetCurrentShift, useGetOperatorStatus, useCreateSubmission, useReuploadSubmission, AreaStatus, getGetOperatorStatusQueryKey } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useState, useRef } from "react";
-import { Camera, Upload, CheckCircle2, AlertTriangle, ArrowRight, Info } from "lucide-react";
+import { Camera, Upload, CheckCircle2, AlertTriangle, ArrowRight, Info, RefreshCw } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -53,11 +53,14 @@ export default function OperatorHome() {
 
 function AreaCard({ status }: { status: AreaStatus }) {
   const [isSubmitOpen, setIsSubmitOpen] = useState(false);
+  const [isReuploadMode, setIsReuploadMode] = useState(false);
   const [photo, setPhoto] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const reuploadInputRef = useRef<HTMLInputElement>(null);
   
   const createSubmission = useCreateSubmission();
+  const reuploadSubmission = useReuploadSubmission();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -66,7 +69,32 @@ function AreaCard({ status }: { status: AreaStatus }) {
     if (file) {
       setPhoto(file);
       setPreviewUrl(URL.createObjectURL(file));
+      setIsReuploadMode(false);
       setIsSubmitOpen(true);
+    }
+  };
+
+  const handleReuploadFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setPhoto(file);
+      setPreviewUrl(URL.createObjectURL(file));
+      setIsReuploadMode(true);
+      setIsSubmitOpen(true);
+    }
+  };
+
+  const openReuploadCamera = () => {
+    if (reuploadInputRef.current) {
+      reuploadInputRef.current.setAttribute("capture", "environment");
+      reuploadInputRef.current.click();
+    }
+  };
+
+  const openReuploadGallery = () => {
+    if (reuploadInputRef.current) {
+      reuploadInputRef.current.removeAttribute("capture");
+      reuploadInputRef.current.click();
     }
   };
 
@@ -87,31 +115,59 @@ function AreaCard({ status }: { status: AreaStatus }) {
   const handleSubmit = () => {
     if (!photo) return;
 
-    createSubmission.mutate({
-      data: {
-        areaId: status.areaId,
-        photo: photo,
-      } as any, // TypeScript expects Blob but File extends Blob
-    }, {
-      onSuccess: () => {
-        toast({
-          title: "Submission successful",
-          description: "Area photo submitted for scoring.",
-        });
-        queryClient.invalidateQueries({ queryKey: getGetOperatorStatusQueryKey() });
-        setIsSubmitOpen(false);
-        setPhoto(null);
-        setPreviewUrl(null);
-      },
-      onError: (err) => {
-        toast({
-          variant: "destructive",
-          title: "Submission failed",
-          description: "There was an error uploading the photo. Please try again.",
-        });
-      }
-    });
+    if (isReuploadMode && status.submission) {
+      reuploadSubmission.mutate({
+        id: status.submission.id,
+        data: { photo: photo } as any,
+      }, {
+        onSuccess: () => {
+          toast({
+            title: "Photo re-uploaded",
+            description: "New photo submitted and re-scored.",
+          });
+          queryClient.invalidateQueries({ queryKey: getGetOperatorStatusQueryKey() });
+          setIsSubmitOpen(false);
+          setIsReuploadMode(false);
+          setPhoto(null);
+          setPreviewUrl(null);
+        },
+        onError: () => {
+          toast({
+            variant: "destructive",
+            title: "Re-upload failed",
+            description: "There was an error re-uploading the photo. Please try again.",
+          });
+        }
+      });
+    } else {
+      createSubmission.mutate({
+        data: {
+          areaId: status.areaId,
+          photo: photo,
+        } as any,
+      }, {
+        onSuccess: () => {
+          toast({
+            title: "Submission successful",
+            description: "Area photo submitted for scoring.",
+          });
+          queryClient.invalidateQueries({ queryKey: getGetOperatorStatusQueryKey() });
+          setIsSubmitOpen(false);
+          setPhoto(null);
+          setPreviewUrl(null);
+        },
+        onError: () => {
+          toast({
+            variant: "destructive",
+            title: "Submission failed",
+            description: "There was an error uploading the photo. Please try again.",
+          });
+        }
+      });
+    }
   };
+
+  const isMutating = createSubmission.isPending || reuploadSubmission.isPending;
 
   if (status.submitted && status.submission) {
     const scoreColor = status.submission.scoreTotal >= 20 ? "text-green-600 bg-green-50 border-green-200" 
@@ -119,6 +175,7 @@ function AreaCard({ status }: { status: AreaStatus }) {
       : "text-red-600 bg-red-50 border-red-200";
 
     return (
+      <>
       <Card className="border-border shadow-sm overflow-hidden flex flex-col h-full">
         <div className="h-48 overflow-hidden bg-muted relative">
           <img 
@@ -158,8 +215,66 @@ function AreaCard({ status }: { status: AreaStatus }) {
               )}
             </ul>
           </div>
+          <div className="p-4 border-t border-border">
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              ref={reuploadInputRef}
+              onChange={handleReuploadFileSelect}
+            />
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1 font-semibold"
+                onClick={openReuploadCamera}
+              >
+                <Camera className="w-4 h-4 mr-2" />
+                Retake Photo
+              </Button>
+              <Button
+                variant="outline"
+                className="flex-1 font-semibold"
+                onClick={openReuploadGallery}
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Re-upload
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
+
+      <Dialog open={isSubmitOpen && isReuploadMode} onOpenChange={setIsSubmitOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Re-upload Photo for {status.areaName}</DialogTitle>
+            <DialogDescription>
+              This will replace the current photo and re-score the submission.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 my-4">
+            {previewUrl && (
+              <div className="rounded-lg overflow-hidden border border-border bg-black/5">
+                <img src={previewUrl} alt="Preview" className="w-full h-64 object-contain" />
+              </div>
+            )}
+          </div>
+          <div className="flex gap-3">
+            <Button variant="outline" className="flex-1" onClick={() => { setIsSubmitOpen(false); setIsReuploadMode(false); }}>
+              Cancel
+            </Button>
+            <Button
+              className="flex-1"
+              onClick={handleSubmit}
+              disabled={isMutating}
+            >
+              {isMutating ? "Scoring..." : "Re-submit for Score"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      </>
     );
   }
 
@@ -227,9 +342,9 @@ function AreaCard({ status }: { status: AreaStatus }) {
             <Button 
               className="flex-1" 
               onClick={handleSubmit} 
-              disabled={createSubmission.isPending}
+              disabled={isMutating}
             >
-              {createSubmission.isPending ? "Scoring..." : "Submit for Score"}
+              {isMutating ? "Scoring..." : "Submit for Score"}
             </Button>
           </div>
         </DialogContent>

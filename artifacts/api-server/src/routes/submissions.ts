@@ -160,6 +160,95 @@ router.post(
   }
 );
 
+router.put(
+  "/submissions/:id/reupload",
+  authMiddleware,
+  upload.single("photo"),
+  async (req, res): Promise<void> => {
+    const { userId } = (req as any).user;
+    const id = parseInt(req.params.id, 10);
+
+    if (isNaN(id)) {
+      res.status(400).json({ error: "Invalid submission id" });
+      return;
+    }
+
+    const [existing] = await db
+      .select()
+      .from(submissionsTable)
+      .where(eq(submissionsTable.id, id));
+
+    if (!existing) {
+      res.status(404).json({ error: "Submission not found" });
+      return;
+    }
+
+    if (existing.userId !== userId) {
+      res.status(403).json({ error: "You can only re-upload your own submissions" });
+      return;
+    }
+
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: "Photo is required" });
+      return;
+    }
+
+    const imageUrl = `/uploads/${file.filename}`;
+
+    const [area] = await db
+      .select()
+      .from(areasTable)
+      .where(eq(areasTable.id, existing.areaId));
+
+    const { scoreJson, scoreTotal, suggestions } = generateScore();
+
+    let aiResult;
+    try {
+      aiResult = await scoreSubmission(imageUrl, existing.areaId, area?.name ?? "Unknown");
+    } catch (err) {
+      logger.error({ err }, "AI scoring failed on reupload, using mock scores");
+    }
+
+    const finalScoreTotal = aiResult && aiResult.aiTotalScore > 0 ? aiResult.aiTotalScore : scoreTotal;
+    const finalScoreJson = aiResult && aiResult.aiTotalScore > 0 ? aiResult.aiPillarsJson : scoreJson;
+    const aiSuggestions = aiResult?.aiRecommendationsJson?.length
+      ? aiResult.aiRecommendationsJson.map((r) => r.action)
+      : [];
+    const finalSuggestions = aiSuggestions.length > 0 ? aiSuggestions : suggestions;
+
+    const [updated] = await db
+      .update(submissionsTable)
+      .set({
+        imageUrl,
+        scoreTotal: finalScoreTotal,
+        scoreJson: finalScoreJson,
+        suggestionsJson: finalSuggestions,
+        embeddingHash: aiResult?.embeddingHash ?? null,
+        similarityToIdeal: aiResult?.similarityToIdeal ?? null,
+        aiTotalScore: aiResult?.aiTotalScore ?? null,
+        aiPillarsJson: aiResult?.aiPillarsJson ?? null,
+        aiRecommendationsJson: aiResult?.aiRecommendationsJson ?? null,
+        aiIssuesJson: aiResult?.aiIssuesJson ?? null,
+        modelVersion: aiResult?.modelVersion ?? null,
+        scoringMode: aiResult?.scoringMode ?? null,
+      })
+      .where(eq(submissionsTable.id, id))
+      .returning();
+
+    const [user] = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.id, userId));
+
+    res.json({
+      ...updated,
+      areaName: area?.name ?? "",
+      userEmail: user?.email ?? "",
+    });
+  }
+);
+
 router.get("/submissions/:id", authMiddleware, async (req, res): Promise<void> => {
   const params = GetSubmissionParams.safeParse(req.params);
   if (!params.success) {

@@ -35,6 +35,7 @@ import type {
   LoginBody,
   LoginResponse,
   ModelStatus,
+  ReuploadSubmissionBody,
   ScoreSummary,
   Submission,
   TrainResult,
@@ -1043,6 +1044,95 @@ export function useGetSubmission<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Re-upload photo for an existing submission
+ */
+export const getReuploadSubmissionUrl = (id: number) => {
+  return `/api/submissions/${id}/reupload`;
+};
+
+export const reuploadSubmission = async (
+  id: number,
+  reuploadSubmissionBody: ReuploadSubmissionBody,
+  options?: RequestInit,
+): Promise<Submission> => {
+  const formData = new FormData();
+  formData.append(`photo`, reuploadSubmissionBody.photo);
+
+  return customFetch<Submission>(getReuploadSubmissionUrl(id), {
+    ...options,
+    method: "PUT",
+    body: formData,
+  });
+};
+
+export const getReuploadSubmissionMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reuploadSubmission>>,
+    TError,
+    { id: number; data: BodyType<ReuploadSubmissionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof reuploadSubmission>>,
+  TError,
+  { id: number; data: BodyType<ReuploadSubmissionBody> },
+  TContext
+> => {
+  const mutationKey = ["reuploadSubmission"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof reuploadSubmission>>,
+    { id: number; data: BodyType<ReuploadSubmissionBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return reuploadSubmission(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReuploadSubmissionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof reuploadSubmission>>
+>;
+export type ReuploadSubmissionMutationBody = BodyType<ReuploadSubmissionBody>;
+export type ReuploadSubmissionMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Re-upload photo for an existing submission
+ */
+export const useReuploadSubmission = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reuploadSubmission>>,
+    TError,
+    { id: number; data: BodyType<ReuploadSubmissionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof reuploadSubmission>>,
+  TError,
+  { id: number; data: BodyType<ReuploadSubmissionBody> },
+  TContext
+> => {
+  return useMutation(getReuploadSubmissionMutationOptions(options));
+};
 
 /**
  * @summary Get shift compliance percentage

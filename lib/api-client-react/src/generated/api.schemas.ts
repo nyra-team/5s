@@ -238,6 +238,10 @@ export type CreateSubmissionBody = {
   photo: Blob;
 };
 
+export type ReuploadSubmissionBody = {
+  photo: Blob;
+};
+
 export type GetDashboardComplianceParams = {
   date?: string;
   shift?: GetDashboardComplianceShift;

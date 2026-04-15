@@ -32,6 +32,7 @@ export * from "./listSubmissionsShift";
 export * from "./loginBody";
 export * from "./loginResponse";
 export * from "./modelStatus";
+export * from "./reuploadSubmissionBody";
 export * from "./scoreSummary";
 export * from "./submission";
 export * from "./submissionAiPillarsJson";

@@ -239,6 +239,71 @@ export const GetSubmissionResponse = zod.object({
 });
 
 /**
+ * @summary Re-upload photo for an existing submission
+ */
+export const ReuploadSubmissionParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ReuploadSubmissionBody = zod.object({
+  photo: zod.instanceof(File),
+});
+
+export const ReuploadSubmissionResponse = zod.object({
+  id: zod.number(),
+  areaId: zod.number(),
+  areaName: zod.string(),
+  userId: zod.number(),
+  userEmail: zod.string().optional(),
+  shift: zod.enum(["A", "B", "C"]),
+  scoreTotal: zod.number(),
+  scoreJson: zod.object({
+    sort: zod.number(),
+    set: zod.number(),
+    shine: zod.number(),
+    standardize: zod.number(),
+    sustain: zod.number(),
+  }),
+  suggestionsJson: zod.array(zod.string()),
+  imageUrl: zod.string(),
+  similarityToIdeal: zod.number().nullish(),
+  aiTotalScore: zod.number().nullish(),
+  aiPillarsJson: zod
+    .object({
+      sort: zod.number().optional(),
+      set: zod.number().optional(),
+      shine: zod.number().optional(),
+      standardize: zod.number().optional(),
+      sustain: zod.number().optional(),
+    })
+    .nullish(),
+  aiRecommendationsJson: zod
+    .array(
+      zod.object({
+        action: zod.string(),
+        why: zod.string(),
+        location: zod.string(),
+      }),
+    )
+    .nullish(),
+  aiIssuesJson: zod
+    .array(
+      zod.object({
+        issue: zod.string(),
+        evidence: zod.string(),
+        location: zod.string(),
+      }),
+    )
+    .nullish(),
+  scoringMode: zod
+    .enum(["CALIBRATED", "SIMILARITY_ONLY", "FALLBACK"])
+    .nullish(),
+  modelVersion: zod.string().nullish(),
+  embeddingHash: zod.string().nullish(),
+  createdAt: zod.coerce.date(),
+});
+
+/**
  * @summary Get shift compliance percentage
  */
 export const GetDashboardComplianceQueryParams = zod.object({
