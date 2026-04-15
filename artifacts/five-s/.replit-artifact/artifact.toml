@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "5S Compliance"
+version = "1.0.0"
+id = "artifacts/five-s"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22402
+
+[services.development]
+run = "pnpm --filter @workspace/five-s run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/five-s", "run", "build" ]
+publicDir = "artifacts/five-s/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22402"
+BASE_PATH = "/"

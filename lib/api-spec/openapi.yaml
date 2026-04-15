@@ -3,20 +3,30 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: 5S Compliance API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication
+  - name: areas
+    description: Area management
+  - name: submissions
+    description: 5S submissions
+  - name: dashboard
+    description: Manager dashboard
+  - name: ideal-photos
+    description: Ideal/reference photos
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +34,290 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginBody"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /areas:
+    get:
+      operationId: listAreas
+      tags: [areas]
+      summary: List all areas
+      responses:
+        "200":
+          description: List of areas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Area"
+
+  /areas/{id}/ideal-photo:
+    post:
+      operationId: uploadIdealPhoto
+      tags: [ideal-photos]
+      summary: Upload ideal/reference photo for an area
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                photo:
+                  type: string
+                  format: binary
+              required:
+                - photo
+      responses:
+        "201":
+          description: Photo uploaded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdealPhoto"
+
+  /areas/{id}/ideal-photos:
+    get:
+      operationId: getIdealPhotos
+      tags: [ideal-photos]
+      summary: Get ideal photos for an area
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Ideal photos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IdealPhoto"
+
+  /submissions:
+    get:
+      operationId: listSubmissions
+      tags: [submissions]
+      summary: List submissions with optional filters
+      parameters:
+        - name: shift
+          in: query
+          schema:
+            type: string
+            enum: [A, B, C]
+        - name: areaId
+          in: query
+          schema:
+            type: integer
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: List of submissions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Submission"
+    post:
+      operationId: createSubmission
+      tags: [submissions]
+      summary: Submit a 5S photo for scoring
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                areaId:
+                  type: integer
+                photo:
+                  type: string
+                  format: binary
+              required:
+                - areaId
+                - photo
+      responses:
+        "201":
+          description: Submission created with score
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Submission"
+
+  /submissions/{id}:
+    get:
+      operationId: getSubmission
+      tags: [submissions]
+      summary: Get a single submission
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Submission detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Submission"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /dashboard/compliance:
+    get:
+      operationId: getDashboardCompliance
+      tags: [dashboard]
+      summary: Get shift compliance percentage
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: shift
+          in: query
+          schema:
+            type: string
+            enum: [A, B, C]
+      responses:
+        "200":
+          description: Compliance data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceData"
+
+  /dashboard/scores:
+    get:
+      operationId: getDashboardScores
+      tags: [dashboard]
+      summary: Get average scores by area/shift/day
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [area, shift, day]
+      responses:
+        "200":
+          description: Score summary
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScoreSummary"
+
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Quick overview stats
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  /shift/current:
+    get:
+      operationId: getCurrentShift
+      tags: [submissions]
+      summary: Get the current shift based on server time
+      responses:
+        "200":
+          description: Current shift info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentShift"
+
+  /operator/status:
+    get:
+      operationId: getOperatorStatus
+      tags: [submissions]
+      summary: Get operator submission status for current shift
+      responses:
+        "200":
+          description: Status per area for current shift
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AreaStatus"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +328,211 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    LoginBody:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+      required:
+        - email
+        - password
+
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
+      required:
+        - token
+        - user
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+        role:
+          type: string
+          enum: [OPERATOR, MANAGER]
+      required:
+        - id
+        - email
+        - role
+
+    Area:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+      required:
+        - id
+        - name
+
+    IdealPhoto:
+      type: object
+      properties:
+        id:
+          type: integer
+        areaId:
+          type: integer
+        imageUrl:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - areaId
+        - imageUrl
+        - createdAt
+
+    Submission:
+      type: object
+      properties:
+        id:
+          type: integer
+        areaId:
+          type: integer
+        areaName:
+          type: string
+        userId:
+          type: integer
+        userEmail:
+          type: string
+        shift:
+          type: string
+          enum: [A, B, C]
+        scoreTotal:
+          type: integer
+        scoreJson:
+          type: object
+          properties:
+            sort:
+              type: integer
+            set:
+              type: integer
+            shine:
+              type: integer
+            standardize:
+              type: integer
+            sustain:
+              type: integer
+          required: [sort, set, shine, standardize, sustain]
+        suggestionsJson:
+          type: array
+          items:
+            type: string
+        imageUrl:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - areaId
+        - areaName
+        - userId
+        - shift
+        - scoreTotal
+        - scoreJson
+        - suggestionsJson
+        - imageUrl
+        - createdAt
+
+    ComplianceData:
+      type: object
+      properties:
+        totalAreas:
+          type: integer
+        submittedAreas:
+          type: integer
+        compliancePercent:
+          type: number
+        missingAreas:
+          type: array
+          items:
+            type: string
+      required:
+        - totalAreas
+        - submittedAreas
+        - compliancePercent
+        - missingAreas
+
+    ScoreSummary:
+      type: object
+      properties:
+        label:
+          type: string
+        avgScore:
+          type: number
+        count:
+          type: integer
+      required:
+        - label
+        - avgScore
+        - count
+
+    DashboardSummary:
+      type: object
+      properties:
+        todaySubmissions:
+          type: integer
+        todayAvgScore:
+          type: number
+        todayCompliance:
+          type: number
+        totalSubmissions:
+          type: integer
+      required:
+        - todaySubmissions
+        - todayAvgScore
+        - todayCompliance
+        - totalSubmissions
+
+    CurrentShift:
+      type: object
+      properties:
+        shift:
+          type: string
+          enum: [A, B, C]
+        startTime:
+          type: string
+        endTime:
+          type: string
+      required:
+        - shift
+        - startTime
+        - endTime
+
+    AreaStatus:
+      type: object
+      properties:
+        areaId:
+          type: integer
+        areaName:
+          type: string
+        submitted:
+          type: boolean
+        submission:
+          $ref: "#/components/schemas/Submission"
+      required:
+        - areaId
+        - areaName
+        - submitted

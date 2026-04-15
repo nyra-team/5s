@@ -1,0 +1,73 @@
+Build a simple but professional full‑stack web app for “5S Compliance” in manufacturing.
+
+PRODUCT REQUIREMENTS (STRICT)
+- 5S score is calculated PER PHOTO (single photo = single score).
+- Fixed shifts only: A, B, C with standard timings:
+  A: 6am–2pm, B: 2pm–10pm, C: 10pm–6am.
+- Mandatory: Every Area MUST have 1 photo submitted in EVERY shift.
+- Primary users = Operators → UI must be extremely simple, mobile‑friendly.
+- Secondary users = Managers → need dashboard & summary.
+
+CORE FLOW (OPERATOR)
+1. Login
+2. Auto‑detect current shift (A/B/C)
+3. See list of assigned Areas
+4. For each Area:
+   - Open camera in browser
+   - Take photo (or upload as fallback)
+   - Submit
+5. App shows:
+   - 5S score (0–25)
+   - 3 improvement suggestions
+   - Timestamp (server time)
+
+CORE FLOW (MANAGER)
+- Login
+- Dashboard:
+  - % shift compliance (submitted vs expected)
+  - Average 5S score by Area / Shift / Day
+- View all submissions with photo, score, timestamp
+- Upload “Ideal / Standard” reference photos per Area
+
+SCORING (KEEP SIMPLE)
+- No heavy AI.
+- Store ideal photos per Area.
+- Score using fixed logic:
+  - 5 pillars (Sort, Set, Shine, Standardize, Sustain)
+  - Each pillar: 0–5
+  - Total: 0–25
+- Suggestions come from predefined text mapped to weak pillars.
+- Create clean abstraction to plug Vision AI later (optional), but DO NOT implement ML now.
+
+TECH STACK (USE WHAT WORKS IN REPLIT)
+- Frontend: React + Vite + Tailwind
+- Backend: Node.js + Express
+- DB: SQLite + Prisma (schema compatible with Postgres)
+- Auth: Email + password, JWT
+- Roles: OPERATOR, MANAGER
+- Image storage: local /uploads with unique filenames
+
+DATA MODELS (MINIMUM)
+User(id,email,passwordHash,role)
+Area(id,name)
+IdealPhoto(id,areaId,imageUrl)
+Submission(id,areaId,userId,shift,scoreTotal,scoreJson,suggestionsJson,createdAt)
+SubmissionPhoto(id,submissionId,imageUrl)
+
+RULES
+- Server generates authoritative timestamp.
+- Block dashboard compliance as “incomplete” if any Area missing submission per shift.
+- Keep UI extremely clean: big buttons, almost no text for operators.
+
+DELIVERABLE
+- Running app in Replit
+- Seed data:
+  - 1 manager, 1 operator
+  - 6 Areas
+- README: how to run + login credentials.
+
+CONSTRAINTS
+- Keep code short and readable.
+- Do NOT over‑engineer.
+- Implement, don’t explain.
+START NOW.
