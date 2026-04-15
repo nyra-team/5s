@@ -4,9 +4,20 @@ import { db, submissionsTable, areasTable, usersTable } from "@workspace/db";
 import { GetSubmissionParams, ListSubmissionsQueryParams } from "@workspace/api-zod";
 import { authMiddleware } from "../lib/auth";
 import { upload } from "../lib/upload";
-import { generateScore, getCurrentShift } from "../lib/scoring";
-import { scoreSubmission } from "../lib/ai-scoring.js";
+import { getCurrentShift } from "../lib/scoring";
+import { scoreSubmission, type AIScoringResult } from "../lib/ai-scoring.js";
 import { logger } from "../lib/logger.js";
+
+const CONSERVATIVE_DEFAULT: AIScoringResult = {
+  embeddingHash: "",
+  similarityToIdeal: 0,
+  aiTotalScore: 0,
+  aiPillarsJson: { sort: 0, set: 0, shine: 0, standardize: 0, sustain: 0 },
+  aiRecommendationsJson: [{ action: "Manual inspection required — AI scoring unavailable", why: "AI pipeline error", location: "general" }],
+  aiIssuesJson: [{ issue: "AI scoring unavailable", evidence: "Pipeline error", location: "general" }],
+  modelVersion: "error",
+  scoringMode: "FALLBACK",
+};
 
 const router: IRouter = Router();
 
@@ -104,7 +115,6 @@ router.post(
     }
 
     const { shift } = getCurrentShift();
-    const { scoreJson, scoreTotal, suggestions } = generateScore();
     const imageUrl = `/uploads/${file.filename}`;
 
     const [area] = await db
@@ -116,15 +126,15 @@ router.post(
     try {
       aiResult = await scoreSubmission(imageUrl, areaId, area?.name ?? "Unknown");
     } catch (err) {
-      logger.error({ err }, "AI scoring failed entirely, using mock scores only");
+      logger.error({ err }, "AI scoring failed entirely, using conservative defaults");
     }
 
-    const finalScoreTotal = aiResult && aiResult.aiTotalScore > 0 ? aiResult.aiTotalScore : scoreTotal;
-    const finalScoreJson = aiResult && aiResult.aiTotalScore > 0 ? aiResult.aiPillarsJson : scoreJson;
-    const aiSuggestions = aiResult?.aiRecommendationsJson?.length
-      ? aiResult.aiRecommendationsJson.map((r) => r.action)
-      : [];
-    const finalSuggestions = aiSuggestions.length > 0 ? aiSuggestions : suggestions;
+    const result = aiResult ?? CONSERVATIVE_DEFAULT;
+    const finalScoreTotal = result.aiTotalScore;
+    const finalScoreJson = result.aiPillarsJson;
+    const finalSuggestions = result.aiRecommendationsJson?.length
+      ? result.aiRecommendationsJson.map((r) => r.action)
+      : ["Manual inspection required — AI scoring unavailable"];
 
     const [submission] = await db
       .insert(submissionsTable)
@@ -136,14 +146,14 @@ router.post(
         scoreJson: finalScoreJson,
         suggestionsJson: finalSuggestions,
         imageUrl,
-        embeddingHash: aiResult?.embeddingHash ?? null,
-        similarityToIdeal: aiResult?.similarityToIdeal ?? null,
-        aiTotalScore: aiResult?.aiTotalScore ?? null,
-        aiPillarsJson: aiResult?.aiPillarsJson ?? null,
-        aiRecommendationsJson: aiResult?.aiRecommendationsJson ?? null,
-        aiIssuesJson: aiResult?.aiIssuesJson ?? null,
-        modelVersion: aiResult?.modelVersion ?? null,
-        scoringMode: aiResult?.scoringMode ?? null,
+        embeddingHash: result.embeddingHash || null,
+        similarityToIdeal: result.similarityToIdeal ?? null,
+        aiTotalScore: result.aiTotalScore ?? null,
+        aiPillarsJson: result.aiPillarsJson ?? null,
+        aiRecommendationsJson: result.aiRecommendationsJson ?? null,
+        aiIssuesJson: result.aiIssuesJson ?? null,
+        modelVersion: result.modelVersion ?? null,
+        scoringMode: result.scoringMode ?? null,
       })
       .returning();
 
@@ -201,21 +211,19 @@ router.put(
       .from(areasTable)
       .where(eq(areasTable.id, existing.areaId));
 
-    const { scoreJson, scoreTotal, suggestions } = generateScore();
-
     let aiResult;
     try {
       aiResult = await scoreSubmission(imageUrl, existing.areaId, area?.name ?? "Unknown");
     } catch (err) {
-      logger.error({ err }, "AI scoring failed on reupload, using mock scores");
+      logger.error({ err }, "AI scoring failed on reupload, using conservative defaults");
     }
 
-    const finalScoreTotal = aiResult && aiResult.aiTotalScore > 0 ? aiResult.aiTotalScore : scoreTotal;
-    const finalScoreJson = aiResult && aiResult.aiTotalScore > 0 ? aiResult.aiPillarsJson : scoreJson;
-    const aiSuggestions = aiResult?.aiRecommendationsJson?.length
-      ? aiResult.aiRecommendationsJson.map((r) => r.action)
-      : [];
-    const finalSuggestions = aiSuggestions.length > 0 ? aiSuggestions : suggestions;
+    const result = aiResult ?? CONSERVATIVE_DEFAULT;
+    const finalScoreTotal = result.aiTotalScore;
+    const finalScoreJson = result.aiPillarsJson;
+    const finalSuggestions = result.aiRecommendationsJson?.length
+      ? result.aiRecommendationsJson.map((r) => r.action)
+      : ["Manual inspection required — AI scoring unavailable"];
 
     const [updated] = await db
       .update(submissionsTable)
@@ -224,14 +232,14 @@ router.put(
         scoreTotal: finalScoreTotal,
         scoreJson: finalScoreJson,
         suggestionsJson: finalSuggestions,
-        embeddingHash: aiResult?.embeddingHash ?? null,
-        similarityToIdeal: aiResult?.similarityToIdeal ?? null,
-        aiTotalScore: aiResult?.aiTotalScore ?? null,
-        aiPillarsJson: aiResult?.aiPillarsJson ?? null,
-        aiRecommendationsJson: aiResult?.aiRecommendationsJson ?? null,
-        aiIssuesJson: aiResult?.aiIssuesJson ?? null,
-        modelVersion: aiResult?.modelVersion ?? null,
-        scoringMode: aiResult?.scoringMode ?? null,
+        embeddingHash: result.embeddingHash || null,
+        similarityToIdeal: result.similarityToIdeal ?? null,
+        aiTotalScore: result.aiTotalScore ?? null,
+        aiPillarsJson: result.aiPillarsJson ?? null,
+        aiRecommendationsJson: result.aiRecommendationsJson ?? null,
+        aiIssuesJson: result.aiIssuesJson ?? null,
+        modelVersion: result.modelVersion ?? null,
+        scoringMode: result.scoringMode ?? null,
       })
       .where(eq(submissionsTable.id, id))
       .returning();

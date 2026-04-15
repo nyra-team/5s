@@ -12,6 +12,7 @@ export type SubmissionScoringMode =
 
 export const SubmissionScoringMode = {
   CALIBRATED: "CALIBRATED",
+  VLM_BLENDED: "VLM_BLENDED",
   SIMILARITY_ONLY: "SIMILARITY_ONLY",
   FALLBACK: "FALLBACK",
 } as const;

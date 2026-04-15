@@ -35,9 +35,10 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - **AI Scoring Pipeline**:
   - CLIP ViT-B/32 embeddings computed for submission and ideal photos
   - Cosine similarity between submission embedding and ideal centroid
-  - Scoring modes: CALIBRATED (Ridge regression from labels), SIMILARITY_ONLY (cosine→score), FALLBACK (no ideal photos)
-  - VLM recommendations: gpt-5-mini analyzes submission vs ideal images, returns structured issues/recommendations with location references
-  - Deterministic numeric scoring via embeddings; VLM only generates issues/recommendations
+  - Scoring modes: CALIBRATED (Ridge regression from labels), VLM_BLENDED (70% VLM + 30% CLIP), SIMILARITY_ONLY (cosine→score), FALLBACK (conservative zeros)
+  - CLIP similarity rescaled: 0.75–0.98 range maps to 0–25 score range for meaningful differentiation
+  - VLM (gpt-5-mini) provides per-pillar scores (0-5) alongside issues/recommendations with location references
+  - VLM scores are blended with CLIP similarity as primary signal; CLIP acts as weighting/adjustment factor
 - **Manager Labeling**: Rate submissions with ground-truth pillar scores (0-5 each) for model calibration
 - **Model Training**: Ridge regression per pillar using labeled CLIP embeddings (min 5 labels to train)
 
@@ -67,7 +68,7 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - Image uploads stored in `uploads/` directory at project root
 - ML Service (Python FastAPI, port 8100): CLIP embeddings, similarity computation, Ridge regression training/prediction
 - VLM Service: OpenAI-compatible API via `@workspace/integrations-openai-ai-server` for structured issue/recommendation generation
-- AI scoring is called on every submission creation; falls back to mock scores if ML service is unavailable
+- AI scoring is called on every submission creation; falls back to conservative zero defaults (not random) if AI pipeline is unavailable
 
 ## Services
 

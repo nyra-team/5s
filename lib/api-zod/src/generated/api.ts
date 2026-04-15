@@ -161,7 +161,7 @@ export const ListSubmissionsResponseItem = zod.object({
     )
     .nullish(),
   scoringMode: zod
-    .enum(["CALIBRATED", "SIMILARITY_ONLY", "FALLBACK"])
+    .enum(["CALIBRATED", "VLM_BLENDED", "SIMILARITY_ONLY", "FALLBACK"])
     .nullish(),
   modelVersion: zod.string().nullish(),
   embeddingHash: zod.string().nullish(),
@@ -231,7 +231,7 @@ export const GetSubmissionResponse = zod.object({
     )
     .nullish(),
   scoringMode: zod
-    .enum(["CALIBRATED", "SIMILARITY_ONLY", "FALLBACK"])
+    .enum(["CALIBRATED", "VLM_BLENDED", "SIMILARITY_ONLY", "FALLBACK"])
     .nullish(),
   modelVersion: zod.string().nullish(),
   embeddingHash: zod.string().nullish(),
@@ -296,7 +296,7 @@ export const ReuploadSubmissionResponse = zod.object({
     )
     .nullish(),
   scoringMode: zod
-    .enum(["CALIBRATED", "SIMILARITY_ONLY", "FALLBACK"])
+    .enum(["CALIBRATED", "VLM_BLENDED", "SIMILARITY_ONLY", "FALLBACK"])
     .nullish(),
   modelVersion: zod.string().nullish(),
   embeddingHash: zod.string().nullish(),
@@ -409,7 +409,7 @@ export const GetOperatorStatusResponseItem = zod.object({
         )
         .nullish(),
       scoringMode: zod
-        .enum(["CALIBRATED", "SIMILARITY_ONLY", "FALLBACK"])
+        .enum(["CALIBRATED", "VLM_BLENDED", "SIMILARITY_ONLY", "FALLBACK"])
         .nullish(),
       modelVersion: zod.string().nullish(),
       embeddingHash: zod.string().nullish(),

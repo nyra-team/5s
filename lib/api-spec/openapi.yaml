@@ -682,7 +682,7 @@ components:
         scoringMode:
           type: string
           nullable: true
-          enum: [CALIBRATED, SIMILARITY_ONLY, FALLBACK]
+          enum: [CALIBRATED, VLM_BLENDED, SIMILARITY_ONLY, FALLBACK]
         modelVersion:
           type: string
           nullable: true

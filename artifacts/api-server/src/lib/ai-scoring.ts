@@ -32,9 +32,18 @@ interface VLMRecommendation {
   location: string;
 }
 
+interface VLMPillarScores {
+  sort: number;
+  set: number;
+  shine: number;
+  standardize: number;
+  sustain: number;
+}
+
 interface VLMResult {
   issues: VLMIssue[];
   recommendations: VLMRecommendation[];
+  pillarScores: VLMPillarScores | null;
 }
 
 export interface AIScoringResult {
@@ -94,7 +103,7 @@ async function getVLMRecommendations(
     const content: any[] = [
       {
         type: "text",
-        text: `Area: "${areaName}". Compare the SUBMITTED photo against the IDEAL reference photo(s). Identify 5S compliance issues and give specific, actionable recommendations. Reference exact locations (left/right/top/bottom/center) of issues visible in the submitted image.`,
+        text: `Area: "${areaName}". Compare the SUBMITTED photo against the IDEAL reference photo(s). Score each of the 5S pillars from 0 (terrible) to 5 (perfect) based on what you see. Also identify specific 5S compliance issues and give actionable recommendations. Reference exact locations (left/right/top/bottom/center) of issues visible in the submitted image. Be strict: a messy, cluttered, or disorganized area should receive low scores (0-2). Only give high scores (4-5) when the area is clearly clean, organized, and well-maintained.`,
       },
       {
         type: "text",
@@ -128,7 +137,7 @@ async function getVLMRecommendations(
         {
           role: "system",
           content:
-            'You are a strict 5S auditor. Output ONLY valid JSON. Base statements only on visible evidence. Output format: {"issues":[{"issue":"...","evidence":"...","location":"left/right/top/bottom/center"}],"recommendations":[{"action":"...","why":"...","location":"..."}]}',
+            'You are a strict 5S workplace auditor. Output ONLY valid JSON. Be harsh and critical — messiness, clutter, disorganization, and safety hazards should result in low scores. Base statements only on visible evidence. Output format: {"pillar_scores":{"sort":0-5,"set":0-5,"shine":0-5,"standardize":0-5,"sustain":0-5},"issues":[{"issue":"...","evidence":"...","location":"left/right/top/bottom/center"}],"recommendations":[{"action":"...","why":"...","location":"..."}]}. Score guide: 0=hazardous/chaotic, 1=very poor, 2=poor, 3=acceptable, 4=good, 5=excellent.',
         },
         {
           role: "user",
@@ -140,11 +149,24 @@ async function getVLMRecommendations(
     const text = response.choices[0]?.message?.content || "{}";
     const parsed = JSON.parse(text);
 
+    let pillarScores: VLMPillarScores | null = null;
+    if (parsed.pillar_scores && typeof parsed.pillar_scores === "object") {
+      const ps = parsed.pillar_scores;
+      pillarScores = {
+        sort: Math.max(0, Math.min(5, Math.round(Number(ps.sort) || 0))),
+        set: Math.max(0, Math.min(5, Math.round(Number(ps.set) || 0))),
+        shine: Math.max(0, Math.min(5, Math.round(Number(ps.shine) || 0))),
+        standardize: Math.max(0, Math.min(5, Math.round(Number(ps.standardize) || 0))),
+        sustain: Math.max(0, Math.min(5, Math.round(Number(ps.sustain) || 0))),
+      };
+    }
+
     return {
       issues: Array.isArray(parsed.issues) ? parsed.issues.slice(0, 5) : [],
       recommendations: Array.isArray(parsed.recommendations)
         ? parsed.recommendations.slice(0, 5)
         : [],
+      pillarScores,
     };
   } catch (err) {
     logger.error({ err }, "VLM recommendation failed, using fallback");
@@ -178,6 +200,7 @@ function getFallbackRecommendations(): VLMResult {
         location: "general",
       },
     ],
+    pillarScores: null,
   };
 }
 
@@ -259,15 +282,46 @@ export async function scoreSubmission(
     vlmResult = getFallbackRecommendations();
   }
 
+  let finalPillars: Record<string, number>;
+  let finalTotal: number;
+  let scoringMode: string;
+
+  if (prediction.scoring_mode === "CALIBRATED") {
+    finalPillars = prediction.pillars;
+    finalTotal = prediction.total_score;
+    scoringMode = "CALIBRATED";
+  } else if (vlmResult.pillarScores) {
+    const vlmPillars = vlmResult.pillarScores;
+    const clipSimilarity = prediction.similarity;
+    const clipWeight = 0.3;
+    const vlmWeight = 0.7;
+
+    const clipNormalized = Math.max(0, Math.min(1, (clipSimilarity - 0.75) / (0.98 - 0.75)));
+
+    finalPillars = {} as Record<string, number>;
+    for (const pillar of ["sort", "set", "shine", "standardize", "sustain"] as const) {
+      const vlmScore = vlmPillars[pillar];
+      const clipAdjusted = clipNormalized * 5;
+      const blended = vlmWeight * vlmScore + clipWeight * clipAdjusted;
+      finalPillars[pillar] = Math.max(0, Math.min(5, Math.round(blended)));
+    }
+    finalTotal = Object.values(finalPillars).reduce((a, b) => a + b, 0);
+    scoringMode = "VLM_BLENDED";
+  } else {
+    finalPillars = prediction.pillars;
+    finalTotal = prediction.total_score;
+    scoringMode = prediction.scoring_mode;
+  }
+
   return {
     embeddingHash: embResult.embedding_hash,
     similarityToIdeal: prediction.similarity,
-    aiTotalScore: prediction.total_score,
-    aiPillarsJson: prediction.pillars,
+    aiTotalScore: finalTotal,
+    aiPillarsJson: finalPillars,
     aiRecommendationsJson: vlmResult.recommendations,
     aiIssuesJson: vlmResult.issues,
     modelVersion: prediction.model_version,
-    scoringMode: prediction.scoring_mode,
+    scoringMode,
   };
 }
 

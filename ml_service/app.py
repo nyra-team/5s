@@ -90,8 +90,15 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def similarity_to_score(similarity: float) -> int:
+    SIM_LOW = 0.75
+    SIM_HIGH = 0.98
     clamped = max(0.0, min(1.0, similarity))
-    score = int(round(clamped * 25))
+    if clamped <= SIM_LOW:
+        score = 0
+    elif clamped >= SIM_HIGH:
+        score = 25
+    else:
+        score = int(round((clamped - SIM_LOW) / (SIM_HIGH - SIM_LOW) * 25))
     return max(0, min(25, score))
 
 
@@ -156,12 +163,10 @@ def predict_score(req: PredictRequest):
     submission_emb = np.array(req.embedding, dtype=np.float32)
 
     if not req.ideal_embeddings:
-        seed_val = int(hashlib.md5(json.dumps(req.embedding[:10]).encode()).hexdigest()[:8], 16)
-        pillars = similarity_to_pillars(0.5, seed_val)
-        total = sum(pillars.values())
+        pillars = {p: 0 for p in ["sort", "set", "shine", "standardize", "sustain"]}
         return PredictResponse(
             similarity=0.0,
-            total_score=total,
+            total_score=0,
             pillars=pillars,
             scoring_mode="FALLBACK",
             model_version="none",
