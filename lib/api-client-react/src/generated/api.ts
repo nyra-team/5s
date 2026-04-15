@@ -21,6 +21,7 @@ import type {
   AreaStatus,
   ComplianceData,
   CreateAreaBody,
+  CreateLabelBody,
   CreateSubmissionBody,
   CurrentShift,
   DashboardSummary,
@@ -29,11 +30,14 @@ import type {
   GetDashboardScoresParams,
   HealthStatus,
   IdealPhoto,
+  Label,
   ListSubmissionsParams,
   LoginBody,
   LoginResponse,
+  ModelStatus,
   ScoreSummary,
   Submission,
+  TrainResult,
   UpdateAreaBody,
   UploadIdealPhotoBody,
   User,
@@ -1461,3 +1465,345 @@ export function useGetOperatorStatus<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Label a submission with pillar scores (manager only)
+ */
+export const getCreateLabelUrl = () => {
+  return `/api/labels`;
+};
+
+export const createLabel = async (
+  createLabelBody: CreateLabelBody,
+  options?: RequestInit,
+): Promise<Label> => {
+  return customFetch<Label>(getCreateLabelUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createLabelBody),
+  });
+};
+
+export const getCreateLabelMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createLabel>>,
+    TError,
+    { data: BodyType<CreateLabelBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createLabel>>,
+  TError,
+  { data: BodyType<CreateLabelBody> },
+  TContext
+> => {
+  const mutationKey = ["createLabel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createLabel>>,
+    { data: BodyType<CreateLabelBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createLabel(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateLabelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createLabel>>
+>;
+export type CreateLabelMutationBody = BodyType<CreateLabelBody>;
+export type CreateLabelMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Label a submission with pillar scores (manager only)
+ */
+export const useCreateLabel = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createLabel>>,
+    TError,
+    { data: BodyType<CreateLabelBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createLabel>>,
+  TError,
+  { data: BodyType<CreateLabelBody> },
+  TContext
+> => {
+  return useMutation(getCreateLabelMutationOptions(options));
+};
+
+/**
+ * @summary Get labels for a submission
+ */
+export const getGetLabelsUrl = (submissionId: number) => {
+  return `/api/labels/${submissionId}`;
+};
+
+export const getLabels = async (
+  submissionId: number,
+  options?: RequestInit,
+): Promise<Label[]> => {
+  return customFetch<Label[]>(getGetLabelsUrl(submissionId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetLabelsQueryKey = (submissionId: number) => {
+  return [`/api/labels/${submissionId}`] as const;
+};
+
+export const getGetLabelsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getLabels>>,
+  TError = ErrorType<unknown>,
+>(
+  submissionId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getLabels>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetLabelsQueryKey(submissionId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getLabels>>> = ({
+    signal,
+  }) => getLabels(submissionId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!submissionId,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getLabels>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type GetLabelsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getLabels>>
+>;
+export type GetLabelsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get labels for a submission
+ */
+
+export function useGetLabels<
+  TData = Awaited<ReturnType<typeof getLabels>>,
+  TError = ErrorType<unknown>,
+>(
+  submissionId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getLabels>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetLabelsQueryOptions(submissionId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get AI model status for an area
+ */
+export const getGetAreaModelStatusUrl = (id: number) => {
+  return `/api/areas/${id}/model-status`;
+};
+
+export const getAreaModelStatus = async (
+  id: number,
+  options?: RequestInit,
+): Promise<ModelStatus> => {
+  return customFetch<ModelStatus>(getGetAreaModelStatusUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAreaModelStatusQueryKey = (id: number) => {
+  return [`/api/areas/${id}/model-status`] as const;
+};
+
+export const getGetAreaModelStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAreaModelStatus>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAreaModelStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetAreaModelStatusQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAreaModelStatus>>
+  > = ({ signal }) => getAreaModelStatus(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAreaModelStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAreaModelStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAreaModelStatus>>
+>;
+export type GetAreaModelStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get AI model status for an area
+ */
+
+export function useGetAreaModelStatus<
+  TData = Awaited<ReturnType<typeof getAreaModelStatus>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAreaModelStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAreaModelStatusQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Train AI model for an area using labeled submissions
+ */
+export const getTrainAreaModelUrl = (id: number) => {
+  return `/api/areas/${id}/train`;
+};
+
+export const trainAreaModel = async (
+  id: number,
+  options?: RequestInit,
+): Promise<TrainResult> => {
+  return customFetch<TrainResult>(getTrainAreaModelUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getTrainAreaModelMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof trainAreaModel>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof trainAreaModel>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["trainAreaModel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof trainAreaModel>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return trainAreaModel(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TrainAreaModelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof trainAreaModel>>
+>;
+
+export type TrainAreaModelMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Train AI model for an area using labeled submissions
+ */
+export const useTrainAreaModel = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof trainAreaModel>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof trainAreaModel>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getTrainAreaModelMutationOptions(options));
+};

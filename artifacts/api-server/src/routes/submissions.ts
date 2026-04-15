@@ -5,6 +5,8 @@ import { GetSubmissionParams, ListSubmissionsQueryParams } from "@workspace/api-
 import { authMiddleware } from "../lib/auth";
 import { upload } from "../lib/upload";
 import { generateScore, getCurrentShift } from "../lib/scoring";
+import { scoreSubmission } from "../lib/ai-scoring.js";
+import { logger } from "../lib/logger.js";
 
 const router: IRouter = Router();
 
@@ -64,6 +66,13 @@ router.get("/submissions", authMiddleware, async (req, res): Promise<void> => {
       scoreJson: submissionsTable.scoreJson,
       suggestionsJson: submissionsTable.suggestionsJson,
       imageUrl: submissionsTable.imageUrl,
+      similarityToIdeal: submissionsTable.similarityToIdeal,
+      aiTotalScore: submissionsTable.aiTotalScore,
+      aiPillarsJson: submissionsTable.aiPillarsJson,
+      aiRecommendationsJson: submissionsTable.aiRecommendationsJson,
+      aiIssuesJson: submissionsTable.aiIssuesJson,
+      scoringMode: submissionsTable.scoringMode,
+      modelVersion: submissionsTable.modelVersion,
       createdAt: submissionsTable.createdAt,
     })
     .from(submissionsTable)
@@ -98,23 +107,45 @@ router.post(
     const { scoreJson, scoreTotal, suggestions } = generateScore();
     const imageUrl = `/uploads/${file.filename}`;
 
+    const [area] = await db
+      .select()
+      .from(areasTable)
+      .where(eq(areasTable.id, areaId));
+
+    let aiResult;
+    try {
+      aiResult = await scoreSubmission(imageUrl, areaId, area?.name ?? "Unknown");
+    } catch (err) {
+      logger.error({ err }, "AI scoring failed entirely, using mock scores only");
+    }
+
+    const finalScoreTotal = aiResult && aiResult.aiTotalScore > 0 ? aiResult.aiTotalScore : scoreTotal;
+    const finalScoreJson = aiResult && aiResult.aiTotalScore > 0 ? aiResult.aiPillarsJson : scoreJson;
+    const aiSuggestions = aiResult?.aiRecommendationsJson?.length
+      ? aiResult.aiRecommendationsJson.map((r) => r.action)
+      : [];
+    const finalSuggestions = aiSuggestions.length > 0 ? aiSuggestions : suggestions;
+
     const [submission] = await db
       .insert(submissionsTable)
       .values({
         areaId,
         userId,
         shift,
-        scoreTotal,
-        scoreJson,
-        suggestionsJson: suggestions,
+        scoreTotal: finalScoreTotal,
+        scoreJson: finalScoreJson,
+        suggestionsJson: finalSuggestions,
         imageUrl,
+        embeddingHash: aiResult?.embeddingHash ?? null,
+        similarityToIdeal: aiResult?.similarityToIdeal ?? null,
+        aiTotalScore: aiResult?.aiTotalScore ?? null,
+        aiPillarsJson: aiResult?.aiPillarsJson ?? null,
+        aiRecommendationsJson: aiResult?.aiRecommendationsJson ?? null,
+        aiIssuesJson: aiResult?.aiIssuesJson ?? null,
+        modelVersion: aiResult?.modelVersion ?? null,
+        scoringMode: aiResult?.scoringMode ?? null,
       })
       .returning();
-
-    const [area] = await db
-      .select()
-      .from(areasTable)
-      .where(eq(areasTable.id, areaId));
 
     const [user] = await db
       .select()
@@ -148,6 +179,14 @@ router.get("/submissions/:id", authMiddleware, async (req, res): Promise<void> =
       scoreJson: submissionsTable.scoreJson,
       suggestionsJson: submissionsTable.suggestionsJson,
       imageUrl: submissionsTable.imageUrl,
+      similarityToIdeal: submissionsTable.similarityToIdeal,
+      aiTotalScore: submissionsTable.aiTotalScore,
+      aiPillarsJson: submissionsTable.aiPillarsJson,
+      aiRecommendationsJson: submissionsTable.aiRecommendationsJson,
+      aiIssuesJson: submissionsTable.aiIssuesJson,
+      scoringMode: submissionsTable.scoringMode,
+      modelVersion: submissionsTable.modelVersion,
+      embeddingHash: submissionsTable.embeddingHash,
       createdAt: submissionsTable.createdAt,
     })
     .from(submissionsTable)

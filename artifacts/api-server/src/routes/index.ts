@@ -4,6 +4,7 @@ import authRouter from "./auth";
 import areasRouter from "./areas";
 import submissionsRouter from "./submissions";
 import dashboardRouter from "./dashboard";
+import labelsRouter from "./labels";
 
 const router: IRouter = Router();
 
@@ -12,5 +13,6 @@ router.use(authRouter);
 router.use(areasRouter);
 router.use(submissionsRouter);
 router.use(dashboardRouter);
+router.use(labelsRouter);
 
 export default router;

@@ -6,10 +6,14 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./aIIssue";
+export * from "./aIRecommendation";
 export * from "./area";
 export * from "./areaStatus";
 export * from "./complianceData";
 export * from "./createAreaBody";
+export * from "./createLabelBody";
+export * from "./createLabelBodyPillarsJson";
 export * from "./createSubmissionBody";
 export * from "./currentShift";
 export * from "./currentShiftShift";
@@ -21,14 +25,20 @@ export * from "./getDashboardScoresGroupBy";
 export * from "./getDashboardScoresParams";
 export * from "./healthStatus";
 export * from "./idealPhoto";
+export * from "./label";
+export * from "./labelPillarsJson";
 export * from "./listSubmissionsParams";
 export * from "./listSubmissionsShift";
 export * from "./loginBody";
 export * from "./loginResponse";
+export * from "./modelStatus";
 export * from "./scoreSummary";
 export * from "./submission";
+export * from "./submissionAiPillarsJson";
 export * from "./submissionScoreJson";
+export * from "./submissionScoringMode";
 export * from "./submissionShift";
+export * from "./trainResult";
 export * from "./updateAreaBody";
 export * from "./uploadIdealPhotoBody";
 export * from "./user";

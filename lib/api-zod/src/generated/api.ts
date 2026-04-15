@@ -131,6 +131,40 @@ export const ListSubmissionsResponseItem = zod.object({
   }),
   suggestionsJson: zod.array(zod.string()),
   imageUrl: zod.string(),
+  similarityToIdeal: zod.number().nullish(),
+  aiTotalScore: zod.number().nullish(),
+  aiPillarsJson: zod
+    .object({
+      sort: zod.number().optional(),
+      set: zod.number().optional(),
+      shine: zod.number().optional(),
+      standardize: zod.number().optional(),
+      sustain: zod.number().optional(),
+    })
+    .nullish(),
+  aiRecommendationsJson: zod
+    .array(
+      zod.object({
+        action: zod.string(),
+        why: zod.string(),
+        location: zod.string(),
+      }),
+    )
+    .nullish(),
+  aiIssuesJson: zod
+    .array(
+      zod.object({
+        issue: zod.string(),
+        evidence: zod.string(),
+        location: zod.string(),
+      }),
+    )
+    .nullish(),
+  scoringMode: zod
+    .enum(["CALIBRATED", "SIMILARITY_ONLY", "FALLBACK"])
+    .nullish(),
+  modelVersion: zod.string().nullish(),
+  embeddingHash: zod.string().nullish(),
   createdAt: zod.coerce.date(),
 });
 export const ListSubmissionsResponse = zod.array(ListSubmissionsResponseItem);
@@ -167,6 +201,40 @@ export const GetSubmissionResponse = zod.object({
   }),
   suggestionsJson: zod.array(zod.string()),
   imageUrl: zod.string(),
+  similarityToIdeal: zod.number().nullish(),
+  aiTotalScore: zod.number().nullish(),
+  aiPillarsJson: zod
+    .object({
+      sort: zod.number().optional(),
+      set: zod.number().optional(),
+      shine: zod.number().optional(),
+      standardize: zod.number().optional(),
+      sustain: zod.number().optional(),
+    })
+    .nullish(),
+  aiRecommendationsJson: zod
+    .array(
+      zod.object({
+        action: zod.string(),
+        why: zod.string(),
+        location: zod.string(),
+      }),
+    )
+    .nullish(),
+  aiIssuesJson: zod
+    .array(
+      zod.object({
+        issue: zod.string(),
+        evidence: zod.string(),
+        location: zod.string(),
+      }),
+    )
+    .nullish(),
+  scoringMode: zod
+    .enum(["CALIBRATED", "SIMILARITY_ONLY", "FALLBACK"])
+    .nullish(),
+  modelVersion: zod.string().nullish(),
+  embeddingHash: zod.string().nullish(),
   createdAt: zod.coerce.date(),
 });
 
@@ -246,6 +314,40 @@ export const GetOperatorStatusResponseItem = zod.object({
       }),
       suggestionsJson: zod.array(zod.string()),
       imageUrl: zod.string(),
+      similarityToIdeal: zod.number().nullish(),
+      aiTotalScore: zod.number().nullish(),
+      aiPillarsJson: zod
+        .object({
+          sort: zod.number().optional(),
+          set: zod.number().optional(),
+          shine: zod.number().optional(),
+          standardize: zod.number().optional(),
+          sustain: zod.number().optional(),
+        })
+        .nullish(),
+      aiRecommendationsJson: zod
+        .array(
+          zod.object({
+            action: zod.string(),
+            why: zod.string(),
+            location: zod.string(),
+          }),
+        )
+        .nullish(),
+      aiIssuesJson: zod
+        .array(
+          zod.object({
+            issue: zod.string(),
+            evidence: zod.string(),
+            location: zod.string(),
+          }),
+        )
+        .nullish(),
+      scoringMode: zod
+        .enum(["CALIBRATED", "SIMILARITY_ONLY", "FALLBACK"])
+        .nullish(),
+      modelVersion: zod.string().nullish(),
+      embeddingHash: zod.string().nullish(),
       createdAt: zod.coerce.date(),
     })
     .optional(),
@@ -253,3 +355,71 @@ export const GetOperatorStatusResponseItem = zod.object({
 export const GetOperatorStatusResponse = zod.array(
   GetOperatorStatusResponseItem,
 );
+
+/**
+ * @summary Label a submission with pillar scores (manager only)
+ */
+export const CreateLabelBody = zod.object({
+  submissionId: zod.number(),
+  pillarsJson: zod.object({
+    sort: zod.number(),
+    set: zod.number(),
+    shine: zod.number(),
+    standardize: zod.number(),
+    sustain: zod.number(),
+  }),
+  totalScore: zod.number(),
+});
+
+/**
+ * @summary Get labels for a submission
+ */
+export const GetLabelsParams = zod.object({
+  submissionId: zod.coerce.number(),
+});
+
+export const GetLabelsResponseItem = zod.object({
+  id: zod.number(),
+  submissionId: zod.number(),
+  labeledByUserId: zod.number(),
+  pillarsJson: zod.object({
+    sort: zod.number(),
+    set: zod.number(),
+    shine: zod.number(),
+    standardize: zod.number(),
+    sustain: zod.number(),
+  }),
+  totalScore: zod.number(),
+  createdAt: zod.coerce.date(),
+});
+export const GetLabelsResponse = zod.array(GetLabelsResponseItem);
+
+/**
+ * @summary Get AI model status for an area
+ */
+export const GetAreaModelStatusParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetAreaModelStatusResponse = zod.object({
+  areaId: zod.number(),
+  labelsCount: zod.number(),
+  idealPhotosCount: zod.number(),
+  submissionsCount: zod.number(),
+  canTrain: zod.boolean(),
+  latestScoringMode: zod.string().nullish(),
+  latestModelVersion: zod.string().nullish(),
+});
+
+/**
+ * @summary Train AI model for an area using labeled submissions
+ */
+export const TrainAreaModelParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const TrainAreaModelResponse = zod.object({
+  modelVersion: zod.string(),
+  samplesUsed: zod.number(),
+  mae: zod.number(),
+});

@@ -5,7 +5,11 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { AIIssue } from "./aIIssue";
+import type { AIRecommendation } from "./aIRecommendation";
+import type { SubmissionAiPillarsJson } from "./submissionAiPillarsJson";
 import type { SubmissionScoreJson } from "./submissionScoreJson";
+import type { SubmissionScoringMode } from "./submissionScoringMode";
 import type { SubmissionShift } from "./submissionShift";
 
 export interface Submission {
@@ -19,5 +23,13 @@ export interface Submission {
   scoreJson: SubmissionScoreJson;
   suggestionsJson: string[];
   imageUrl: string;
+  similarityToIdeal?: number | null;
+  aiTotalScore?: number | null;
+  aiPillarsJson?: SubmissionAiPillarsJson;
+  aiRecommendationsJson?: AIRecommendation[] | null;
+  aiIssuesJson?: AIIssue[] | null;
+  scoringMode?: SubmissionScoringMode;
+  modelVersion?: string | null;
+  embeddingHash?: string | null;
   createdAt: Date;
 }

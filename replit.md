@@ -2,7 +2,7 @@
 
 ## Overview
 
-Full-stack 5S Compliance web app for manufacturing. Operators photograph workstations per shift, receive automated 5S scores (0-25), and get improvement suggestions. Managers track compliance rates and score trends via dashboards.
+Full-stack 5S Compliance web app for manufacturing. Operators photograph workstations per shift, receive AI-powered 5S scores (0-25) based on CLIP embedding similarity to ideal reference photos, and get VLM-generated improvement suggestions with specific location references. Managers track compliance rates, score trends, label submissions for model calibration, and manage reference photos.
 
 ## Stack
 
@@ -18,6 +18,8 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - **API codegen**: Orval (from OpenAPI spec)
 - **File uploads**: Multer → local /uploads directory
 - **Build**: esbuild (CJS bundle)
+- **AI/ML**: Python FastAPI service with CLIP ViT-B/32 (open_clip_torch) + scikit-learn
+- **VLM**: OpenAI-compatible API via Replit AI Integrations (gpt-5-mini)
 
 ## Login Credentials
 
@@ -26,12 +28,18 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 
 ## Key Features
 
-- **Operator view**: Auto-detect shift (A/B/C), photograph areas, get 5S scores + suggestions
-- **Manager view**: Dashboard with compliance %, score charts, submission browser, ideal photo management
+- **Operator view**: Auto-detect shift (A/B/C), photograph areas, get AI-powered 5S scores + location-specific suggestions
+- **Manager view**: Dashboard with compliance %, score charts, submission browser, ideal photo management, submission labeling for AI calibration
 - **Roles**: OPERATOR, MANAGER with JWT-based auth
 - **Shifts**: A (6am-2pm), B (2pm-10pm), C (10pm-6am)
-- **Scoring**: Fixed logic scoring 5 pillars (Sort, Set, Shine, Standardize, Sustain) each 0-5, total 0-25
-- **Clean abstraction for future Vision AI** in artifacts/api-server/src/lib/scoring.ts
+- **AI Scoring Pipeline**:
+  - CLIP ViT-B/32 embeddings computed for submission and ideal photos
+  - Cosine similarity between submission embedding and ideal centroid
+  - Scoring modes: CALIBRATED (Ridge regression from labels), SIMILARITY_ONLY (cosine→score), FALLBACK (no ideal photos)
+  - VLM recommendations: gpt-5-mini analyzes submission vs ideal images, returns structured issues/recommendations with location references
+  - Deterministic numeric scoring via embeddings; VLM only generates issues/recommendations
+- **Manager Labeling**: Rate submissions with ground-truth pillar scores (0-5 each) for model calibration
+- **Model Training**: Ridge regression per pillar using labeled CLIP embeddings (min 5 labels to train)
 
 ## Key Commands
 
@@ -41,13 +49,15 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 - `pnpm --filter @workspace/scripts run seed` — seed database with default data
+- `python ml_service/app.py` — start CLIP ML service on port 8100
 
 ## Data Models
 
 - **users**: id, email, password_hash, role (OPERATOR/MANAGER)
 - **areas**: id, name (6 manufacturing areas)
-- **ideal_photos**: id, area_id, image_url, created_at
-- **submissions**: id, area_id, user_id, shift, score_total, score_json, suggestions_json, image_url, created_at
+- **ideal_photos**: id, area_id, image_url, embedding_json, created_at
+- **submissions**: id, area_id, user_id, shift, score_total, score_json, suggestions_json, image_url, embedding_hash, similarity_to_ideal, ai_total_score, ai_pillars_json, ai_recommendations_json, ai_issues_json, model_version, scoring_mode, created_at
+- **labels**: id, submission_id, labeled_by_user_id, pillars_json, total_score, created_at
 
 ## Architecture
 
@@ -55,3 +65,13 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - Codegen produces React Query hooks (`lib/api-client-react`) and Zod schemas (`lib/api-zod`)
 - Static file serving for uploads at `/api/uploads/`
 - Image uploads stored in `uploads/` directory at project root
+- ML Service (Python FastAPI, port 8100): CLIP embeddings, similarity computation, Ridge regression training/prediction
+- VLM Service: OpenAI-compatible API via `@workspace/integrations-openai-ai-server` for structured issue/recommendation generation
+- AI scoring is called on every submission creation; falls back to mock scores if ML service is unavailable
+
+## Services
+
+- **API Server**: Express 5 on port 8080, proxied to /api
+- **Frontend**: Vite dev server (dynamic port), proxied to /
+- **ML Service**: Python FastAPI on port 8100, internal only
+- **Mockup Sandbox**: Vite on port 8081, for component previews

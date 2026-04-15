@@ -73,6 +73,36 @@ export type SubmissionScoreJson = {
   sustain: number;
 };
 
+export type SubmissionAiPillarsJson = {
+  sort?: number;
+  set?: number;
+  shine?: number;
+  standardize?: number;
+  sustain?: number;
+} | null;
+
+export type SubmissionScoringMode =
+  | (typeof SubmissionScoringMode)[keyof typeof SubmissionScoringMode]
+  | null;
+
+export const SubmissionScoringMode = {
+  CALIBRATED: "CALIBRATED",
+  SIMILARITY_ONLY: "SIMILARITY_ONLY",
+  FALLBACK: "FALLBACK",
+} as const;
+
+export interface AIRecommendation {
+  action: string;
+  why: string;
+  location: string;
+}
+
+export interface AIIssue {
+  issue: string;
+  evidence: string;
+  location: string;
+}
+
 export interface Submission {
   id: number;
   areaId: number;
@@ -84,7 +114,62 @@ export interface Submission {
   scoreJson: SubmissionScoreJson;
   suggestionsJson: string[];
   imageUrl: string;
+  similarityToIdeal?: number | null;
+  aiTotalScore?: number | null;
+  aiPillarsJson?: SubmissionAiPillarsJson;
+  aiRecommendationsJson?: AIRecommendation[] | null;
+  aiIssuesJson?: AIIssue[] | null;
+  scoringMode?: SubmissionScoringMode;
+  modelVersion?: string | null;
+  embeddingHash?: string | null;
   createdAt: string;
+}
+
+export type CreateLabelBodyPillarsJson = {
+  sort: number;
+  set: number;
+  shine: number;
+  standardize: number;
+  sustain: number;
+};
+
+export interface CreateLabelBody {
+  submissionId: number;
+  pillarsJson: CreateLabelBodyPillarsJson;
+  totalScore: number;
+}
+
+export type LabelPillarsJson = {
+  sort: number;
+  set: number;
+  shine: number;
+  standardize: number;
+  sustain: number;
+};
+
+export interface Label {
+  id: number;
+  submissionId: number;
+  labeledByUserId: number;
+  pillarsJson: LabelPillarsJson;
+  totalScore: number;
+  createdAt: string;
+}
+
+export interface ModelStatus {
+  areaId: number;
+  labelsCount: number;
+  idealPhotosCount: number;
+  submissionsCount: number;
+  canTrain: boolean;
+  latestScoringMode?: string | null;
+  latestModelVersion?: string | null;
+}
+
+export interface TrainResult {
+  modelVersion: string;
+  samplesUsed: number;
+  mae: number;
 }
 
 export interface ComplianceData {

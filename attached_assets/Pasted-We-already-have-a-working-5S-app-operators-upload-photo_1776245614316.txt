@@ -1,0 +1,100 @@
+We already have a working 5S app (operators upload photos per Area per Shift A/B/C; manager dashboard). Do NOT rebuild. Implement an incremental AI-based scoring + recommendation engine that is reliable and repeatable and “trained” on our images.
+
+NON-NEGOTIABLES
+- Score is PER PHOTO.
+- Must compare submitted photo to Ideal photo(s) for that Area.
+- Scoring must be repeatable: same image => same score always.
+- Recommendations must be specific to what is visible in the image and pinpoint exact improvement areas (e.g., “spill near bottom-left of pallet”, “unlabeled bin on right rack”, “tools outside marked boundary near center”).
+- Keep output structured JSON; validate and store. UI shows pillar scores + top 3 actions.
+
+APPROACH (IMPLEMENT THIS)
+A) Deterministic numeric scoring engine (repeatable):
+   - Use a vision embedding model (CLIP ViT-B/32 or similar) locally in a small Python microservice (FastAPI) running inside the Replit project.
+   - Compute embedding vectors for:
+     1) each Ideal photo (per Area)
+     2) each Submission photo
+   - For each Area, create an “ideal centroid embedding” = average of ideal embeddings.
+   - Compute cosine similarity between submission embedding and ideal centroid.
+   - Convert similarity -> total score (0–25) using a calibration model.
+
+B) “Training on our images” (calibration):
+   - Add manager labeling UI to label pillar scores (0–5 each) for a submission photo (“gold labels”).
+   - Train lightweight per-Area (or global) regressors using embeddings as features:
+       - Option 1: Ridge regression / linear regression per pillar + total using scikit-learn.
+       - Option 2 (fallback if few labels): use similarity-based scoring only, but still store labels for later.
+   - Store trained model artifacts (per area) on disk and version them (modelVersion). Ensure deterministic outputs.
+
+C) VLM recommendations (specific + grounded):
+   - Use a VLM API (OpenAI-compatible or Azure) ONLY for explanations/recommendations, not for numeric score.
+   - Feed: submission image + 1-3 ideal images + Area name/category.
+   - Force temperature=0 and JSON-only output with “evidence statements” referencing visible regions (left/right/top/bottom/center).
+   - If VLM fails, fallback to predefined suggestion library based on lowest pillar scores.
+
+IMPLEMENTATION TASKS (INCREMENTAL)
+1) DB schema changes (Prisma) — add to Submission:
+   - embeddingHash (String)
+   - similarityToIdeal (Float)
+   - aiTotalScore (Int)
+   - aiPillarsJson (Json)
+   - aiRecommendationsJson (Json)
+   - aiIssuesJson (Json)
+   - modelVersion (String)
+   - scoringMode (String: "CALIBRATED"|"SIMILARITY_ONLY"|"FALLBACK")
+   Add a Label table:
+   - Label(id, submissionId, labeledByUserId, pillarsJson, totalScore, createdAt)
+   Add IdealPhoto.embedding (Float[] or Json array) OR store in separate IdealEmbedding table.
+
+2) Add Python service /ml_service:
+   - FastAPI endpoints:
+     - POST /embed (image path) -> embedding vector (list[float])
+     - POST /train (areaId) -> trains regressors from labeled submissions; saves model artifact
+     - POST /predict (areaId, embedding) -> returns pillar scores + total + similarity
+   - Use open_clip or transformers CLIP + scikit-learn.
+   - Ensure deterministic behavior (fixed seeds, eval mode, no dropout).
+
+3) Backend Node integration:
+   - On submission create:
+     - call /embed for the uploaded image
+     - compute similarity vs ideal centroid (or ask /predict which returns similarity + scores)
+     - get numeric scores from /predict (CALIBRATED if model exists else SIMILARITY_ONLY)
+     - then call VLM for recommendations with temperature=0 and strict JSON schema
+     - store results in Submission fields
+   - Add endpoints:
+     - POST /labels (manager labels a submission)
+     - POST /areas/:id/train (train model for area)
+     - GET /areas/:id/model-status (labels count, modelVersion, lastTrainedAt)
+
+4) Manager UI:
+   - Submission detail page:
+     - show photo, ideal thumbnails, similarity %, pillar scores, total score, confidence indicator
+     - “Label this photo” form (5 sliders 0–5 + notes) -> saves Label
+     - “Train model for this Area” button (disabled until N labels, e.g., >=30)
+   - Add “Model status” widget per area.
+
+5) Repeatability & reliability guardrails:
+   - Numeric scoring MUST come only from embedding+regressor (deterministic).
+   - VLM must NOT change the score. It only generates issues/recommendations.
+   - Set VLM temperature=0; include “output JSON only”.
+   - Add “eval script”:
+       - pick 20 labeled images per area, compute MAE vs labels, show in dashboard.
+
+6) Keep it minimal:
+   - Do not add queues, multi-services beyond the small /ml_service.
+   - If Python deps are too heavy, fallback plan:
+       - Use similarity scoring only (no regressors) but still implement embeddings + labeling + future train hooks.
+
+VLM PROMPT (USE EXACTLY)
+System: "You are a strict 5S auditor. Output ONLY valid JSON. Base statements only on visible evidence."
+User: Provide area context + ask for:
+{
+ "issues":[{"issue":"...","evidence":"...","location":"left/right/top/bottom/center"}],
+ "recommendations":[{"action":"...","why":"...","location":"..."}]
+}
+No extra text.
+
+DELIVERABLE
+- Working incremental upgrade
+- Migration + seed labels optional
+- README: how to run Node + ml_service in Replit, env vars for VLM, how to label and train
+Proceed now; implement step-by-step but only commit minimal necessary code changes.
+``

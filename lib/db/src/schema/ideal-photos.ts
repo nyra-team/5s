@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, timestamp, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { areasTable } from "./areas";
@@ -7,6 +7,7 @@ export const idealPhotosTable = pgTable("ideal_photos", {
   id: serial("id").primaryKey(),
   areaId: integer("area_id").notNull().references(() => areasTable.id),
   imageUrl: text("image_url").notNull(),
+  embeddingJson: jsonb("embedding_json"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

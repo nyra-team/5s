@@ -20,6 +20,10 @@ tags:
     description: Manager dashboard
   - name: ideal-photos
     description: Ideal/reference photos
+  - name: labels
+    description: Manager labeling for AI calibration
+  - name: model
+    description: AI model management
 
 paths:
   /healthz:
@@ -385,6 +389,84 @@ paths:
                 items:
                   $ref: "#/components/schemas/AreaStatus"
 
+  /labels:
+    post:
+      operationId: createLabel
+      tags: [labels]
+      summary: Label a submission with pillar scores (manager only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLabelBody"
+      responses:
+        "201":
+          description: Label created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Label"
+
+  /labels/{submissionId}:
+    get:
+      operationId: getLabels
+      tags: [labels]
+      summary: Get labels for a submission
+      parameters:
+        - name: submissionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Labels for the submission
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Label"
+
+  /areas/{id}/model-status:
+    get:
+      operationId: getAreaModelStatus
+      tags: [model]
+      summary: Get AI model status for an area
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Model status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelStatus"
+
+  /areas/{id}/train:
+    post:
+      operationId: trainAreaModel
+      tags: [model]
+      summary: Train AI model for an area using labeled submissions
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Training result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainResult"
+
 components:
   schemas:
     HealthStatus:
@@ -524,6 +606,46 @@ components:
             type: string
         imageUrl:
           type: string
+        similarityToIdeal:
+          type: number
+          nullable: true
+        aiTotalScore:
+          type: integer
+          nullable: true
+        aiPillarsJson:
+          type: object
+          nullable: true
+          properties:
+            sort:
+              type: integer
+            set:
+              type: integer
+            shine:
+              type: integer
+            standardize:
+              type: integer
+            sustain:
+              type: integer
+        aiRecommendationsJson:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/AIRecommendation"
+        aiIssuesJson:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/AIIssue"
+        scoringMode:
+          type: string
+          nullable: true
+          enum: [CALIBRATED, SIMILARITY_ONLY, FALLBACK]
+        modelVersion:
+          type: string
+          nullable: true
+        embeddingHash:
+          type: string
+          nullable: true
         createdAt:
           type: string
           format: date-time
@@ -538,6 +660,136 @@ components:
         - suggestionsJson
         - imageUrl
         - createdAt
+
+    AIRecommendation:
+      type: object
+      properties:
+        action:
+          type: string
+        why:
+          type: string
+        location:
+          type: string
+      required:
+        - action
+        - why
+        - location
+
+    AIIssue:
+      type: object
+      properties:
+        issue:
+          type: string
+        evidence:
+          type: string
+        location:
+          type: string
+      required:
+        - issue
+        - evidence
+        - location
+
+    CreateLabelBody:
+      type: object
+      properties:
+        submissionId:
+          type: integer
+        pillarsJson:
+          type: object
+          properties:
+            sort:
+              type: integer
+            set:
+              type: integer
+            shine:
+              type: integer
+            standardize:
+              type: integer
+            sustain:
+              type: integer
+          required: [sort, set, shine, standardize, sustain]
+        totalScore:
+          type: integer
+      required:
+        - submissionId
+        - pillarsJson
+        - totalScore
+
+    Label:
+      type: object
+      properties:
+        id:
+          type: integer
+        submissionId:
+          type: integer
+        labeledByUserId:
+          type: integer
+        pillarsJson:
+          type: object
+          properties:
+            sort:
+              type: integer
+            set:
+              type: integer
+            shine:
+              type: integer
+            standardize:
+              type: integer
+            sustain:
+              type: integer
+          required: [sort, set, shine, standardize, sustain]
+        totalScore:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - submissionId
+        - labeledByUserId
+        - pillarsJson
+        - totalScore
+        - createdAt
+
+    ModelStatus:
+      type: object
+      properties:
+        areaId:
+          type: integer
+        labelsCount:
+          type: integer
+        idealPhotosCount:
+          type: integer
+        submissionsCount:
+          type: integer
+        canTrain:
+          type: boolean
+        latestScoringMode:
+          type: string
+          nullable: true
+        latestModelVersion:
+          type: string
+          nullable: true
+      required:
+        - areaId
+        - labelsCount
+        - idealPhotosCount
+        - submissionsCount
+        - canTrain
+
+    TrainResult:
+      type: object
+      properties:
+        modelVersion:
+          type: string
+        samplesUsed:
+          type: integer
+        mae:
+          type: number
+      required:
+        - modelVersion
+        - samplesUsed
+        - mae
 
     ComplianceData:
       type: object
