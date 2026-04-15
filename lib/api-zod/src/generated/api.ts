@@ -50,6 +50,36 @@ export const ListAreasResponseItem = zod.object({
 export const ListAreasResponse = zod.array(ListAreasResponseItem);
 
 /**
+ * @summary Create a new area
+ */
+export const CreateAreaBody = zod.object({
+  name: zod.string(),
+});
+
+/**
+ * @summary Update an area name
+ */
+export const UpdateAreaParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateAreaBody = zod.object({
+  name: zod.string(),
+});
+
+export const UpdateAreaResponse = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+});
+
+/**
+ * @summary Delete an area
+ */
+export const DeleteAreaParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
  * @summary Upload ideal/reference photo for an area
  */
 export const UploadIdealPhotoParams = zod.object({

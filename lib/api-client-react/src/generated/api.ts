@@ -20,6 +20,7 @@ import type {
   Area,
   AreaStatus,
   ComplianceData,
+  CreateAreaBody,
   CreateSubmissionBody,
   CurrentShift,
   DashboardSummary,
@@ -33,6 +34,7 @@ import type {
   LoginResponse,
   ScoreSummary,
   Submission,
+  UpdateAreaBody,
   UploadIdealPhotoBody,
   User,
 } from "./api.schemas";
@@ -334,6 +336,263 @@ export function useListAreas<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Create a new area
+ */
+export const getCreateAreaUrl = () => {
+  return `/api/areas`;
+};
+
+export const createArea = async (
+  createAreaBody: CreateAreaBody,
+  options?: RequestInit,
+): Promise<Area> => {
+  return customFetch<Area>(getCreateAreaUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createAreaBody),
+  });
+};
+
+export const getCreateAreaMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createArea>>,
+    TError,
+    { data: BodyType<CreateAreaBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createArea>>,
+  TError,
+  { data: BodyType<CreateAreaBody> },
+  TContext
+> => {
+  const mutationKey = ["createArea"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createArea>>,
+    { data: BodyType<CreateAreaBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createArea(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateAreaMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createArea>>
+>;
+export type CreateAreaMutationBody = BodyType<CreateAreaBody>;
+export type CreateAreaMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create a new area
+ */
+export const useCreateArea = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createArea>>,
+    TError,
+    { data: BodyType<CreateAreaBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createArea>>,
+  TError,
+  { data: BodyType<CreateAreaBody> },
+  TContext
+> => {
+  return useMutation(getCreateAreaMutationOptions(options));
+};
+
+/**
+ * @summary Update an area name
+ */
+export const getUpdateAreaUrl = (id: number) => {
+  return `/api/areas/${id}`;
+};
+
+export const updateArea = async (
+  id: number,
+  updateAreaBody: UpdateAreaBody,
+  options?: RequestInit,
+): Promise<Area> => {
+  return customFetch<Area>(getUpdateAreaUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateAreaBody),
+  });
+};
+
+export const getUpdateAreaMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateArea>>,
+    TError,
+    { id: number; data: BodyType<UpdateAreaBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateArea>>,
+  TError,
+  { id: number; data: BodyType<UpdateAreaBody> },
+  TContext
+> => {
+  const mutationKey = ["updateArea"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateArea>>,
+    { id: number; data: BodyType<UpdateAreaBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateArea(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateAreaMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateArea>>
+>;
+export type UpdateAreaMutationBody = BodyType<UpdateAreaBody>;
+export type UpdateAreaMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Update an area name
+ */
+export const useUpdateArea = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateArea>>,
+    TError,
+    { id: number; data: BodyType<UpdateAreaBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateArea>>,
+  TError,
+  { id: number; data: BodyType<UpdateAreaBody> },
+  TContext
+> => {
+  return useMutation(getUpdateAreaMutationOptions(options));
+};
+
+/**
+ * @summary Delete an area
+ */
+export const getDeleteAreaUrl = (id: number) => {
+  return `/api/areas/${id}`;
+};
+
+export const deleteArea = async (
+  id: number,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteAreaUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteAreaMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteArea>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteArea>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deleteArea"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteArea>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteArea(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteAreaMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteArea>>
+>;
+
+export type DeleteAreaMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Delete an area
+ */
+export const useDeleteArea = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteArea>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteArea>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeleteAreaMutationOptions(options));
+};
 
 /**
  * @summary Upload ideal/reference photo for an area

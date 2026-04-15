@@ -9,6 +9,7 @@
 export * from "./area";
 export * from "./areaStatus";
 export * from "./complianceData";
+export * from "./createAreaBody";
 export * from "./createSubmissionBody";
 export * from "./currentShift";
 export * from "./currentShiftShift";
@@ -28,6 +29,7 @@ export * from "./scoreSummary";
 export * from "./submission";
 export * from "./submissionScoreJson";
 export * from "./submissionShift";
+export * from "./updateAreaBody";
 export * from "./uploadIdealPhotoBody";
 export * from "./user";
 export * from "./userRole";

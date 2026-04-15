@@ -93,6 +93,73 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Area"
+    post:
+      operationId: createArea
+      tags: [areas]
+      summary: Create a new area
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAreaBody"
+      responses:
+        "201":
+          description: Area created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Area"
+
+  /areas/{id}:
+    patch:
+      operationId: updateArea
+      tags: [areas]
+      summary: Update an area name
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAreaBody"
+      responses:
+        "200":
+          description: Area updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Area"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteArea
+      tags: [areas]
+      summary: Delete an area
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Area deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /areas/{id}/ideal-photo:
     post:
@@ -383,6 +450,22 @@ components:
           type: string
       required:
         - id
+        - name
+
+    CreateAreaBody:
+      type: object
+      properties:
+        name:
+          type: string
+      required:
+        - name
+
+    UpdateAreaBody:
+      type: object
+      properties:
+        name:
+          type: string
+      required:
         - name
 
     IdealPhoto:

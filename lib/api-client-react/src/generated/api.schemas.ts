@@ -41,6 +41,14 @@ export interface Area {
   name: string;
 }
 
+export interface CreateAreaBody {
+  name: string;
+}
+
+export interface UpdateAreaBody {
+  name: string;
+}
+
 export interface IdealPhoto {
   id: number;
   areaId: number;
