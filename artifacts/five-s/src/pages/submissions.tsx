@@ -156,7 +156,7 @@ function LabelForm({
       </div>
       <div className="flex items-center justify-between mt-3">
         <span className="text-xs font-bold text-amber-800">
-          Total: {totalScore}/25
+          Total: {Math.round(totalScore * 4)}%
         </span>
         <Button
           size="sm"
@@ -223,14 +223,14 @@ function SubmissionDetail({
           </div>
           <div
             className={`px-4 py-2 rounded-lg border-2 font-bold text-xl ${
-              sub.scoreTotal >= 20
+              sub.scoreTotal * 4 >= 80
                 ? "text-green-600 border-green-200 bg-green-50"
-                : sub.scoreTotal >= 15
+                : sub.scoreTotal * 4 >= 60
                   ? "text-yellow-600 border-yellow-200 bg-yellow-50"
                   : "text-red-600 border-red-200 bg-red-50"
             }`}
           >
-            {sub.scoreTotal} / 25
+            {Math.round(sub.scoreTotal * 4)}%
           </div>
         </div>
       </DialogHeader>
@@ -568,9 +568,9 @@ export default function Submissions() {
                       </TableCell>
                       <TableCell>
                         <span
-                          className={`font-bold ${sub.scoreTotal >= 20 ? "text-green-600" : sub.scoreTotal >= 15 ? "text-yellow-600" : "text-red-600"}`}
+                          className={`font-bold ${sub.scoreTotal * 4 >= 80 ? "text-green-600" : sub.scoreTotal * 4 >= 60 ? "text-yellow-600" : "text-red-600"}`}
                         >
-                          {sub.scoreTotal}/25
+                          {Math.round(sub.scoreTotal * 4)}%
                         </span>
                       </TableCell>
                       <TableCell>

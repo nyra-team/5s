@@ -49,9 +49,9 @@ export default function Dashboard() {
             <Activity className="w-5 h-5 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-4xl font-bold">{summary?.todayAvgScore?.toFixed(1) || "0.0"}</div>
+            <div className="text-4xl font-bold">{summary?.todayAvgScore ? Math.round(summary.todayAvgScore * 4) : 0}%</div>
             <p className="text-xs text-muted-foreground mt-1 font-medium">
-              Out of 25 possible points
+              Out of 100%
             </p>
           </CardContent>
         </Card>
@@ -90,7 +90,7 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent className="h-80">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={scoresByArea} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+              <BarChart data={scoresByArea?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                 <XAxis 
                   dataKey="label" 
@@ -102,7 +102,7 @@ export default function Dashboard() {
                   height={60}
                 />
                 <YAxis 
-                  domain={[0, 25]} 
+                  domain={[0, 100]} 
                   axisLine={false}
                   tickLine={false}
                   tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
@@ -110,6 +110,7 @@ export default function Dashboard() {
                 <Tooltip 
                   cursor={{ fill: "hsl(var(--muted)/0.5)" }}
                   contentStyle={{ borderRadius: "8px", border: "1px solid hsl(var(--border))", fontWeight: "bold" }}
+                  formatter={(value: number) => [`${value}%`, "Avg Score"]}
                 />
                 <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={50} />
               </BarChart>
@@ -123,11 +124,11 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent className="h-80">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={scoresByShift} margin={{ top: 10, right: 10, left: -20, bottom: 0 }} layout="vertical">
+              <BarChart data={scoresByShift?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))} margin={{ top: 10, right: 10, left: -20, bottom: 0 }} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
                 <XAxis 
                   type="number" 
-                  domain={[0, 25]} 
+                  domain={[0, 100]} 
                   axisLine={false}
                   tickLine={false}
                   tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
@@ -142,6 +143,7 @@ export default function Dashboard() {
                 <Tooltip 
                   cursor={{ fill: "hsl(var(--muted)/0.5)" }}
                   contentStyle={{ borderRadius: "8px", border: "1px solid hsl(var(--border))", fontWeight: "bold" }}
+                  formatter={(value: number) => [`${value}%`, "Avg Score"]}
                 />
                 <Bar dataKey="avgScore" fill="hsl(var(--secondary))" radius={[0, 4, 4, 0]} barSize={40} />
               </BarChart>

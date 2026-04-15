@@ -190,8 +190,9 @@ function AreaCard({ status, selectedShift }: { status: AreaStatus; selectedShift
   const isMutating = createSubmission.isPending || reuploadSubmission.isPending;
 
   if (status.submitted && status.submission) {
-    const scoreColor = status.submission.scoreTotal >= 20 ? "text-green-600 bg-green-50 border-green-200" 
-      : status.submission.scoreTotal >= 15 ? "text-yellow-600 bg-yellow-50 border-yellow-200" 
+    const scorePercent = status.submission.scoreTotal * 4;
+    const scoreColor = scorePercent >= 80 ? "text-green-600 bg-green-50 border-green-200" 
+      : scorePercent >= 60 ? "text-yellow-600 bg-yellow-50 border-yellow-200" 
       : "text-red-600 bg-red-50 border-red-200";
 
     return (
@@ -216,7 +217,7 @@ function AreaCard({ status, selectedShift }: { status: AreaStatus; selectedShift
               <span className="font-bold text-green-600 uppercase tracking-wider text-sm">Completed</span>
             </div>
             <div className={`px-3 py-1 rounded-full border font-bold ${scoreColor}`}>
-              SCORE: {status.submission.scoreTotal}/25
+              SCORE: {Math.round(scorePercent)}%
             </div>
           </div>
           <div className="p-4 bg-gray-50 flex-1">
