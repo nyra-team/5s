@@ -5,7 +5,9 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { ReuploadSubmissionBodyShift } from "./reuploadSubmissionBodyShift";
 
 export type ReuploadSubmissionBody = {
   photo: Blob;
+  shift?: ReuploadSubmissionBodyShift;
 };

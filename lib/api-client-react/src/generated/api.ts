@@ -28,6 +28,7 @@ import type {
   ErrorResponse,
   GetDashboardComplianceParams,
   GetDashboardScoresParams,
+  GetOperatorStatusParams,
   HealthStatus,
   IdealPhoto,
   Label,
@@ -883,6 +884,9 @@ export const createSubmission = async (
   const formData = new FormData();
   formData.append(`areaId`, createSubmissionBody.areaId.toString());
   formData.append(`photo`, createSubmissionBody.photo);
+  if (createSubmissionBody.shift !== undefined) {
+    formData.append(`shift`, createSubmissionBody.shift);
+  }
 
   return customFetch<Submission>(getCreateSubmissionUrl(), {
     ...options,
@@ -1059,6 +1063,9 @@ export const reuploadSubmission = async (
 ): Promise<Submission> => {
   const formData = new FormData();
   formData.append(`photo`, reuploadSubmissionBody.photo);
+  if (reuploadSubmissionBody.shift !== undefined) {
+    formData.append(`shift`, reuploadSubmissionBody.shift);
+  }
 
   return customFetch<Submission>(getReuploadSubmissionUrl(id), {
     ...options,
@@ -1484,41 +1491,60 @@ export function useGetCurrentShift<
 /**
  * @summary Get operator submission status for current shift
  */
-export const getGetOperatorStatusUrl = () => {
-  return `/api/operator/status`;
+export const getGetOperatorStatusUrl = (params?: GetOperatorStatusParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/operator/status?${stringifiedParams}`
+    : `/api/operator/status`;
 };
 
 export const getOperatorStatus = async (
+  params?: GetOperatorStatusParams,
   options?: RequestInit,
 ): Promise<AreaStatus[]> => {
-  return customFetch<AreaStatus[]>(getGetOperatorStatusUrl(), {
+  return customFetch<AreaStatus[]>(getGetOperatorStatusUrl(params), {
     ...options,
     method: "GET",
   });
 };
 
-export const getGetOperatorStatusQueryKey = () => {
-  return [`/api/operator/status`] as const;
+export const getGetOperatorStatusQueryKey = (
+  params?: GetOperatorStatusParams,
+) => {
+  return [`/api/operator/status`, ...(params ? [params] : [])] as const;
 };
 
 export const getGetOperatorStatusQueryOptions = <
   TData = Awaited<ReturnType<typeof getOperatorStatus>>,
   TError = ErrorType<unknown>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getOperatorStatus>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}) => {
+>(
+  params?: GetOperatorStatusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOperatorStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey = queryOptions?.queryKey ?? getGetOperatorStatusQueryKey();
+  const queryKey =
+    queryOptions?.queryKey ?? getGetOperatorStatusQueryKey(params);
 
   const queryFn: QueryFunction<
     Awaited<ReturnType<typeof getOperatorStatus>>
-  > = ({ signal }) => getOperatorStatus({ signal, ...requestOptions });
+  > = ({ signal }) => getOperatorStatus(params, { signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof getOperatorStatus>>,
@@ -1539,15 +1565,18 @@ export type GetOperatorStatusQueryError = ErrorType<unknown>;
 export function useGetOperatorStatus<
   TData = Awaited<ReturnType<typeof getOperatorStatus>>,
   TError = ErrorType<unknown>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getOperatorStatus>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetOperatorStatusQueryOptions(options);
+>(
+  params?: GetOperatorStatusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOperatorStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOperatorStatusQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

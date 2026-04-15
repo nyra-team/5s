@@ -1,10 +1,39 @@
 import { useAuth } from "@/lib/auth";
 import { Link, useLocation } from "wouter";
 import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List } from "lucide-react";
+import { useState, useEffect } from "react";
+
+function useISTClock() {
+  const [time, setTime] = useState(() =>
+    new Date().toLocaleTimeString("en-US", {
+      timeZone: "Asia/Kolkata",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    })
+  );
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setTime(
+        new Date().toLocaleTimeString("en-US", {
+          timeZone: "Asia/Kolkata",
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        })
+      );
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  return time;
+}
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const [location] = useLocation();
+  const istTime = useISTClock();
 
   if (!user) return <>{children}</>;
 
@@ -20,6 +49,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-4">
+            <span className="text-sm font-mono font-medium opacity-90">
+              {istTime} IST
+            </span>
             <span className="text-sm font-medium opacity-80 hidden sm:inline-block">
               {user.email}
             </span>

@@ -234,13 +234,33 @@ export const ListSubmissionsShift = {
   C: "C",
 } as const;
 
+export type CreateSubmissionBodyShift =
+  (typeof CreateSubmissionBodyShift)[keyof typeof CreateSubmissionBodyShift];
+
+export const CreateSubmissionBodyShift = {
+  A: "A",
+  B: "B",
+  C: "C",
+} as const;
+
 export type CreateSubmissionBody = {
   areaId: number;
   photo: Blob;
+  shift?: CreateSubmissionBodyShift;
 };
+
+export type ReuploadSubmissionBodyShift =
+  (typeof ReuploadSubmissionBodyShift)[keyof typeof ReuploadSubmissionBodyShift];
+
+export const ReuploadSubmissionBodyShift = {
+  A: "A",
+  B: "B",
+  C: "C",
+} as const;
 
 export type ReuploadSubmissionBody = {
   photo: Blob;
+  shift?: ReuploadSubmissionBodyShift;
 };
 
 export type GetDashboardComplianceParams = {
@@ -269,4 +289,20 @@ export const GetDashboardScoresGroupBy = {
   area: "area",
   shift: "shift",
   day: "day",
+} as const;
+
+export type GetOperatorStatusParams = {
+  /**
+   * Override auto-detected shift
+   */
+  shift?: GetOperatorStatusShift;
+};
+
+export type GetOperatorStatusShift =
+  (typeof GetOperatorStatusShift)[keyof typeof GetOperatorStatusShift];
+
+export const GetOperatorStatusShift = {
+  A: "A",
+  B: "B",
+  C: "C",
 } as const;

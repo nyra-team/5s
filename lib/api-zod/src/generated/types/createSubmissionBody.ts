@@ -5,8 +5,10 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { CreateSubmissionBodyShift } from "./createSubmissionBodyShift";
 
 export type CreateSubmissionBody = {
   areaId: number;
   photo: Blob;
+  shift?: CreateSubmissionBodyShift;
 };

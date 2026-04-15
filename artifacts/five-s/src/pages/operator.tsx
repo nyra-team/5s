@@ -8,10 +8,21 @@ import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { format } from "date-fns";
 
+const SHIFT_OPTIONS = [
+  { value: "A" as const, label: "Shift A (6 AM – 2 PM)" },
+  { value: "B" as const, label: "Shift B (2 PM – 10 PM)" },
+  { value: "C" as const, label: "Shift C (10 PM – 6 AM)" },
+];
+
 export default function OperatorHome() {
-  const { data: shift, isLoading: shiftLoading } = useGetCurrentShift();
-  const { data: statuses, isLoading: statusLoading } = useGetOperatorStatus();
-  
+  const { data: currentShift, isLoading: shiftLoading } = useGetCurrentShift();
+  const [selectedShift, setSelectedShift] = useState<"A" | "B" | "C" | null>(null);
+
+  const activeShift = selectedShift ?? currentShift?.shift ?? "A";
+  const { data: statuses, isLoading: statusLoading } = useGetOperatorStatus(
+    { shift: activeShift as "A" | "B" | "C" },
+  );
+
   if (shiftLoading || statusLoading) {
     return (
       <div className="flex justify-center py-12">
@@ -23,13 +34,21 @@ export default function OperatorHome() {
   return (
     <div className="space-y-6 pb-20">
       <div className="bg-white p-6 rounded-xl border border-border shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
+        <div className="flex-1">
           <h1 className="text-2xl font-bold tracking-tight">Active Shift</h1>
-          {shift && (
-            <p className="text-muted-foreground mt-1 font-mono">
-              Shift {shift.shift} ({shift.startTime} - {shift.endTime})
-            </p>
-          )}
+          <div className="mt-2">
+            <select
+              value={activeShift}
+              onChange={(e) => setSelectedShift(e.target.value as "A" | "B" | "C")}
+              className="px-3 py-2 border border-border rounded-lg bg-white text-sm font-mono font-medium focus:outline-none focus:ring-2 focus:ring-primary/50"
+            >
+              {SHIFT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}{currentShift?.shift === opt.value ? " (current)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
         <div className="px-4 py-2 bg-primary/10 text-primary font-bold rounded-lg border border-primary/20">
           {statuses?.filter(s => s.submitted).length || 0} / {statuses?.length || 0} COMPLETED
@@ -40,7 +59,7 @@ export default function OperatorHome() {
         <h2 className="text-xl font-bold tracking-tight border-b pb-2">Assigned Areas</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {statuses?.map((status) => (
-            <AreaCard key={status.areaId} status={status} />
+            <AreaCard key={status.areaId} status={status} selectedShift={activeShift} />
           ))}
           {statuses?.length === 0 && (
             <p className="text-muted-foreground py-8 text-center col-span-full">No areas assigned for this shift.</p>
@@ -51,7 +70,7 @@ export default function OperatorHome() {
   );
 }
 
-function AreaCard({ status }: { status: AreaStatus }) {
+function AreaCard({ status, selectedShift }: { status: AreaStatus; selectedShift: "A" | "B" | "C" }) {
   const [isSubmitOpen, setIsSubmitOpen] = useState(false);
   const [isReuploadMode, setIsReuploadMode] = useState(false);
   const [photo, setPhoto] = useState<File | null>(null);
@@ -118,7 +137,7 @@ function AreaCard({ status }: { status: AreaStatus }) {
     if (isReuploadMode && status.submission) {
       reuploadSubmission.mutate({
         id: status.submission.id,
-        data: { photo: photo } as any,
+        data: { photo: photo as Blob, shift: selectedShift },
       }, {
         onSuccess: () => {
           toast({
@@ -143,8 +162,9 @@ function AreaCard({ status }: { status: AreaStatus }) {
       createSubmission.mutate({
         data: {
           areaId: status.areaId,
-          photo: photo,
-        } as any,
+          photo: photo as Blob,
+          shift: selectedShift,
+        },
       }, {
         onSuccess: () => {
           toast({

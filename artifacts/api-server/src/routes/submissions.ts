@@ -114,7 +114,9 @@ router.post(
       return;
     }
 
-    const { shift } = getCurrentShift();
+    const bodyShift = req.body.shift as string | undefined;
+    const validShifts = ["A", "B", "C"];
+    const shift = bodyShift && validShifts.includes(bodyShift) ? bodyShift : getCurrentShift().shift;
     const imageUrl = `/uploads/${file.filename}`;
 
     const [area] = await db
@@ -206,6 +208,10 @@ router.put(
 
     const imageUrl = `/uploads/${file.filename}`;
 
+    const bodyShift = req.body.shift as string | undefined;
+    const validShifts = ["A", "B", "C"];
+    const shift = bodyShift && validShifts.includes(bodyShift) ? bodyShift : existing.shift;
+
     const [area] = await db
       .select()
       .from(areasTable)
@@ -229,6 +235,7 @@ router.put(
       .update(submissionsTable)
       .set({
         imageUrl,
+        shift,
         scoreTotal: finalScoreTotal,
         scoreJson: finalScoreJson,
         suggestionsJson: finalSuggestions,
@@ -305,7 +312,9 @@ router.get("/shift/current", authMiddleware, async (_req, res): Promise<void> =>
 
 router.get("/operator/status", authMiddleware, async (req, res): Promise<void> => {
   const { userId } = (req as any).user;
-  const { shift } = getCurrentShift();
+  const queryShift = req.query.shift as string | undefined;
+  const validShifts = ["A", "B", "C"];
+  const shift = queryShift && validShifts.includes(queryShift) ? queryShift : getCurrentShift().shift;
 
   const now = new Date();
   const y = now.getFullYear();

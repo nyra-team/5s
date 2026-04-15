@@ -175,6 +175,7 @@ export const ListSubmissionsResponse = zod.array(ListSubmissionsResponseItem);
 export const CreateSubmissionBody = zod.object({
   areaId: zod.number(),
   photo: zod.instanceof(File),
+  shift: zod.enum(["A", "B", "C"]).optional(),
 });
 
 /**
@@ -247,6 +248,7 @@ export const ReuploadSubmissionParams = zod.object({
 
 export const ReuploadSubmissionBody = zod.object({
   photo: zod.instanceof(File),
+  shift: zod.enum(["A", "B", "C"]).optional(),
 });
 
 export const ReuploadSubmissionResponse = zod.object({
@@ -357,6 +359,13 @@ export const GetCurrentShiftResponse = zod.object({
 /**
  * @summary Get operator submission status for current shift
  */
+export const GetOperatorStatusQueryParams = zod.object({
+  shift: zod
+    .enum(["A", "B", "C"])
+    .optional()
+    .describe("Override auto-detected shift"),
+});
+
 export const GetOperatorStatusResponseItem = zod.object({
   areaId: zod.number(),
   areaName: zod.string(),

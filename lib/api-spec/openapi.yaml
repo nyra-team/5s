@@ -262,6 +262,9 @@ paths:
                 photo:
                   type: string
                   format: binary
+                shift:
+                  type: string
+                  enum: [A, B, C]
               required:
                 - areaId
                 - photo
@@ -321,6 +324,9 @@ paths:
                 photo:
                   type: string
                   format: binary
+                shift:
+                  type: string
+                  enum: [A, B, C]
       responses:
         "200":
           description: Submission updated with new photo and re-scored
@@ -422,6 +428,14 @@ paths:
       operationId: getOperatorStatus
       tags: [submissions]
       summary: Get operator submission status for current shift
+      parameters:
+        - name: shift
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [A, B, C]
+          description: Override auto-detected shift
       responses:
         "200":
           description: Status per area for current shift
