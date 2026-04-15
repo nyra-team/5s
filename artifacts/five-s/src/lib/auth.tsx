@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { useGetMe, User } from "@workspace/api-client-react";
+import { useGetMe, User, setAuthTokenGetter } from "@workspace/api-client-react";
 
 interface AuthContextType {
   user: User | null;
@@ -12,6 +12,10 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(localStorage.getItem("token"));
+
+  useEffect(() => {
+    setAuthTokenGetter(() => localStorage.getItem("token"));
+  }, []);
   
   const { data: user, isLoading, error, refetch } = useGetMe({
     query: {
