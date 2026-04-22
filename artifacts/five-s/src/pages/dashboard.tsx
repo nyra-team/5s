@@ -1,12 +1,58 @@
 import { useGetDashboardCompliance, useGetDashboardScores, useGetDashboardSummary } from "@workspace/api-client-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { ClipboardCheck, Target, AlertTriangle, Activity } from "lucide-react";
 import { format } from "date-fns";
 
+function HeroStat({
+  label,
+  value,
+  hint,
+  icon: Icon,
+  tone = "default",
+}: {
+  label: string;
+  value: React.ReactNode;
+  hint: React.ReactNode;
+  icon: React.ComponentType<{ className?: string }>;
+  tone?: "default" | "warn" | "good";
+}) {
+  const iconColor =
+    tone === "warn" ? "text-amber-600" :
+    tone === "good" ? "text-emerald-600" :
+    "text-primary";
+  const iconBg =
+    tone === "warn" ? "bg-amber-50" :
+    tone === "good" ? "bg-emerald-50" :
+    "bg-primary/10";
+
+  return (
+    <div className="bg-card rounded-2xl shadow-soft p-6 flex flex-col gap-4 transition-shadow hover:shadow-elevated">
+      <div className="flex items-center justify-between">
+        <p className="eyebrow">{label}</p>
+        <div className={`w-8 h-8 rounded-full ${iconBg} flex items-center justify-center`}>
+          <Icon className={`w-4 h-4 ${iconColor}`} />
+        </div>
+      </div>
+      <div className="text-[40px] leading-none font-semibold tracking-tight tabular-nums">
+        {value}
+      </div>
+      <p className="text-[13px] text-muted-foreground">{hint}</p>
+    </div>
+  );
+}
+
+const tooltipStyle = {
+  borderRadius: "12px",
+  border: "1px solid hsl(var(--border))",
+  fontSize: "12px",
+  fontWeight: 500,
+  boxShadow: "0 8px 24px rgba(15,23,42,0.08)",
+  padding: "8px 12px",
+};
+
 export default function Dashboard() {
   const today = format(new Date(), "yyyy-MM-dd");
-  
+
   const { data: summary, isLoading: sumLoading } = useGetDashboardSummary();
   const { data: compliance, isLoading: compLoading } = useGetDashboardCompliance({ date: today });
   const { data: scoresByArea, isLoading: scoresLoading } = useGetDashboardScores({ date: today, groupBy: "area" });
@@ -14,143 +60,127 @@ export default function Dashboard() {
 
   if (sumLoading || compLoading || scoresLoading || shiftLoading) {
     return (
-      <div className="flex justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      <div className="flex justify-center py-16">
+        <div className="animate-spin rounded-full h-8 w-8 border-2 border-muted border-t-primary"></div>
       </div>
     );
   }
 
-  const isCompliant = (compliance?.compliancePercent || 0) >= 80;
+  const compliancePercent = Math.round(compliance?.compliancePercent || 0);
+  const isCompliant = compliancePercent >= 80;
+  const missingCount = compliance?.missingAreas?.length || 0;
 
   return (
-    <div className="space-y-8 pb-12">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Factory Overview</h1>
-        <p className="text-muted-foreground mt-1">Live metrics and compliance data for {format(new Date(), "MMMM d, yyyy")}</p>
-      </div>
+    <div className="space-y-10 pb-12">
+      <header className="space-y-2">
+        <p className="eyebrow">{format(new Date(), "EEEE, MMMM d")}</p>
+        <h1 className="text-[34px] font-semibold tracking-tight leading-tight">Factory overview</h1>
+        <p className="text-muted-foreground text-[15px]">Live compliance metrics across all shifts</p>
+      </header>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-bold text-muted-foreground uppercase">Today's Compliance</CardTitle>
-            <Target className={`w-5 h-5 ${isCompliant ? "text-green-500" : "text-orange-500"}`} />
-          </CardHeader>
-          <CardContent>
-            <div className="text-4xl font-bold">{Math.round(compliance?.compliancePercent || 0)}%</div>
-            <p className="text-xs text-muted-foreground mt-1 font-medium">
-              {compliance?.submittedAreas} of {compliance?.totalAreas} areas evaluated
-            </p>
-          </CardContent>
-        </Card>
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        <HeroStat
+          label="Today's Compliance"
+          value={`${compliancePercent}%`}
+          hint={`${compliance?.submittedAreas} of ${compliance?.totalAreas} areas evaluated`}
+          icon={Target}
+          tone={isCompliant ? "good" : "warn"}
+        />
+        <HeroStat
+          label="Avg 5S Score"
+          value={`${summary?.todayAvgScore ? Math.round(summary.todayAvgScore * 4) : 0}%`}
+          hint="Out of 100%"
+          icon={Activity}
+        />
+        <HeroStat
+          label="Today's Photos"
+          value={summary?.todaySubmissions || 0}
+          hint="Across all active shifts"
+          icon={ClipboardCheck}
+        />
+        <HeroStat
+          label="Missing Areas"
+          value={missingCount}
+          hint={
+            <span className="truncate block" title={compliance?.missingAreas?.join(", ")}>
+              {missingCount ? compliance!.missingAreas!.join(", ") : "All clear"}
+            </span>
+          }
+          icon={AlertTriangle}
+          tone={missingCount > 0 ? "warn" : "good"}
+        />
+      </section>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-bold text-muted-foreground uppercase">Avg 5S Score</CardTitle>
-            <Activity className="w-5 h-5 text-primary" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-4xl font-bold">{summary?.todayAvgScore ? Math.round(summary.todayAvgScore * 4) : 0}%</div>
-            <p className="text-xs text-muted-foreground mt-1 font-medium">
-              Out of 100%
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-bold text-muted-foreground uppercase">Today's Photos</CardTitle>
-            <ClipboardCheck className="w-5 h-5 text-primary" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-4xl font-bold">{summary?.todaySubmissions || 0}</div>
-            <p className="text-xs text-muted-foreground mt-1 font-medium">
-              Across all active shifts
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className={`${(compliance?.missingAreas?.length || 0) > 0 ? 'border-orange-200 bg-orange-50' : ''}`}>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-bold text-muted-foreground uppercase">Missing Areas</CardTitle>
-            <AlertTriangle className={`w-5 h-5 ${(compliance?.missingAreas?.length || 0) > 0 ? "text-orange-500" : "text-muted-foreground"}`} />
-          </CardHeader>
-          <CardContent>
-            <div className="text-4xl font-bold">{compliance?.missingAreas?.length || 0}</div>
-            <p className="text-xs text-muted-foreground mt-1 font-medium truncate" title={compliance?.missingAreas?.join(", ")}>
-              {compliance?.missingAreas?.length ? compliance.missingAreas.join(", ") : "All clear"}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <Card className="col-span-1">
-          <CardHeader>
-            <CardTitle>Average Scores by Area</CardTitle>
-          </CardHeader>
-          <CardContent className="h-80">
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-card rounded-2xl shadow-soft p-6">
+          <div className="mb-5">
+            <p className="eyebrow">By Area</p>
+            <h2 className="text-lg font-semibold tracking-tight mt-1">Average scores</h2>
+          </div>
+          <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={scoresByArea?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                <XAxis 
-                  dataKey="label" 
+                <CartesianGrid strokeDasharray="2 4" vertical={false} stroke="hsl(var(--border))" />
+                <XAxis
+                  dataKey="label"
                   axisLine={false}
                   tickLine={false}
-                  tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
-                  angle={-45}
+                  tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                  angle={-30}
                   textAnchor="end"
                   height={60}
                 />
-                <YAxis 
-                  domain={[0, 100]} 
+                <YAxis
+                  domain={[0, 100]}
                   axisLine={false}
                   tickLine={false}
-                  tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
                 />
-                <Tooltip 
-                  cursor={{ fill: "hsl(var(--muted)/0.5)" }}
-                  contentStyle={{ borderRadius: "8px", border: "1px solid hsl(var(--border))", fontWeight: "bold" }}
+                <Tooltip
+                  cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
+                  contentStyle={tooltipStyle}
                   formatter={(value: number) => [`${value}%`, "Avg Score"]}
                 />
-                <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={50} />
+                <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} maxBarSize={42} />
               </BarChart>
             </ResponsiveContainer>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
-        <Card className="col-span-1">
-          <CardHeader>
-            <CardTitle>Average Scores by Shift</CardTitle>
-          </CardHeader>
-          <CardContent className="h-80">
+        <div className="bg-card rounded-2xl shadow-soft p-6">
+          <div className="mb-5">
+            <p className="eyebrow">By Shift</p>
+            <h2 className="text-lg font-semibold tracking-tight mt-1">Average scores</h2>
+          </div>
+          <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={scoresByShift?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))} margin={{ top: 10, right: 10, left: -20, bottom: 0 }} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
-                <XAxis 
-                  type="number" 
-                  domain={[0, 100]} 
+              <BarChart data={scoresByShift?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))} margin={{ top: 10, right: 10, left: -10, bottom: 0 }} layout="vertical">
+                <CartesianGrid strokeDasharray="2 4" horizontal={false} stroke="hsl(var(--border))" />
+                <XAxis
+                  type="number"
+                  domain={[0, 100]}
                   axisLine={false}
                   tickLine={false}
-                  tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
                 />
-                <YAxis 
-                  dataKey="label" 
-                  type="category" 
+                <YAxis
+                  dataKey="label"
+                  type="category"
                   axisLine={false}
                   tickLine={false}
-                  tick={{ fontSize: 14, fontWeight: "bold", fill: "hsl(var(--foreground))" }}
+                  tick={{ fontSize: 13, fontWeight: 500, fill: "hsl(var(--foreground))" }}
                 />
-                <Tooltip 
-                  cursor={{ fill: "hsl(var(--muted)/0.5)" }}
-                  contentStyle={{ borderRadius: "8px", border: "1px solid hsl(var(--border))", fontWeight: "bold" }}
+                <Tooltip
+                  cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
+                  contentStyle={tooltipStyle}
                   formatter={(value: number) => [`${value}%`, "Avg Score"]}
                 />
-                <Bar dataKey="avgScore" fill="hsl(var(--secondary))" radius={[0, 4, 4, 0]} barSize={40} />
+                <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[0, 8, 8, 0]} barSize={32} />
               </BarChart>
             </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

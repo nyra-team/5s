@@ -39,74 +39,67 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const isOperator = user.role === "OPERATOR";
 
+  const tabs = [
+    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { href: "/submissions", label: "Submissions", icon: List },
+    { href: "/areas", label: "Areas", icon: LayoutGrid },
+  ];
+
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background">
-      <header className="bg-primary text-primary-foreground shadow-sm sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2 font-bold text-lg tracking-tight">
-            <ClipboardList className="w-5 h-5" />
-            <span>5S TRACKER</span>
+      <header className="glass-bar sticky top-0 z-20 border-b border-black/5">
+        <div className="max-w-6xl mx-auto px-5 sm:px-8 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2.5 font-semibold text-[15px] tracking-tight text-foreground">
+            <div className="w-7 h-7 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shadow-soft">
+              <ClipboardList className="w-4 h-4" />
+            </div>
+            <span>5S Compliance</span>
           </div>
 
-          <div className="flex items-center gap-4">
-            <span className="text-sm font-mono font-medium opacity-90">
-              {istTime} IST
+          <div className="flex items-center gap-3 sm:gap-5">
+            <span className="text-[13px] tabular-nums text-muted-foreground">
+              {istTime} <span className="opacity-60">IST</span>
             </span>
-            <span className="text-sm font-medium opacity-80 hidden sm:inline-block">
+            <span className="text-[13px] text-muted-foreground hidden sm:inline-block">
               {user.email}
             </span>
             <button
               onClick={logout}
-              className="p-2 hover:bg-primary-foreground/10 rounded-md transition-colors"
-              title="Logout"
+              className="p-2 -mr-2 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 transition-colors"
+              title="Sign out"
             >
-              <LogOut className="w-5 h-5" />
+              <LogOut className="w-[18px] h-[18px]" />
             </button>
           </div>
         </div>
+
+        {!isOperator && (
+          <div className="max-w-6xl mx-auto px-5 sm:px-8 pb-3 -mt-1">
+            <nav className="inline-flex items-center gap-1 p-1 bg-black/[0.04] rounded-full">
+              {tabs.map((tab) => {
+                const active = location === tab.href;
+                const Icon = tab.icon;
+                return (
+                  <Link
+                    key={tab.href}
+                    href={tab.href}
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] font-medium transition-all whitespace-nowrap ${
+                      active
+                        ? "bg-white text-foreground shadow-soft"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    {tab.label}
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
+        )}
       </header>
 
-      {!isOperator && (
-        <div className="bg-white border-b border-border shadow-sm overflow-x-auto">
-          <div className="max-w-7xl mx-auto px-4 flex gap-6 h-12">
-            <Link
-              href="/dashboard"
-              className={`flex items-center gap-2 px-1 border-b-2 transition-colors whitespace-nowrap text-sm font-bold ${
-                location === "/dashboard"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <LayoutDashboard className="w-4 h-4" />
-              DASHBOARD
-            </Link>
-            <Link
-              href="/submissions"
-              className={`flex items-center gap-2 px-1 border-b-2 transition-colors whitespace-nowrap text-sm font-bold ${
-                location === "/submissions"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <List className="w-4 h-4" />
-              SUBMISSIONS
-            </Link>
-            <Link
-              href="/areas"
-              className={`flex items-center gap-2 px-1 border-b-2 transition-colors whitespace-nowrap text-sm font-bold ${
-                location === "/areas"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <LayoutGrid className="w-4 h-4" />
-              AREAS
-            </Link>
-          </div>
-        </div>
-      )}
-
-      <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-6 lg:p-8">
+      <main className="flex-1 max-w-6xl mx-auto w-full px-5 sm:px-8 py-8 sm:py-10">
         {children}
       </main>
     </div>

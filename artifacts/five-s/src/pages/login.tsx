@@ -15,7 +15,6 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { ClipboardList } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { useEffect } from "react";
 
@@ -54,7 +53,7 @@ export default function Login() {
         onError: () => {
           toast({
             variant: "destructive",
-            title: "Login Failed",
+            title: "Sign in failed",
             description: "Please check your credentials and try again.",
           });
         },
@@ -63,58 +62,71 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col justify-center items-center p-4">
-      <div className="w-full max-w-sm flex flex-col gap-6">
-        <div className="flex flex-col items-center text-center gap-2">
-          <div className="w-16 h-16 bg-primary text-primary-foreground rounded-lg flex items-center justify-center shadow-md">
-            <ClipboardList className="w-8 h-8" />
+    <div className="min-h-[100dvh] bg-background flex flex-col justify-center items-center p-6">
+      <div className="w-full max-w-[400px] flex flex-col gap-10">
+        <div className="flex flex-col items-center text-center gap-5">
+          <div className="w-14 h-14 bg-primary text-primary-foreground rounded-2xl flex items-center justify-center shadow-elevated">
+            <ClipboardList className="w-7 h-7" />
           </div>
-          <h1 className="text-2xl font-bold text-foreground">5S Compliance</h1>
-          <p className="text-muted-foreground text-sm">Sign in to your account</p>
+          <div className="space-y-2">
+            <h1 className="text-[34px] leading-tight font-semibold tracking-tight text-foreground">
+              Welcome back
+            </h1>
+            <p className="text-muted-foreground text-[15px]">
+              Sign in to your 5S Compliance account
+            </p>
+          </div>
         </div>
 
-        <Card>
-          <CardContent className="pt-6">
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Email</FormLabel>
-                      <FormControl>
-                        <Input placeholder="operator@factory.com" type="email" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="password"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Password</FormLabel>
-                      <FormControl>
-                        <Input placeholder="••••••••" type="password" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <Button 
-                  type="submit" 
-                  className="w-full mt-2" 
-                  size="lg"
-                  disabled={loginMutation.isPending}
-                >
-                  {loginMutation.isPending ? "Signing in..." : "Sign In"}
-                </Button>
-              </form>
-            </Form>
-          </CardContent>
-        </Card>
+        <div className="bg-card rounded-2xl shadow-elevated p-7 sm:p-8">
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
+              <FormField
+                control={form.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-[13px] font-medium text-muted-foreground">Email</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="you@factory.com"
+                        type="email"
+                        className="h-12 rounded-xl text-[15px] bg-secondary/60 border-transparent focus-visible:bg-card focus-visible:border-ring"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="password"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-[13px] font-medium text-muted-foreground">Password</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="••••••••"
+                        type="password"
+                        className="h-12 rounded-xl text-[15px] bg-secondary/60 border-transparent focus-visible:bg-card focus-visible:border-ring"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <Button
+                type="submit"
+                className="w-full h-12 mt-3 rounded-xl text-[15px] font-medium"
+                disabled={loginMutation.isPending}
+              >
+                {loginMutation.isPending ? "Signing in…" : "Sign In"}
+              </Button>
+            </form>
+          </Form>
+        </div>
       </div>
     </div>
   );

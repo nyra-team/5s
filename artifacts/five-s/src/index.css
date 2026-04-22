@@ -42,64 +42,68 @@
   --font-sans: var(--app-font-sans);
   --font-mono: var(--app-font-mono);
 
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 6px);
+  --radius-md: calc(var(--radius) - 4px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-xl: calc(var(--radius) + 6px);
+  --radius-2xl: calc(var(--radius) + 12px);
 }
 
-/* LIGHT MODE - Industrial Steel & Blue */
+/* LIGHT MODE - Apple-inspired soft neutrals + single refined accent */
 :root {
-  --button-outline: rgba(0,0,0, .10);
-  --badge-outline: rgba(0,0,0, .05);
+  --button-outline: rgba(0,0,0, .08);
+  --badge-outline: rgba(0,0,0, .04);
 
-  --opaque-button-border-intensity: -8;
+  --opaque-button-border-intensity: -6;
 
-  --elevate-1: rgba(0,0,0, .03);
-  --elevate-2: rgba(0,0,0, .08);
+  --elevate-1: rgba(0,0,0, .025);
+  --elevate-2: rgba(0,0,0, .05);
 
-  --background: 210 20% 98%;
-  --foreground: 220 30% 15%;
+  /* Off-white background, near-black text */
+  --background: 220 20% 98%;
+  --foreground: 220 15% 12%;
 
-  --border: 214 20% 85%;
+  --border: 220 14% 91%;
   --card: 0 0% 100%;
-  --card-foreground: 220 30% 15%;
-  --card-border: 214 20% 85%;
+  --card-foreground: 220 15% 12%;
+  --card-border: 220 14% 92%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 220 30% 15%;
-  --popover-border: 214 20% 85%;
+  --popover-foreground: 220 15% 12%;
+  --popover-border: 220 14% 92%;
 
-  /* Industrial Blue */
-  --primary: 215 85% 45%;
+  /* Refined Apple-blue accent */
+  --primary: 211 100% 50%;
   --primary-foreground: 0 0% 100%;
 
-  /* Steel Grey */
-  --secondary: 215 15% 40%;
-  --secondary-foreground: 0 0% 100%;
+  /* Soft neutral secondary */
+  --secondary: 220 14% 96%;
+  --secondary-foreground: 220 15% 18%;
 
-  --muted: 210 20% 90%;
-  --muted-foreground: 215 15% 40%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 220 9% 46%;
 
-  --accent: 215 85% 45%;
+  --accent: 211 100% 50%;
   --accent-foreground: 0 0% 100%;
 
-  --destructive: 0 84% 60%;
+  --destructive: 4 84% 58%;
   --destructive-foreground: 0 0% 100%;
 
-  --input: 214 20% 80%;
-  --ring: 215 85% 45%;
+  --input: 220 14% 91%;
+  --ring: 211 100% 50%;
 
-  --chart-1: 215 85% 45%;
-  --chart-2: 160 60% 45%;
-  --chart-3: 30 80% 55%;
-  --chart-4: 280 65% 60%;
+  /* Refined chart palette */
+  --chart-1: 211 100% 50%;
+  --chart-2: 145 63% 45%;
+  --chart-3: 28 95% 58%;
+  --chart-4: 262 70% 60%;
   --chart-5: 340 75% 55%;
 
-  --app-font-sans: "Inter", sans-serif;
-  --app-font-mono: "Menlo", monospace;
-  
-  --radius: 0.25rem; /* Functional, slightly square */
+  --app-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
+  --app-font-mono: "SF Mono", "Menlo", monospace;
+
+  /* Generous corners */
+  --radius: 0.875rem;
 
   --tracking-normal: 0em;
   --spacing: 0.25rem;
@@ -109,6 +113,11 @@
   --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
   --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
   --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+
+  /* Elevation tokens — Apple-style soft shadows */
+  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.03);
+  --shadow-elevated: 0 4px 12px rgba(15, 23, 42, 0.05), 0 2px 6px rgba(15, 23, 42, 0.03);
+  --shadow-floating: 0 12px 32px rgba(15, 23, 42, 0.08), 0 4px 12px rgba(15, 23, 42, 0.04);
 }
 
 @layer base {
@@ -117,5 +126,31 @@
   }
   body {
     @apply font-sans antialiased bg-background text-foreground;
+    font-feature-settings: "cv11", "ss01", "ss03";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  h1, h2, h3, h4 {
+    letter-spacing: -0.02em;
+  }
+}
+
+@layer utilities {
+  .shadow-soft { box-shadow: var(--shadow-soft); }
+  .shadow-elevated { box-shadow: var(--shadow-elevated); }
+  .shadow-floating { box-shadow: var(--shadow-floating); }
+
+  .glass-bar {
+    background-color: rgba(255, 255, 255, 0.72);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+  }
+
+  .eyebrow {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
   }
 }
