@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List } from "lucide-react";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 function useISTClock() {
   const [time, setTime] = useState(() =>
@@ -48,7 +49,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background">
-      <header className="glass-bar sticky top-0 z-20 border-b border-black/5">
+      <header className="glass-bar sticky top-0 z-20 hairline-b">
         <div className="max-w-6xl mx-auto px-5 sm:px-8 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2.5 font-semibold text-[15px] tracking-tight text-foreground">
             <div className="w-7 h-7 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shadow-soft">
@@ -57,16 +58,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <span>5S Compliance</span>
           </div>
 
-          <div className="flex items-center gap-3 sm:gap-5">
+          <div className="flex items-center gap-1.5 sm:gap-3">
             <span className="text-[13px] tabular-nums text-muted-foreground">
               {istTime} <span className="opacity-60">IST</span>
             </span>
-            <span className="text-[13px] text-muted-foreground hidden sm:inline-block">
+            <span className="text-[13px] text-muted-foreground hidden sm:inline-block ml-2">
               {user.email}
             </span>
+            <ThemeToggle />
             <button
               onClick={logout}
-              className="p-2 -mr-2 rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 transition-colors"
+              className="p-2 -mr-2 rounded-full text-muted-foreground hover:text-foreground hover-overlay transition-colors"
               title="Sign out"
             >
               <LogOut className="w-[18px] h-[18px]" />
@@ -76,7 +78,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
         {!isOperator && (
           <div className="max-w-6xl mx-auto px-5 sm:px-8 pb-3 -mt-1">
-            <nav className="inline-flex items-center gap-1 p-1 bg-black/[0.04] rounded-full">
+            <nav className="inline-flex items-center gap-1 p-1 pill-track rounded-full">
               {tabs.map((tab) => {
                 const active = location === tab.href;
                 const Icon = tab.icon;
@@ -93,7 +95,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     {active && (
                       <motion.span
                         layoutId="header-tab-pill"
-                        className="absolute inset-0 bg-white rounded-full shadow-soft"
+                        className="absolute inset-0 pill-thumb-bg rounded-full shadow-soft"
                         transition={{ type: "spring", stiffness: 500, damping: 38 }}
                       />
                     )}

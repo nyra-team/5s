@@ -15,9 +15,23 @@ const SHIFT_OPTIONS = [
 ];
 
 function scoreTone(percent: number) {
-  if (percent >= 80) return { text: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-100" };
-  if (percent >= 60) return { text: "text-amber-700", bg: "bg-amber-50", border: "border-amber-100" };
-  return { text: "text-rose-700", bg: "bg-rose-50", border: "border-rose-100" };
+  if (percent >= 80)
+    return {
+      text: "text-emerald-700 dark:text-emerald-300",
+      bg: "bg-emerald-50 dark:bg-emerald-500/15",
+      border: "border-emerald-100 dark:border-emerald-500/20",
+    };
+  if (percent >= 60)
+    return {
+      text: "text-amber-700 dark:text-amber-300",
+      bg: "bg-amber-50 dark:bg-amber-500/15",
+      border: "border-amber-100 dark:border-amber-500/20",
+    };
+  return {
+    text: "text-rose-700 dark:text-rose-300",
+    bg: "bg-rose-50 dark:bg-rose-500/15",
+    border: "border-rose-100 dark:border-rose-500/20",
+  };
 }
 
 export default function OperatorHome() {
@@ -51,7 +65,7 @@ export default function OperatorHome() {
           </p>
         </div>
 
-        <div role="tablist" className="inline-flex p-1 bg-black/[0.04] rounded-full">
+        <div role="tablist" className="inline-flex p-1 pill-track rounded-full">
           {SHIFT_OPTIONS.map((opt) => {
             const active = activeShift === opt.value;
             const isCurrent = currentShift?.shift === opt.value;
@@ -70,7 +84,7 @@ export default function OperatorHome() {
                 {active && (
                   <motion.span
                     layoutId="shift-tab-pill"
-                    className="absolute inset-0 bg-white rounded-full shadow-soft"
+                    className="absolute inset-0 pill-thumb-bg rounded-full shadow-soft"
                     transition={{ type: "spring", stiffness: 500, damping: 38 }}
                   />
                 )}
@@ -251,7 +265,7 @@ function AreaCard({ status, selectedShift }: { status: AreaStatus; selectedShift
               </motion.div>
             </div>
           </div>
-          <div className="px-5 pt-4 pb-2 flex items-center gap-2 text-emerald-600">
+          <div className="px-5 pt-4 pb-2 flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="w-[18px] h-[18px]" />
             <span className="text-[13px] font-semibold">Completed</span>
           </div>
@@ -339,7 +353,7 @@ function AreaCard({ status, selectedShift }: { status: AreaStatus; selectedShift
         <div className="flex justify-between items-start gap-3">
           <div>
             <h3 className="text-[19px] font-semibold tracking-tight">{status.areaName}</h3>
-            <p className="mt-1.5 inline-flex items-center gap-1.5 text-[13px] font-medium text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full">
+            <p className="mt-1.5 inline-flex items-center gap-1.5 text-[13px] font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/15 px-2.5 py-1 rounded-full">
               <AlertTriangle className="w-3.5 h-3.5" />
               Pending submission
             </p>

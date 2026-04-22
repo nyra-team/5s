@@ -39,9 +39,9 @@ import {
 } from "lucide-react";
 
 function scoreTone(percent: number) {
-  if (percent >= 80) return { text: "text-emerald-700", bg: "bg-emerald-50" };
-  if (percent >= 60) return { text: "text-amber-700", bg: "bg-amber-50" };
-  return { text: "text-rose-700", bg: "bg-rose-50" };
+  if (percent >= 80) return { text: "text-emerald-700 dark:text-emerald-300", bg: "bg-emerald-50 dark:bg-emerald-500/15" };
+  if (percent >= 60) return { text: "text-amber-700 dark:text-amber-300", bg: "bg-amber-50 dark:bg-amber-500/15" };
+  return { text: "text-rose-700 dark:text-rose-300", bg: "bg-rose-50 dark:bg-rose-500/15" };
 }
 
 function ScorePill({ percent, size = "sm" }: { percent: number; size?: "sm" | "lg" }) {
@@ -57,9 +57,9 @@ function ScorePill({ percent, size = "sm" }: { percent: number; size?: "sm" | "l
 function ScoringModeBadge({ mode }: { mode: string | null | undefined }) {
   if (!mode) return null;
   const colors: Record<string, string> = {
-    CALIBRATED: "bg-emerald-50 text-emerald-700",
-    SIMILARITY_ONLY: "bg-sky-50 text-sky-700",
-    FALLBACK: "bg-amber-50 text-amber-700",
+    CALIBRATED: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+    SIMILARITY_ONLY: "bg-sky-50 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300",
+    FALLBACK: "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
   };
   return (
     <span
@@ -131,20 +131,20 @@ function LabelForm({
   };
 
   return (
-    <div className="rounded-2xl p-5 bg-amber-50/70">
+    <div className="rounded-2xl p-5 bg-amber-50/70 dark:bg-amber-500/10">
       <div className="flex items-center gap-2 mb-2">
-        <Tag className="w-4 h-4 text-amber-700" />
-        <h4 className="font-semibold text-[14px] text-amber-900">
+        <Tag className="w-4 h-4 text-amber-700 dark:text-amber-300" />
+        <h4 className="font-semibold text-[14px] text-amber-900 dark:text-amber-200">
           {existingLabel ? "Update label" : "Label this submission"}
         </h4>
       </div>
-      <p className="text-[12.5px] text-amber-800/80 mb-4">
+      <p className="text-[12.5px] text-amber-800/80 dark:text-amber-300/80 mb-4">
         Assign ground-truth pillar scores to calibrate the AI model.
       </p>
       <div className="space-y-2.5">
         {Object.entries(pillars).map(([key, val]) => (
           <div key={key} className="flex items-center gap-3">
-            <span className="capitalize text-[12.5px] font-medium w-20 text-right text-amber-900">
+            <span className="capitalize text-[12.5px] font-medium w-20 text-right text-amber-900 dark:text-amber-200">
               {key}
             </span>
             <input
@@ -155,21 +155,21 @@ function LabelForm({
               onChange={(e) =>
                 setPillars((p) => ({ ...p, [key]: parseInt(e.target.value) }))
               }
-              className="flex-1 h-1.5 accent-amber-600"
+              className="flex-1 h-1.5 accent-amber-600 dark:accent-amber-400"
             />
             <span className="text-[12.5px] font-semibold w-4 tabular-nums">{val}</span>
           </div>
         ))}
       </div>
       <div className="flex items-center justify-between mt-4">
-        <span className="text-[12.5px] font-semibold text-amber-900">
+        <span className="text-[12.5px] font-semibold text-amber-900 dark:text-amber-200">
           Total: {Math.round(totalScore * 4)}%
         </span>
         <Button
           size="sm"
           onClick={handleSubmit}
           disabled={createLabel.isPending}
-          className="bg-amber-600 hover:bg-amber-700 text-white rounded-full"
+          className="bg-amber-600 hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-400 text-white rounded-full"
         >
           {createLabel.isPending
             ? "Saving…"
@@ -179,7 +179,7 @@ function LabelForm({
         </Button>
       </div>
       {createLabel.isSuccess && (
-        <p className="text-[12.5px] text-emerald-700 mt-2 font-medium">
+        <p className="text-[12.5px] text-emerald-700 dark:text-emerald-300 mt-2 font-medium">
           Label saved successfully.
         </p>
       )}
@@ -244,13 +244,13 @@ function SubmissionDetail({
           )}
 
           {hasAI && sub.similarityToIdeal !== null && sub.similarityToIdeal !== undefined && (
-            <div className="flex items-center gap-3 p-3 bg-sky-50 rounded-xl">
-              <Gauge className="w-5 h-5 text-sky-700" />
+            <div className="flex items-center gap-3 p-3 bg-sky-50 dark:bg-sky-500/12 rounded-xl">
+              <Gauge className="w-5 h-5 text-sky-700 dark:text-sky-300" />
               <div>
-                <span className="text-[13px] font-semibold text-sky-900">
+                <span className="text-[13px] font-semibold text-sky-900 dark:text-sky-200">
                   Similarity to ideal: {(sub.similarityToIdeal * 100).toFixed(1)}%
                 </span>
-                <p className="text-[12px] text-sky-700/80">
+                <p className="text-[12px] text-sky-700/80 dark:text-sky-300/80">
                   Cosine similarity between CLIP embeddings
                 </p>
               </div>
@@ -302,17 +302,17 @@ function SubmissionDetail({
                   {sub.aiIssuesJson.map((issue: any, i: number) => (
                     <li
                       key={i}
-                      className="p-3 rounded-xl bg-rose-50/80"
+                      className="p-3 rounded-xl bg-rose-50/80 dark:bg-rose-500/12"
                     >
-                      <div className="font-medium text-[13.5px] text-rose-900">
+                      <div className="font-medium text-[13.5px] text-rose-900 dark:text-rose-200">
                         {issue.issue}
                       </div>
-                      <div className="text-[12.5px] text-rose-800/80 mt-1">
+                      <div className="text-[12.5px] text-rose-800/80 dark:text-rose-300/85 mt-1">
                         {issue.evidence}
                       </div>
                       <div className="flex items-center gap-1 mt-1.5">
-                        <MapPin className="w-3 h-3 text-rose-500" />
-                        <span className="text-[12px] text-rose-600">
+                        <MapPin className="w-3 h-3 text-rose-500 dark:text-rose-400" />
+                        <span className="text-[12px] text-rose-600 dark:text-rose-300">
                           {issue.location}
                         </span>
                       </div>
@@ -335,17 +335,17 @@ function SubmissionDetail({
                   {sub.aiRecommendationsJson.map((rec: any, i: number) => (
                     <li
                       key={i}
-                      className="p-3 rounded-xl bg-sky-50/80"
+                      className="p-3 rounded-xl bg-sky-50/80 dark:bg-sky-500/12"
                     >
-                      <div className="font-medium text-[13.5px] text-sky-900">
+                      <div className="font-medium text-[13.5px] text-sky-900 dark:text-sky-200">
                         {rec.action}
                       </div>
-                      <div className="text-[12.5px] text-sky-800/80 mt-1">
+                      <div className="text-[12.5px] text-sky-800/80 dark:text-sky-300/85 mt-1">
                         {rec.why}
                       </div>
                       <div className="flex items-center gap-1 mt-1.5">
-                        <MapPin className="w-3 h-3 text-sky-500" />
-                        <span className="text-[12px] text-sky-600">
+                        <MapPin className="w-3 h-3 text-sky-500 dark:text-sky-400" />
+                        <span className="text-[12px] text-sky-600 dark:text-sky-300">
                           {rec.location}
                         </span>
                       </div>
@@ -372,7 +372,7 @@ function SubmissionDetail({
                 ))}
                 {(!sub.suggestionsJson ||
                   sub.suggestionsJson.length === 0) && (
-                  <li className="text-[13.5px] flex items-center gap-2 p-3 bg-emerald-50 text-emerald-800 rounded-xl">
+                  <li className="text-[13.5px] flex items-center gap-2 p-3 bg-emerald-50 dark:bg-emerald-500/12 text-emerald-800 dark:text-emerald-200 rounded-xl">
                     <CheckCircle2 className="w-4 h-4" /> No immediate
                     improvement suggestions.
                   </li>

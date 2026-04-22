@@ -17,12 +17,12 @@ function HeroStat({
   tone?: "default" | "warn" | "good";
 }) {
   const iconColor =
-    tone === "warn" ? "text-amber-600" :
-    tone === "good" ? "text-emerald-600" :
+    tone === "warn" ? "text-amber-600 dark:text-amber-400" :
+    tone === "good" ? "text-emerald-600 dark:text-emerald-400" :
     "text-primary";
   const iconBg =
-    tone === "warn" ? "bg-amber-50" :
-    tone === "good" ? "bg-emerald-50" :
+    tone === "warn" ? "bg-amber-50 dark:bg-amber-500/15" :
+    tone === "good" ? "bg-emerald-50 dark:bg-emerald-500/15" :
     "bg-primary/10";
 
   return (
@@ -44,9 +44,11 @@ function HeroStat({
 const tooltipStyle = {
   borderRadius: "12px",
   border: "1px solid hsl(var(--border))",
+  background: "hsl(var(--popover))",
+  color: "hsl(var(--popover-foreground))",
   fontSize: "12px",
   fontWeight: 500,
-  boxShadow: "0 8px 24px rgba(15,23,42,0.08)",
+  boxShadow: "var(--shadow-elevated)",
   padding: "8px 12px",
 };
 
