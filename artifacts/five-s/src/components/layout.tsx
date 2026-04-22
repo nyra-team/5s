@@ -2,6 +2,7 @@ import { useAuth } from "@/lib/auth";
 import { Link, useLocation } from "wouter";
 import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List } from "lucide-react";
 import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
 
 function useISTClock() {
   const [time, setTime] = useState(() =>
@@ -83,14 +84,23 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   <Link
                     key={tab.href}
                     href={tab.href}
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] font-medium transition-all whitespace-nowrap ${
+                    className={`relative inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] font-medium whitespace-nowrap transition-colors ${
                       active
-                        ? "bg-white text-foreground shadow-soft"
+                        ? "text-foreground"
                         : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    <Icon className="w-3.5 h-3.5" />
-                    {tab.label}
+                    {active && (
+                      <motion.span
+                        layoutId="header-tab-pill"
+                        className="absolute inset-0 bg-white rounded-full shadow-soft"
+                        transition={{ type: "spring", stiffness: 500, damping: 38 }}
+                      />
+                    )}
+                    <span className="relative z-10 inline-flex items-center gap-1.5">
+                      <Icon className="w-3.5 h-3.5" />
+                      {tab.label}
+                    </span>
                   </Link>
                 );
               })}

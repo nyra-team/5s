@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { format } from "date-fns";
+import { motion } from "framer-motion";
 
 const SHIFT_OPTIONS = [
   { value: "A" as const, label: "Shift A", time: "6 AM – 2 PM" },
@@ -60,17 +61,26 @@ export default function OperatorHome() {
                 role="tab"
                 aria-selected={active}
                 onClick={() => setSelectedShift(opt.value)}
-                className={`px-4 py-2 rounded-full text-[13px] font-medium transition-all whitespace-nowrap ${
+                className={`relative px-4 py-2 rounded-full text-[13px] font-medium whitespace-nowrap transition-colors ${
                   active
-                    ? "bg-white text-foreground shadow-soft"
+                    ? "text-foreground"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {opt.label}
-                <span className="ml-1.5 opacity-60 hidden sm:inline">{opt.time}</span>
-                {isCurrent && (
-                  <span className={`ml-2 inline-flex items-center w-1.5 h-1.5 rounded-full ${active ? "bg-emerald-500" : "bg-emerald-400"}`} />
+                {active && (
+                  <motion.span
+                    layoutId="shift-tab-pill"
+                    className="absolute inset-0 bg-white rounded-full shadow-soft"
+                    transition={{ type: "spring", stiffness: 500, damping: 38 }}
+                  />
                 )}
+                <span className="relative z-10 inline-flex items-center">
+                  {opt.label}
+                  <span className="ml-1.5 opacity-60 hidden sm:inline">{opt.time}</span>
+                  {isCurrent && (
+                    <span className={`ml-2 inline-flex items-center w-1.5 h-1.5 rounded-full ${active ? "bg-emerald-500" : "bg-emerald-400"}`} />
+                  )}
+                </span>
               </button>
             );
           })}
@@ -217,7 +227,7 @@ function AreaCard({ status, selectedShift }: { status: AreaStatus; selectedShift
 
     return (
       <>
-        <div className="bg-card rounded-2xl shadow-elevated overflow-hidden flex flex-col">
+        <div className="bg-card rounded-2xl shadow-elevated overflow-hidden flex flex-col transition-transform duration-150 active:scale-[0.99] motion-reduce:active:scale-100 motion-reduce:transition-none">
           <div className="aspect-[16/10] overflow-hidden bg-muted relative">
             <img
               src={`/api${status.submission.imageUrl}`}
@@ -230,9 +240,15 @@ function AreaCard({ status, selectedShift }: { status: AreaStatus; selectedShift
                 <h3 className="font-semibold text-[19px] tracking-tight">{status.areaName}</h3>
                 <p className="text-[13px] opacity-85">Submitted {format(new Date(status.submission.createdAt), "h:mm a")}</p>
               </div>
-              <div className={`px-3 py-1 rounded-full text-[12px] font-semibold ${tone.bg} ${tone.text}`}>
+              <motion.div
+                key={status.submission.id}
+                initial={{ scale: 0.5, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: "spring", stiffness: 320, damping: 22, delay: 0.05 }}
+                className={`px-3 py-1 rounded-full text-[12px] font-semibold ${tone.bg} ${tone.text}`}
+              >
                 {Math.round(scorePercent)}%
-              </div>
+              </motion.div>
             </div>
           </div>
           <div className="px-5 pt-4 pb-2 flex items-center gap-2 text-emerald-600">
@@ -319,7 +335,7 @@ function AreaCard({ status, selectedShift }: { status: AreaStatus; selectedShift
 
   return (
     <>
-      <div className="bg-card rounded-2xl shadow-elevated p-6 flex flex-col h-full transition-shadow hover:shadow-floating">
+      <div className="bg-card rounded-2xl shadow-elevated p-6 flex flex-col h-full transition-all duration-150 hover:shadow-floating active:scale-[0.99] motion-reduce:active:scale-100 motion-reduce:transition-none">
         <div className="flex justify-between items-start gap-3">
           <div>
             <h3 className="text-[19px] font-semibold tracking-tight">{status.areaName}</h3>
