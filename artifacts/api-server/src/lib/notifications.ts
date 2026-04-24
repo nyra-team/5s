@@ -77,6 +77,12 @@ function inboxLink(): string {
   return base ? `${base}${path}` : path;
 }
 
+function dashboardLink(): string {
+  const base = appBaseUrl();
+  const path = `/dashboard`;
+  return base ? `${base}${path}` : path;
+}
+
 function parseHHMM(s: string | null | undefined): number | null {
   if (!s) return null;
   // The canonical wire/storage shape is "HH:MM" — the column is `text`,
@@ -383,6 +389,54 @@ async function claimEscalationsForLiveDispatch(
     );
     return new Set();
   }
+}
+
+/**
+ * Payload for the AI retry-rate spike alert. Sent at most once per cooldown
+ * window by `runRetrySpikeCheck`. Carries the values managers need to
+ * triage without opening the dashboard (rate, sample size) plus a deep link
+ * back to the dashboard for context.
+ */
+export interface AiRetrySpikeNotification {
+  /** Observed retry fraction in the recent window (0–1). */
+  retryRate: number;
+  /** How many of the calls in the window were retried. */
+  retriedCalls: number;
+  /** Total calls observed in the window — the sample size for `retryRate`. */
+  totalCalls: number;
+  /** The configured threshold the rate just crossed (0–1). */
+  thresholdRate: number;
+  /** Length of the rolling observation window in milliseconds. */
+  windowMs: number;
+}
+
+/**
+ * Test seam: replace the AI retry-spike notifier with `fn`, or restore the
+ * default by passing `null`. Same pattern as `setRepingNotifierForTesting`.
+ * Returns the previously-installed notifier so suites can chain stubs.
+ */
+export type AiRetrySpikeNotifierFn = (
+  payload: AiRetrySpikeNotification,
+) => Promise<void>;
+
+const defaultAiRetrySpikeNotifier: AiRetrySpikeNotifierFn = async (payload) => {
+  await dispatchAiRetrySpike(payload);
+};
+
+let aiRetrySpikeNotifierImpl: AiRetrySpikeNotifierFn = defaultAiRetrySpikeNotifier;
+
+export async function notifyAiRetrySpike(
+  payload: AiRetrySpikeNotification,
+): Promise<void> {
+  await aiRetrySpikeNotifierImpl(payload);
+}
+
+export function setAiRetrySpikeNotifierForTesting(
+  fn: AiRetrySpikeNotifierFn | null,
+): AiRetrySpikeNotifierFn {
+  const prev = aiRetrySpikeNotifierImpl;
+  aiRetrySpikeNotifierImpl = fn ?? defaultAiRetrySpikeNotifier;
+  return prev;
 }
 
 async function flushArea(areaId: number): Promise<void> {
@@ -778,6 +832,220 @@ export async function recoverPendingEscalationNotifications(): Promise<RecoveryS
     dispatchFailures,
     skippedTooOld: tooOld.length,
   };
+}
+
+/**
+ * Dispatch the AI retry-spike alert through the same Slack/email pipeline
+ * the escalation paths use, with the same quiet-hours suppression. Failures
+ * are best-effort: a flaky provider must not crash the monitor's loop.
+ *
+ * Unlike `dispatch()` for escalations, there is no DB row to stamp here —
+ * cooldown lives in `lib/ai-reliability.ts` so a notifier crash still
+ * consumes the cooldown there (preferred over re-spamming on every sweep).
+ */
+async function dispatchAiRetrySpike(
+  payload: AiRetrySpikeNotification,
+): Promise<void> {
+  let managers: ManagerRow[];
+  try {
+    managers = await db
+      .select({
+        id: usersTable.id,
+        email: usersTable.email,
+        notifyEmailEnabled: usersTable.notifyEmailEnabled,
+        notifySlackEnabled: usersTable.notifySlackEnabled,
+        quietHoursEnabled: usersTable.quietHoursEnabled,
+        quietHoursStart: usersTable.quietHoursStart,
+        quietHoursEnd: usersTable.quietHoursEnd,
+        quietHoursWeekdayMask: usersTable.quietHoursWeekdayMask,
+      })
+      .from(usersTable)
+      .where(eq(usersTable.role, "MANAGER"));
+  } catch (err) {
+    logger.error(
+      { err, retryRate: payload.retryRate },
+      "notify: failed to load managers for AI retry spike alert",
+    );
+    return;
+  }
+
+  const now = new Date();
+  const quiet = managers.filter((m) => isInQuietHours(m, now));
+  const quietIds = new Set(quiet.map((m) => m.id));
+
+  if (quiet.length > 0) {
+    logger.info(
+      { quietManagers: quiet.map((m) => m.email) },
+      "notify: AI retry spike — suppressing recipients in quiet hours",
+    );
+  }
+
+  const emailRecipients = managers
+    .filter((m) => m.notifyEmailEnabled && !quietIds.has(m.id))
+    .map((m) => m.email);
+  const anySlackSubscriberActive = managers.some(
+    (m) => m.notifySlackEnabled && !quietIds.has(m.id),
+  );
+
+  await Promise.allSettled([
+    emailRecipients.length > 0
+      ? sendAiRetrySpikeEmails(emailRecipients, payload)
+      : Promise.resolve(),
+    anySlackSubscriberActive ? sendAiRetrySpikeSlack(payload) : Promise.resolve(),
+  ]);
+}
+
+function formatRetryPercent(rate: number): string {
+  // Round to one decimal so an alert at 16.34% doesn't read as "16%" (loses
+  // the "barely over threshold" signal) or "16.3399999%" (looks broken).
+  return `${(rate * 100).toFixed(1)}%`;
+}
+
+function formatWindow(windowMs: number): string {
+  const minutes = Math.round(windowMs / 60_000);
+  if (minutes < 60) return `last ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `last ${hours}h`;
+  const days = Math.round(hours / 24);
+  return `last ${days}d`;
+}
+
+async function sendAiRetrySpikeSlack(
+  payload: AiRetrySpikeNotification,
+): Promise<void> {
+  const webhook = process.env.SLACK_WEBHOOK_URL?.trim();
+  if (!webhook) {
+    logger.info(
+      { retryRate: payload.retryRate, totalCalls: payload.totalCalls },
+      "notify: SLACK_WEBHOOK_URL not set — skipping AI retry spike Slack message",
+    );
+    return;
+  }
+
+  const link = dashboardLink();
+  const ratePct = formatRetryPercent(payload.retryRate);
+  const thresholdPct = formatRetryPercent(payload.thresholdRate);
+  const window = formatWindow(payload.windowMs);
+  const headline = `:warning: *AI scoring retry rate spiked* — ${ratePct} over the ${window} (threshold ${thresholdPct})`;
+  const summary = `:warning: AI scoring retry rate ${ratePct} (threshold ${thresholdPct}) — ~2× per-audit cost while elevated`;
+
+  const message = {
+    text: summary,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text:
+            `${headline}\n` +
+            `*Retry rate:* ${ratePct}\n` +
+            `*Sample:* ${payload.retriedCalls} of ${payload.totalCalls} calls retried\n` +
+            `*Threshold:* ${thresholdPct}\n` +
+            `*Window:* ${window}`,
+        },
+      },
+      {
+        type: "actions",
+        elements: [
+          {
+            type: "button",
+            text: { type: "plain_text", text: "Open dashboard" },
+            url: link,
+          },
+        ],
+      },
+    ],
+  };
+
+  try {
+    const res = await fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(message),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logger.error(
+        { status: res.status, body: body.slice(0, 200) },
+        "notify: AI retry spike Slack webhook returned non-2xx",
+      );
+      return;
+    }
+    logger.info(
+      { retryRate: payload.retryRate, totalCalls: payload.totalCalls },
+      "notify: AI retry spike Slack message posted",
+    );
+  } catch (err) {
+    logger.error({ err }, "notify: AI retry spike Slack post failed");
+  }
+}
+
+async function sendAiRetrySpikeEmails(
+  recipients: string[],
+  payload: AiRetrySpikeNotification,
+): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  const from = process.env.NOTIFICATION_FROM_EMAIL?.trim();
+  if (!apiKey || !from) {
+    logger.info(
+      { recipientCount: recipients.length, retryRate: payload.retryRate },
+      "notify: RESEND_API_KEY / NOTIFICATION_FROM_EMAIL not set — skipping AI retry spike email",
+    );
+    return;
+  }
+
+  const link = dashboardLink();
+  const ratePct = formatRetryPercent(payload.retryRate);
+  const thresholdPct = formatRetryPercent(payload.thresholdRate);
+  const window = formatWindow(payload.windowMs);
+  const subject = `AI scoring retry rate ${ratePct} (threshold ${thresholdPct}) — check the dashboard`;
+
+  const html =
+    `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;color:#222">` +
+    `<h2 style="margin:0 0 10px;font-size:18px">AI scoring retry rate spiked</h2>` +
+    `<p style="margin:0 0 14px;color:#555;font-size:14px">The VLM is failing JSON validation on first response often enough that we're paying ~2× per audit to retry.</p>` +
+    `<table style="font-size:14px;line-height:1.5">` +
+    `<tr><td style="color:#666;padding-right:12px">Retry rate</td><td><b>${ratePct}</b></td></tr>` +
+    `<tr><td style="color:#666;padding-right:12px">Sample</td><td>${payload.retriedCalls} of ${payload.totalCalls} calls retried</td></tr>` +
+    `<tr><td style="color:#666;padding-right:12px">Threshold</td><td>${thresholdPct}</td></tr>` +
+    `<tr><td style="color:#666;padding-right:12px">Window</td><td>${escapeHtml(window)}</td></tr>` +
+    `</table>` +
+    `<p style="margin:22px 0 0"><a href="${link}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-size:14px">Open dashboard</a></p>` +
+    `</div>`;
+
+  const text =
+    `AI scoring retry rate spiked\n\n` +
+    `Retry rate: ${ratePct}\n` +
+    `Sample: ${payload.retriedCalls} of ${payload.totalCalls} calls retried\n` +
+    `Threshold: ${thresholdPct}\n` +
+    `Window: ${window}\n\n` +
+    `Open dashboard: ${link}\n`;
+
+  await Promise.allSettled(
+    recipients.map(async (to) => {
+      try {
+        const res = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({ from, to, subject, html, text }),
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          logger.error(
+            { to, status: res.status, body: body.slice(0, 200) },
+            "notify: AI retry spike Resend returned non-2xx",
+          );
+          return;
+        }
+        logger.info({ to, retryRate: payload.retryRate }, "notify: AI retry spike email sent");
+      } catch (err) {
+        logger.error({ err, to }, "notify: AI retry spike email send failed");
+      }
+    }),
+  );
 }
 
 function formatPillars(pillars: string[]): string {

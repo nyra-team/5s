@@ -10,6 +10,7 @@ import {
   usersTable,
   aiScoringMetricsTable,
 } from "@workspace/db";
+import { computeRetryStatsSince } from "../lib/ai-reliability.js";
 import type { NudgeDismissReason } from "@workspace/db";
 import {
   GetDashboardComplianceQueryParams,
@@ -227,52 +228,45 @@ router.get("/dashboard/ai-reliability", authMiddleware, requireRole("MANAGER"), 
   const last24h = new Date(now - 24 * 60 * 60 * 1000);
   const last7d = new Date(now - 7 * 24 * 60 * 60 * 1000);
 
-  // Two round-trips per window: one for the totals (cheap aggregate over the
-  // append-only, created_at-indexed table) and one for the top-N validation
-  // messages on retried rows. We could fold both into a single query but
-  // keeping them separate matches how the panel reads — totals as headline,
-  // breakdown as drill-down — and keeps each query trivially explainable.
+  // Totals/rate come from the shared `computeRetryStatsSince` helper so the
+  // dashboard chip and the background spike monitor can't drift apart on
+  // future schema changes. The top-N validation message breakdown is
+  // dashboard-only (the alert payload doesn't need it), so we run it
+  // alongside in a separate query — keeping each query trivially
+  // explainable: totals as headline, breakdown as drill-down.
   async function windowStats(since: Date) {
-    const [totalsRow] = await db
-      .select({
-        totalCalls: count(),
-        retriedCalls: sql<number>`COALESCE(SUM(CASE WHEN ${aiScoringMetricsTable.retried} THEN 1 ELSE 0 END), 0)`,
-      })
-      .from(aiScoringMetricsTable)
-      .where(gte(aiScoringMetricsTable.createdAt, since));
-
     // Group by validation_error so semantically identical failures collapse
     // into a single row. We restrict to retried=true AND validation_error IS
     // NOT NULL so a clean call (which writes a row with retried=false and a
     // null error) can never sneak into the breakdown — only actual retries
     // count toward what's "tripping the AI up".
-    const errorRows = await db
-      .select({
-        message: aiScoringMetricsTable.validationError,
-        count: count(),
-      })
-      .from(aiScoringMetricsTable)
-      .where(
-        and(
-          gte(aiScoringMetricsTable.createdAt, since),
-          eq(aiScoringMetricsTable.retried, true),
-          isNotNull(aiScoringMetricsTable.validationError),
-        ),
-      )
-      .groupBy(aiScoringMetricsTable.validationError)
-      .orderBy(desc(count()))
-      .limit(AI_RELIABILITY_TOP_ERRORS);
+    const [stats, errorRows] = await Promise.all([
+      computeRetryStatsSince(since),
+      db
+        .select({
+          message: aiScoringMetricsTable.validationError,
+          count: count(),
+        })
+        .from(aiScoringMetricsTable)
+        .where(
+          and(
+            gte(aiScoringMetricsTable.createdAt, since),
+            eq(aiScoringMetricsTable.retried, true),
+            isNotNull(aiScoringMetricsTable.validationError),
+          ),
+        )
+        .groupBy(aiScoringMetricsTable.validationError)
+        .orderBy(desc(count()))
+        .limit(AI_RELIABILITY_TOP_ERRORS),
+    ]);
 
-    const totalCalls = Number(totalsRow?.totalCalls ?? 0);
-    const retriedCalls = Number(totalsRow?.retriedCalls ?? 0);
-    const retryRate = totalCalls > 0 ? retriedCalls / totalCalls : 0;
     const topErrors = errorRows
       // The isNotNull predicate above already filters nulls, but the column
       // is nullable so the inferred type still includes null — coerce here
       // so the response shape is exactly string + integer.
       .filter((r): r is { message: string; count: number } => r.message != null)
       .map((r) => ({ message: r.message, count: Number(r.count) }));
-    return { totalCalls, retriedCalls, retryRate, topErrors };
+    return { ...stats, topErrors };
   }
 
   const [twentyFourHour, sevenDay] = await Promise.all([
