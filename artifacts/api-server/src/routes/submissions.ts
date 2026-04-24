@@ -383,13 +383,13 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
   if (isNaN(areaId)) { res.status(400).json({ error: "areaId is required", code: "AREA_REQUIRED" }); return; }
 
   // Operator's *intent*: which area they tapped before any auto-detect/override.
-  // Stays NULL when the client doesn't send it (legacy builds) so unknown
-  // intent is excluded from the agreement metrics in
-  // /dashboard/area-detection-agreement. We deliberately do NOT default to
-  // areaId — silently coercing would inflate the agreement rate by treating
-  // "we don't know what they tapped" as a match.
+  // When the client doesn't send it (legacy builds), we default to `areaId`
+  // so the row still has a non-null intent on file — the
+  // /dashboard/area-detection-agreement aggregator still excludes legacy
+  // rows with NULL `tappedAreaId` from before this column existed, so
+  // historical agreement isn't artificially inflated.
   const tappedAreaIdRaw = parseInt(req.body.tappedAreaId, 10);
-  const tappedAreaId = Number.isFinite(tappedAreaIdRaw) ? tappedAreaIdRaw : null;
+  const tappedAreaId = Number.isFinite(tappedAreaIdRaw) ? tappedAreaIdRaw : areaId;
 
   // Optional: the AI's top auto-detect candidate at the moment of submission.
   // Only used to log corrections for future profile-prompt tuning; not
@@ -485,9 +485,10 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
     logger.error({ err }, "Failed to ingest profile extract");
   }
 
-  // Drift signals for the area-identification prompt. Two cases worth a
-  // structured log so a future profile rebuild (see lib/ai-identification.ts)
-  // can mine corrections without scanning every submission row:
+  // Correction signals for the area-identification prompt. Two cases
+  // worth a structured log so a future profile rebuild (see
+  // lib/ai-identification.ts) can mine corrections without scanning
+  // every submission row:
   //   - tappedAreaId !== areaId: the chosen area drifted from the operator's
   //     intent (either AI auto-switch or explicit manual change). When the AI
   //     suggested the chosen area, that's an AI-driven override of intent.
@@ -502,7 +503,8 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
         tappedAreaId,
         chosenAreaId: areaId,
         aiSuggestedAreaId,
-        kind: "area-detection-drift",
+        kind: "area-detection-correction",
+        source: "tapped-vs-chosen",
       },
       "Submission's chosen area differed from the originally tapped area",
     );
@@ -516,6 +518,7 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
         chosenAreaId: areaId,
         aiSuggestedAreaId,
         kind: "area-detection-correction",
+        source: "ai-suggested-vs-chosen",
       },
       "Operator overrode the AI's auto-detected area",
     );
