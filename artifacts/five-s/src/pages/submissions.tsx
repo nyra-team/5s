@@ -362,7 +362,12 @@ export default function Submissions() {
                 submissions?.map((sub, idx) => {
                   const thumb = sub.mediaType === "video" && sub.keyframesJson?.[0] ? sub.keyframesJson[0] : sub.imageUrl;
                   return (
-                    <tr key={sub.id} className={`cursor-pointer transition-colors ${idx % 2 === 1 ? "bg-secondary/40" : ""} hover:bg-primary/5`} onClick={() => setSelectedSubmissionId(sub.id)} data-testid={`row-submission-${sub.id}`}>
+                    <tr
+                      key={sub.id}
+                      className={`cursor-pointer transition-all duration-150 ${idx % 2 === 1 ? "bg-secondary/40" : ""} hover:bg-primary/5 active:bg-primary/10 active:scale-[0.997] motion-reduce:active:scale-100 motion-reduce:transition-none`}
+                      onClick={() => setSelectedSubmissionId(sub.id)}
+                      data-testid={`row-submission-${sub.id}`}
+                    >
                       <td className="px-5 py-3">
                         <div className="w-16 h-12 rounded-lg bg-secondary overflow-hidden">
                           <img src={`/api${thumb}`} alt="" className="w-full h-full object-cover" />
@@ -373,7 +378,12 @@ export default function Submissions() {
                         <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-[11.5px] font-semibold bg-secondary text-foreground/80">{sub.shift}</span>
                       </td>
                       <td className="px-3 py-3"><ScorePill percent={sub.scoreTotal * 4} /></td>
-                      <td className="px-3 py-3"><MediaTypeBadge type={sub.mediaType} /></td>
+                      <td className="px-3 py-3">
+                        <div className="flex flex-wrap gap-1">
+                          <MediaTypeBadge type={sub.mediaType} />
+                          <ScoringModeBadge mode={sub.scoringMode} />
+                        </div>
+                      </td>
                       <td className="px-3 py-3 text-muted-foreground tabular-nums">{format(new Date(sub.createdAt), "MMM d, HH:mm")}</td>
                       <td className="px-3 py-3 pr-5 text-muted-foreground">{sub.userEmail}</td>
                     </tr>

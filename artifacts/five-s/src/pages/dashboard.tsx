@@ -27,7 +27,7 @@ function HeroStat({
     "bg-primary/10";
 
   return (
-    <div className="bg-card rounded-2xl shadow-soft p-6 flex flex-col gap-4 transition-shadow hover:shadow-elevated">
+    <div className="bg-card rounded-2xl shadow-soft p-6 flex flex-col gap-4 transition-all duration-150 hover:shadow-elevated active:scale-[0.99] motion-reduce:active:scale-100 motion-reduce:transition-none">
       <div className="flex items-center justify-between">
         <p className="eyebrow">{label}</p>
         <div className={`w-8 h-8 rounded-full ${iconBg} flex items-center justify-center`}>

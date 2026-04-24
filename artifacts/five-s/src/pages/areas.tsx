@@ -224,8 +224,8 @@ function AreaConfigCard({ area }: { area: Area }) {
 
   return (
     <>
-      <div className="bg-card rounded-2xl shadow-soft transition-shadow hover:shadow-elevated flex flex-col p-5 sm:p-6" data-testid={`card-area-${area.id}`}>
-        <div className="flex items-center justify-between gap-2 mb-4">
+      <div className="bg-card rounded-2xl shadow-soft transition-all duration-150 hover:shadow-elevated active:scale-[0.99] motion-reduce:active:scale-100 motion-reduce:transition-none flex flex-col p-5 sm:p-6" data-testid={`card-area-${area.id}`}>
+        <div className="flex items-center justify-between gap-2 mb-5">
           {isEditing ? (
             <div className="flex items-center gap-2 flex-1">
               <Input
