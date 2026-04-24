@@ -181,9 +181,10 @@ async function runScoringPipeline(opts: {
     summary: profile.summary,
   };
 
-  const envType: "factory" | "warehouse" | "home" =
+  const envType: "factory" | "warehouse" | "home" | "corporate_office" =
     opts.environmentType === "warehouse" ? "warehouse" :
-    opts.environmentType === "home" ? "home" : "factory";
+    opts.environmentType === "home" ? "home" :
+    opts.environmentType === "corporate_office" ? "corporate_office" : "factory";
 
   const scoring = await scoreSubmission({
     areaId: opts.areaId,

@@ -184,6 +184,7 @@ export const AreaEnvironmentType = {
   factory: "factory",
   warehouse: "warehouse",
   home: "home",
+  corporate_office: "corporate_office",
 } as const;
 
 export interface Area {
@@ -203,6 +204,7 @@ export const CreateAreaBodyEnvironmentType = {
   factory: "factory",
   warehouse: "warehouse",
   home: "home",
+  corporate_office: "corporate_office",
 } as const;
 
 export interface CreateAreaBody {
@@ -218,6 +220,7 @@ export const UpdateAreaBodyEnvironmentType = {
   factory: "factory",
   warehouse: "warehouse",
   home: "home",
+  corporate_office: "corporate_office",
 } as const;
 
 export interface UpdateAreaBody {
@@ -461,6 +464,7 @@ export const AreaTrendEnvironmentType = {
   factory: "factory",
   warehouse: "warehouse",
   home: "home",
+  corporate_office: "corporate_office",
 } as const;
 
 export type AreaTrendStatus =

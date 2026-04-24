@@ -1086,7 +1086,7 @@ components:
           type: string
         environmentType:
           type: string
-          enum: [factory, warehouse, home]
+          enum: [factory, warehouse, home, corporate_office]
           description: The kind of physical setting this area represents. Drives the AI rubric used to score submissions.
       required: [id, name, environmentType]
 
@@ -1097,7 +1097,7 @@ components:
           type: string
         environmentType:
           type: string
-          enum: [factory, warehouse, home]
+          enum: [factory, warehouse, home, corporate_office]
           description: Optional. Defaults to "factory".
       required: [name]
 
@@ -1108,7 +1108,7 @@ components:
           type: string
         environmentType:
           type: string
-          enum: [factory, warehouse, home]
+          enum: [factory, warehouse, home, corporate_office]
       required: [name]
 
     AreaProfile:
@@ -1479,7 +1479,7 @@ components:
           type: string
         environmentType:
           type: string
-          enum: [factory, warehouse, home]
+          enum: [factory, warehouse, home, corporate_office]
         status:
           type: string
           enum: [LEARNING, TRAINED]

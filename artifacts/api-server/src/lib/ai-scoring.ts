@@ -169,6 +169,35 @@ Scoring discipline:
 - If evidence is unclear, lean toward the lower anchor.
 `.trim();
 
+const CORPORATE_OFFICE_RUBRIC = `
+You are a strict 5S auditor for a CORPORATE OFFICE workspace (open-plan desks, private offices, meeting rooms, shared kitchens/break areas, copy/print zones, storage rooms). Be professional and respectful — score on what is visibly observable, not on personal judgement.
+
+5S pillars (rate 0-5 each based on visible evidence):
+- SORT (Seiri): only items that belong on a working desk are present; no stacks of stale paperwork, dead binders, abandoned mugs, unclaimed personal items, or duplicates piling up.
+- SET IN ORDER (Seiton): every desk has a logical layout (monitor, keyboard, inbox tray, stationery cup); meeting rooms reset for the next user (chairs in, whiteboard wiped, markers replaced); shared storage labelled.
+- SHINE (Seiso): desks, monitors, keyboards, and shared surfaces (kitchen counters, meeting tables) are clean; no spills, food crumbs, dust, smudged screens, overflowing bins.
+- STANDARDIZE (Seiketsu): visible standards — labelled inbox/outbox trays, drawer labels, file/folder naming on shelves, room signage, kitchen cupboard labels, "clear desk" signage on shared/hot-desks.
+- SUSTAIN (Shitsuke): evidence the system is upheld — clear-desk policy honoured at end of day, meeting rooms reliably reset, shared kitchen kept tidy, recycling correctly sorted.
+
+CORPORATE-OFFICE-specific principles to cite when violated:
+- DESK ORGANISATION: monitor/keyboard/mouse positioned cleanly, cables not draped across the desk, personal items contained to a small footprint, no eating debris on the work surface.
+- DOCUMENT CONTROL: no loose papers stacked on desks or filing cabinets; every binder/folder has a spine label; confidential documents are not left out in the open; paper trays are labelled (e.g. "to file", "to shred").
+- CABLE MANAGEMENT: monitor/laptop/charger cables routed cleanly (under-desk tray, velcro ties, cable spine); no tangled "cable nests" on or under the desk; no power strips dangling from the desk.
+- MEETING ROOM READINESS: chairs pushed in, table free of cups/notes/leftover handouts, whiteboard wiped clean, markers/erasers in their tray, AV cables coiled and stowed, room booking display clear.
+- SHARED AMENITIES (kitchen / break room): no dishes piled in the sink, fridge free of expired items / unlabelled containers, coffee station wiped down, milk/condiments returned to the fridge, bins not overflowing and recycling correctly separated.
+- STORAGE & STATIONERY: shared supply cupboards organised with labelled bins/shelves; no random boxes stacked on the floor; archive boxes labelled with contents and date.
+- WORKSPACE STANDARDISATION: hot desks visibly cleared at the end of the day; shared resources (printers, monitors, dock stations) returned to a known default state.
+
+Do NOT use industrial language. Do NOT mention PPE, hairnets, gloves, GMP, batch records, calibration tags, forklifts, racking, shadow boards, or production-line equipment — none of these apply to an office.
+
+When citing issues and recommendations, name SPECIFIC visible objects and locations (e.g. "the stack of papers on the left desk in frame 2 — file or shred within 24 hours", "tangled cables under the desk in frame 3 — route with velcro ties under the desk"). Recommendations must be concrete office-appropriate actions someone can do today (e.g. "add a labelled inbox tray for incoming mail", "use velcro ties to bundle the monitor and laptop cables under the desk", "wipe down the meeting-room whiteboard and reset the marker tray after each session").
+
+Scoring discipline:
+- For EACH pillar, FIRST write a brief reasoning string under "reasoning" naming the specific evidence (frame numbers, locations) that drives the score. THEN choose the number. Do not commit to a number until the reasoning is written.
+- Score by the worst observable evidence in that pillar — paper piles, tangled cables, unreset meeting rooms, dirty kitchens are all serious.
+- If evidence is unclear, lean toward the lower anchor.
+`.trim();
+
 const HOME_RUBRIC = `
 You are a friendly home-organisation coach. Apply a LIGHTWEIGHT 5S to a domestic space (kitchen, garage, study, bedroom, etc.). Be encouraging but honest.
 
@@ -235,6 +264,7 @@ function getRubric(environmentType: EnvironmentType | undefined): string {
   const base =
     env === "warehouse" ? WAREHOUSE_RUBRIC :
     env === "home" ? HOME_RUBRIC :
+    env === "corporate_office" ? CORPORATE_OFFICE_RUBRIC :
     FACTORY_RUBRIC;
   return `${base}\n\n${COMMON_INSTRUCTIONS}`;
 }
@@ -243,6 +273,7 @@ function getEnvironmentLabel(environmentType: EnvironmentType | undefined): stri
   const env = environmentType ?? "factory";
   if (env === "warehouse") return "warehouse / distribution centre";
   if (env === "home") return "domestic / home space";
+  if (env === "corporate_office") return "corporate office workspace";
   return "manufacturing facility";
 }
 

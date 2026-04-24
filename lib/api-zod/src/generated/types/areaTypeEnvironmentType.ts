@@ -16,4 +16,5 @@ export const AreaTypeEnvironmentType = {
   factory: "factory",
   warehouse: "warehouse",
   home: "home",
+  corporate_office: "corporate_office",
 } as const;

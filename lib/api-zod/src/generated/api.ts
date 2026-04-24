@@ -47,7 +47,7 @@ export const ListAreasResponseItem = zod.object({
   id: zod.number(),
   name: zod.string(),
   environmentType: zod
-    .enum(["factory", "warehouse", "home"])
+    .enum(["factory", "warehouse", "home", "corporate_office"])
     .describe(
       "The kind of physical setting this area represents. Drives the AI rubric used to score submissions.",
     ),
@@ -60,7 +60,7 @@ export const ListAreasResponse = zod.array(ListAreasResponseItem);
 export const CreateAreaBody = zod.object({
   name: zod.string(),
   environmentType: zod
-    .enum(["factory", "warehouse", "home"])
+    .enum(["factory", "warehouse", "home", "corporate_office"])
     .optional()
     .describe('Optional. Defaults to \"factory\".'),
 });
@@ -74,14 +74,16 @@ export const UpdateAreaParams = zod.object({
 
 export const UpdateAreaBody = zod.object({
   name: zod.string(),
-  environmentType: zod.enum(["factory", "warehouse", "home"]).optional(),
+  environmentType: zod
+    .enum(["factory", "warehouse", "home", "corporate_office"])
+    .optional(),
 });
 
 export const UpdateAreaResponse = zod.object({
   id: zod.number(),
   name: zod.string(),
   environmentType: zod
-    .enum(["factory", "warehouse", "home"])
+    .enum(["factory", "warehouse", "home", "corporate_office"])
     .describe(
       "The kind of physical setting this area represents. Drives the AI rubric used to score submissions.",
     ),
@@ -579,7 +581,12 @@ export const GetDashboardTrendsQueryParams = zod.object({
 export const GetDashboardTrendsResponseItem = zod.object({
   areaId: zod.number(),
   areaName: zod.string(),
-  environmentType: zod.enum(["factory", "warehouse", "home"]),
+  environmentType: zod.enum([
+    "factory",
+    "warehouse",
+    "home",
+    "corporate_office",
+  ]),
   status: zod.enum(["LEARNING", "TRAINED"]),
   trainedOnDate: zod.coerce.date().nullish(),
   points: zod.array(

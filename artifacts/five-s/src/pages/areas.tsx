@@ -108,6 +108,7 @@ export default function Areas() {
                   <SelectItem value="factory" data-testid="option-environment-factory">{ENVIRONMENT_LABELS.factory}</SelectItem>
                   <SelectItem value="warehouse" data-testid="option-environment-warehouse">{ENVIRONMENT_LABELS.warehouse}</SelectItem>
                   <SelectItem value="home" data-testid="option-environment-home">{ENVIRONMENT_LABELS.home}</SelectItem>
+                  <SelectItem value="corporate_office" data-testid="option-environment-corporate_office">{ENVIRONMENT_LABELS.corporate_office}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -296,6 +297,7 @@ function AreaConfigCard({ area }: { area: Area }) {
                   <SelectItem value="factory" data-testid={`option-environment-factory-${area.id}`}>{ENVIRONMENT_LABELS.factory}</SelectItem>
                   <SelectItem value="warehouse" data-testid={`option-environment-warehouse-${area.id}`}>{ENVIRONMENT_LABELS.warehouse}</SelectItem>
                   <SelectItem value="home" data-testid={`option-environment-home-${area.id}`}>{ENVIRONMENT_LABELS.home}</SelectItem>
+                  <SelectItem value="corporate_office" data-testid={`option-environment-corporate_office-${area.id}`}>{ENVIRONMENT_LABELS.corporate_office}</SelectItem>
                 </SelectContent>
               </Select>
               <div className="flex items-center gap-1">

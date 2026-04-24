@@ -2,7 +2,7 @@ import { pgTable, text, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
-export const ENVIRONMENT_TYPES = ["factory", "warehouse", "home"] as const;
+export const ENVIRONMENT_TYPES = ["factory", "warehouse", "home", "corporate_office"] as const;
 export type EnvironmentType = (typeof ENVIRONMENT_TYPES)[number];
 
 export const areasTable = pgTable("areas", {
