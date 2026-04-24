@@ -5,6 +5,7 @@ import {
   useReuploadSubmission,
   useGetNextChecks,
   AreaStatus,
+  getGetCurrentShiftQueryKey,
   getGetOperatorStatusQueryKey,
   getGetNextChecksQueryKey,
 } from "@workspace/api-client-react";
@@ -35,7 +36,12 @@ function scoreTone(percent: number) {
 }
 
 export default function OperatorHome() {
-  const { data: currentShift, isLoading: shiftLoading } = useGetCurrentShift();
+  // Re-poll the current shift so the suggested shift updates within ~1 minute when the
+  // IST shift boundary crosses (e.g. 1:55 PM → 2:05 PM IST), without needing a refresh.
+  // The user's manual selection still wins via `selectedShift` below.
+  const { data: currentShift, isLoading: shiftLoading } = useGetCurrentShift({
+    query: { refetchInterval: 60_000, queryKey: getGetCurrentShiftQueryKey() },
+  });
   const [selectedShift, setSelectedShift] = useState<"A" | "B" | "C" | null>(null);
   const activeShift = selectedShift ?? currentShift?.shift ?? "A";
   const { data: statuses, isLoading: statusLoading } = useGetOperatorStatus({ shift: activeShift as "A" | "B" | "C" });

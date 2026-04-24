@@ -12,7 +12,7 @@ import {
 import { GetSubmissionParams, ListSubmissionsQueryParams } from "@workspace/api-zod";
 import { authMiddleware } from "../lib/auth";
 import { upload } from "../lib/upload";
-import { getCurrentShift } from "../lib/scoring";
+import { getCurrentShift, getISTShiftRange } from "../lib/scoring";
 import { scoreSubmission, type ScoringOutput } from "../lib/ai-scoring.js";
 import { isVideoFile } from "../lib/keyframes.js";
 import { ingestProfileExtract, getOrCreateProfile, TRAINING_THRESHOLD } from "../lib/learning";
@@ -357,18 +357,8 @@ router.get("/operator/status", authMiddleware, async (req, res): Promise<void> =
   const validShifts = ["A", "B", "C"];
   const shift = queryShift && validShifts.includes(queryShift) ? queryShift : getCurrentShift().shift;
 
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const d = now.getDate();
-
-  let start: Date, end: Date;
-  if (shift === "A") { start = new Date(y, m, d, 6, 0, 0); end = new Date(y, m, d, 14, 0, 0); }
-  else if (shift === "B") { start = new Date(y, m, d, 14, 0, 0); end = new Date(y, m, d, 22, 0, 0); }
-  else {
-    if (now.getHours() < 6) { start = new Date(y, m, d - 1, 22, 0, 0); end = new Date(y, m, d, 6, 0, 0); }
-    else { start = new Date(y, m, d, 22, 0, 0); end = new Date(y, m, d + 1, 6, 0, 0); }
-  }
+  // Use IST so the per-shift area list aligns with the IST clock the operator sees.
+  const { start, end } = getISTShiftRange(undefined, shift);
 
   const areas = await db.select().from(areasTable).orderBy(areasTable.id);
 

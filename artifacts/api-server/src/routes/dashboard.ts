@@ -3,39 +3,31 @@ import { eq, and, gte, lt, sql, count, avg } from "drizzle-orm";
 import { db, submissionsTable, areasTable, escalationsTable } from "@workspace/db";
 import { GetDashboardComplianceQueryParams, GetDashboardScoresQueryParams } from "@workspace/api-zod";
 import { authMiddleware, requireRole } from "../lib/auth";
-import { getCurrentShift, getTodayDateString } from "../lib/scoring";
+import { getCurrentShift, getTodayDateString, getISTDayRange, getISTShiftRange } from "../lib/scoring";
 
 const router: IRouter = Router();
 
-function toDate(input: string | Date | undefined): Date {
-  if (!input) return new Date();
-  if (input instanceof Date) return input;
-  return new Date(input + "T00:00:00");
+// Date ranges are anchored to IST so "today" and per-shift filters match the
+// IST clock operators see, regardless of where the server is running. A Date
+// passed in (used by an internal call site) is converted via its IST calendar
+// date.
+function normalizeDateInput(input: string | Date | undefined): string | undefined {
+  if (!input) return undefined;
+  if (typeof input === "string") return input;
+  // If a Date is passed, treat it as the IST calendar date of that instant.
+  const shifted = new Date(input.getTime() + (5 * 60 + 30) * 60 * 1000);
+  const y = shifted.getUTCFullYear();
+  const m = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(shifted.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 function getDayRange(dateStr?: string | Date) {
-  const date = toDate(dateStr);
-  const y = date.getFullYear();
-  const m = date.getMonth();
-  const d = date.getDate();
-  return {
-    start: new Date(y, m, d, 0, 0, 0),
-    end: new Date(y, m, d + 1, 0, 0, 0),
-  };
+  return getISTDayRange(normalizeDateInput(dateStr));
 }
 
 function getShiftRange(dateStr: string | Date | undefined, shift: string) {
-  const date = toDate(dateStr);
-  const y = date.getFullYear();
-  const m = date.getMonth();
-  const d = date.getDate();
-
-  if (shift === "A") {
-    return { start: new Date(y, m, d, 6, 0, 0), end: new Date(y, m, d, 14, 0, 0) };
-  } else if (shift === "B") {
-    return { start: new Date(y, m, d, 14, 0, 0), end: new Date(y, m, d, 22, 0, 0) };
-  }
-  return { start: new Date(y, m, d, 22, 0, 0), end: new Date(y, m, d + 1, 6, 0, 0) };
+  return getISTShiftRange(normalizeDateInput(dateStr), shift);
 }
 
 router.get("/dashboard/compliance", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
