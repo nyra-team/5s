@@ -81,6 +81,7 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - Slack channel uses a single channel webhook (`SLACK_WEBHOOK_URL`); we post once if at least one manager has Slack enabled (the channel is shared). No-op when env var is missing.
 - Notification body includes area name, score %, failing pillars, operator email, and a deep link to `/escalations` (built from `APP_BASE_URL` or `REPLIT_DEV_DOMAIN`).
 - Manager UI: `/notifications` page (Bell icon nav link) backed by `GET/PUT /api/me/notification-preferences`. Server response also returns `emailConfigured`/`slackConfigured` so the UI can warn when toggles will be no-ops.
+- **Grouping (Task 36):** Multiple escalations in the same area within `ESCALATION_NOTIFICATION_WINDOW_MS` (default 300000 = 5 min) are batched into a single digest message ("N new escalations on Area X — lowest score Y%"). Each per-event link still resolves to the focused escalation in `/escalations`, plus a header link to the inbox. Set the env var to `0` to disable grouping (fire one message per event, like the original behavior). `flushPendingEscalationNotifications()` is exported for tests / graceful shutdown.
 
 ## Architecture
 

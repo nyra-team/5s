@@ -231,6 +231,7 @@ async function maybeCreateEscalation(args: {
     void notifyEscalationCreated({
       escalationId: created.id,
       submissionId: args.submissionId,
+      areaId: args.areaId,
       areaName: args.areaName,
       scorePercent: args.scorePercent,
       failingPillars: args.failingPillars,

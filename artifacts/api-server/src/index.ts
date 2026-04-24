@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { checkFfmpegAvailable } from "./lib/keyframes";
+import { flushPendingEscalationNotifications } from "./lib/notifications";
 
 const rawPort = process.env["PORT"];
 
@@ -22,7 +23,7 @@ checkFfmpegAvailable().catch((err) =>
   logger.error({ err }, "ffmpeg probe failed unexpectedly"),
 );
 
-app.listen(port, (err) => {
+const server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
@@ -30,3 +31,23 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
 });
+
+// Graceful shutdown: flush any in-memory escalation digests so we don't drop
+// notifications that were waiting in the grouping window.
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({ signal }, "Shutting down — flushing pending notifications");
+  try {
+    await flushPendingEscalationNotifications();
+  } catch (err) {
+    logger.error({ err }, "Failed to flush pending notifications during shutdown");
+  }
+  server.close(() => process.exit(0));
+  // Hard stop if close() hangs (e.g. open keep-alive connections)
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));

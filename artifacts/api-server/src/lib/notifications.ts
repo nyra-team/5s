@@ -5,11 +5,28 @@ import { logger } from "./logger.js";
 export interface EscalationNotification {
   escalationId: number;
   submissionId: number;
+  areaId: number;
   areaName: string;
   scorePercent: number;
   failingPillars: string[];
   operatorEmail: string;
   recommendedActions: string[];
+}
+
+const DEFAULT_GROUPING_WINDOW_MS = 5 * 60 * 1000;
+
+function groupingWindowMs(): number {
+  const raw = process.env.ESCALATION_NOTIFICATION_WINDOW_MS?.trim();
+  if (!raw) return DEFAULT_GROUPING_WINDOW_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    logger.warn(
+      { value: raw },
+      "notify: invalid ESCALATION_NOTIFICATION_WINDOW_MS, falling back to default",
+    );
+    return DEFAULT_GROUPING_WINDOW_MS;
+  }
+  return Math.floor(parsed);
 }
 
 function appBaseUrl(): string {
@@ -26,7 +43,90 @@ function escalationLink(escalationId: number): string {
   return base ? `${base}${path}` : path;
 }
 
+function inboxLink(): string {
+  const base = appBaseUrl();
+  const path = `/escalations`;
+  return base ? `${base}${path}` : path;
+}
+
+interface PendingBucket {
+  areaId: number;
+  areaName: string;
+  events: EscalationNotification[];
+  firstAt: number;
+  timer: NodeJS.Timeout;
+}
+
+const pendingByArea = new Map<number, PendingBucket>();
+
 export async function notifyEscalationCreated(payload: EscalationNotification): Promise<void> {
+  const windowMs = groupingWindowMs();
+  if (windowMs <= 0) {
+    // Grouping disabled — send immediately as a single-event message.
+    await dispatch([payload]);
+    return;
+  }
+
+  const existing = pendingByArea.get(payload.areaId);
+  if (existing) {
+    existing.events.push(payload);
+    logger.info(
+      {
+        areaId: payload.areaId,
+        escalationId: payload.escalationId,
+        bucketSize: existing.events.length,
+      },
+      "notify: appended escalation to pending bucket",
+    );
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    void flushArea(payload.areaId);
+  }, windowMs);
+  // Don't keep the event loop alive just for a notification flush.
+  if (typeof timer.unref === "function") timer.unref();
+
+  pendingByArea.set(payload.areaId, {
+    areaId: payload.areaId,
+    areaName: payload.areaName,
+    events: [payload],
+    firstAt: Date.now(),
+    timer,
+  });
+  logger.info(
+    { areaId: payload.areaId, escalationId: payload.escalationId, windowMs },
+    "notify: opened new pending bucket for area",
+  );
+}
+
+async function flushArea(areaId: number): Promise<void> {
+  const bucket = pendingByArea.get(areaId);
+  if (!bucket) return;
+  pendingByArea.delete(areaId);
+  clearTimeout(bucket.timer);
+  try {
+    await dispatch(bucket.events);
+  } catch (err) {
+    logger.error(
+      { err, areaId, count: bucket.events.length },
+      "notify: failed to dispatch grouped escalations",
+    );
+  }
+}
+
+/**
+ * Flush all pending grouped notifications immediately. Intended for graceful
+ * shutdown and for tests that want to assert delivery without waiting.
+ */
+export async function flushPendingEscalationNotifications(): Promise<void> {
+  const ids = Array.from(pendingByArea.keys());
+  await Promise.all(ids.map((id) => flushArea(id)));
+}
+
+async function dispatch(events: EscalationNotification[]): Promise<void> {
+  if (events.length === 0) return;
+
   let managers: Array<{ id: number; email: string; notifyEmailEnabled: boolean; notifySlackEnabled: boolean }>;
   try {
     managers = await db
@@ -39,7 +139,10 @@ export async function notifyEscalationCreated(payload: EscalationNotification): 
       .from(usersTable)
       .where(eq(usersTable.role, "MANAGER"));
   } catch (err) {
-    logger.error({ err, escalationId: payload.escalationId }, "notify: failed to load managers");
+    logger.error(
+      { err, count: events.length, areaName: events[0]?.areaName },
+      "notify: failed to load managers",
+    );
     return;
   }
 
@@ -47,8 +150,8 @@ export async function notifyEscalationCreated(payload: EscalationNotification): 
   const anySlackSubscriber = managers.some((m) => m.notifySlackEnabled);
 
   await Promise.allSettled([
-    emailRecipients.length > 0 ? sendEmails(emailRecipients, payload) : Promise.resolve(),
-    anySlackSubscriber ? sendSlack(payload) : Promise.resolve(),
+    emailRecipients.length > 0 ? sendEmails(emailRecipients, events) : Promise.resolve(),
+    anySlackSubscriber ? sendSlack(events) : Promise.resolve(),
   ]);
 }
 
@@ -57,18 +160,54 @@ function formatPillars(pillars: string[]): string {
   return pillars.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(", ");
 }
 
-async function sendSlack(payload: EscalationNotification): Promise<void> {
+function lowestScore(events: EscalationNotification[]): number {
+  return events.reduce((min, e) => (e.scorePercent < min ? e.scorePercent : min), events[0].scorePercent);
+}
+
+function windowMinutesLabel(): string {
+  const ms = groupingWindowMs();
+  const mins = Math.max(1, Math.round(ms / 60000));
+  return `${mins} min`;
+}
+
+async function sendSlack(events: EscalationNotification[]): Promise<void> {
   const webhook = process.env.SLACK_WEBHOOK_URL?.trim();
   if (!webhook) {
     logger.info(
-      { escalationId: payload.escalationId },
+      { count: events.length, areaName: events[0].areaName },
       "notify: SLACK_WEBHOOK_URL not set — skipping Slack message",
     );
     return;
   }
 
+  const message = events.length === 1 ? buildSingleSlack(events[0]) : buildGroupedSlack(events);
+
+  try {
+    const res = await fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(message),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logger.error(
+        { count: events.length, status: res.status, body: body.slice(0, 200) },
+        "notify: Slack webhook returned non-2xx",
+      );
+      return;
+    }
+    logger.info(
+      { count: events.length, areaName: events[0].areaName },
+      "notify: Slack message posted",
+    );
+  } catch (err) {
+    logger.error({ err, count: events.length }, "notify: Slack post failed");
+  }
+}
+
+function buildSingleSlack(payload: EscalationNotification): unknown {
   const link = escalationLink(payload.escalationId);
-  const message = {
+  return {
     text: `:rotating_light: 5S audit auto-escalated: *${payload.areaName}* — ${payload.scorePercent}%`,
     blocks: [
       {
@@ -95,38 +234,86 @@ async function sendSlack(payload: EscalationNotification): Promise<void> {
       },
     ],
   };
-
-  try {
-    const res = await fetch(webhook, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(message),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      logger.error(
-        { escalationId: payload.escalationId, status: res.status, body: body.slice(0, 200) },
-        "notify: Slack webhook returned non-2xx",
-      );
-      return;
-    }
-    logger.info({ escalationId: payload.escalationId }, "notify: Slack message posted");
-  } catch (err) {
-    logger.error({ err, escalationId: payload.escalationId }, "notify: Slack post failed");
-  }
 }
 
-async function sendEmails(recipients: string[], payload: EscalationNotification): Promise<void> {
+function buildGroupedSlack(events: EscalationNotification[]): unknown {
+  const areaName = events[0].areaName;
+  const lowest = lowestScore(events);
+  const window = windowMinutesLabel();
+  const headline = `:rotating_light: ${events.length} new 5S escalations on *${areaName}* in the last ${window} — lowest score ${lowest}%`;
+
+  const lines = events.map((e) => {
+    const pillars = formatPillars(e.failingPillars);
+    return `• *${e.scorePercent}%* — ${e.operatorEmail} (${pillars}) — <${escalationLink(e.escalationId)}|open>`;
+  });
+
+  return {
+    text: `:rotating_light: ${events.length} new 5S escalations on ${areaName} — lowest ${lowest}%`,
+    blocks: [
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: headline },
+      },
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: lines.join("\n") },
+      },
+      {
+        type: "actions",
+        elements: [
+          {
+            type: "button",
+            text: { type: "plain_text", text: "Open escalations inbox" },
+            url: inboxLink(),
+          },
+        ],
+      },
+    ],
+  };
+}
+
+async function sendEmails(recipients: string[], events: EscalationNotification[]): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   const from = process.env.NOTIFICATION_FROM_EMAIL?.trim();
   if (!apiKey || !from) {
     logger.info(
-      { escalationId: payload.escalationId, recipientCount: recipients.length },
+      { count: events.length, recipientCount: recipients.length },
       "notify: RESEND_API_KEY / NOTIFICATION_FROM_EMAIL not set — skipping email",
     );
     return;
   }
 
+  const { subject, html, text } =
+    events.length === 1 ? buildSingleEmail(events[0]) : buildGroupedEmail(events);
+
+  await Promise.allSettled(
+    recipients.map(async (to) => {
+      try {
+        const res = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({ from, to, subject, html, text }),
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          logger.error(
+            { count: events.length, to, status: res.status, body: body.slice(0, 200) },
+            "notify: Resend returned non-2xx",
+          );
+          return;
+        }
+        logger.info({ count: events.length, to }, "notify: email sent");
+      } catch (err) {
+        logger.error({ err, count: events.length, to }, "notify: email send failed");
+      }
+    }),
+  );
+}
+
+function buildSingleEmail(payload: EscalationNotification): { subject: string; html: string; text: string } {
   const link = escalationLink(payload.escalationId);
   const subject = `5S audit escalated: ${payload.areaName} — ${payload.scorePercent}%`;
 
@@ -162,31 +349,59 @@ async function sendEmails(recipients: string[], payload: EscalationNotification)
       : "") +
     `Open: ${link}\n`;
 
-  await Promise.allSettled(
-    recipients.map(async (to) => {
-      try {
-        const res = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({ from, to, subject, html, text }),
-        });
-        if (!res.ok) {
-          const body = await res.text().catch(() => "");
-          logger.error(
-            { escalationId: payload.escalationId, to, status: res.status, body: body.slice(0, 200) },
-            "notify: Resend returned non-2xx",
-          );
-          return;
-        }
-        logger.info({ escalationId: payload.escalationId, to }, "notify: email sent");
-      } catch (err) {
-        logger.error({ err, escalationId: payload.escalationId, to }, "notify: email send failed");
-      }
-    }),
-  );
+  return { subject, html, text };
+}
+
+function buildGroupedEmail(events: EscalationNotification[]): { subject: string; html: string; text: string } {
+  const areaName = events[0].areaName;
+  const lowest = lowestScore(events);
+  const window = windowMinutesLabel();
+  const subject = `${events.length} new 5S escalations: ${areaName} (lowest ${lowest}%)`;
+
+  const rowsHtml = events
+    .map((e) => {
+      const link = escalationLink(e.escalationId);
+      return (
+        `<tr>` +
+        `<td style="padding:6px 12px 6px 0;font-weight:600">${e.scorePercent}%</td>` +
+        `<td style="padding:6px 12px 6px 0">${escapeHtml(e.operatorEmail)}</td>` +
+        `<td style="padding:6px 12px 6px 0;color:#555">${escapeHtml(formatPillars(e.failingPillars))}</td>` +
+        `<td style="padding:6px 0"><a href="${link}" style="color:#1a56db;text-decoration:none">Open</a></td>` +
+        `</tr>`
+      );
+    })
+    .join("");
+
+  const html =
+    `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:640px;color:#222">` +
+    `<h2 style="margin:0 0 6px;font-size:18px">${events.length} new 5S escalations on ${escapeHtml(areaName)}</h2>` +
+    `<p style="margin:0 0 14px;color:#555;font-size:14px">In the last ${window}. Lowest score: <b>${lowest}%</b>.</p>` +
+    `<table style="font-size:14px;line-height:1.5;border-collapse:collapse">` +
+    `<thead><tr style="text-align:left;color:#666;font-size:12px;text-transform:uppercase;letter-spacing:.04em">` +
+    `<th style="padding:0 12px 6px 0">Score</th>` +
+    `<th style="padding:0 12px 6px 0">Operator</th>` +
+    `<th style="padding:0 12px 6px 0">Failing pillars</th>` +
+    `<th style="padding:0 0 6px 0"></th>` +
+    `</tr></thead>` +
+    `<tbody>${rowsHtml}</tbody>` +
+    `</table>` +
+    `<p style="margin:22px 0 0"><a href="${inboxLink()}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-size:14px">Open escalations inbox</a></p>` +
+    `</div>`;
+
+  const textRows = events
+    .map((e) => {
+      const link = escalationLink(e.escalationId);
+      return `  - ${e.scorePercent}% — ${e.operatorEmail} (${formatPillars(e.failingPillars)}) — ${link}`;
+    })
+    .join("\n");
+
+  const text =
+    `${events.length} new 5S escalations on ${areaName} in the last ${window}\n` +
+    `Lowest score: ${lowest}%\n\n` +
+    `${textRows}\n\n` +
+    `Inbox: ${inboxLink()}\n`;
+
+  return { subject, html, text };
 }
 
 function escapeHtml(s: string): string {
