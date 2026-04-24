@@ -141,4 +141,24 @@ describe("GET /dashboard/trends", () => {
     expect(sample).toBeTruthy();
     expect(sample.points).toHaveLength(7);
   });
+
+  // The original 500 reproduced for every supported window length because the
+  // GROUP BY error fired before any per-day filtering; explicitly covering all
+  // three windows the UI exposes (7/14/30) makes sure a future change can't
+  // silently regress one window while leaving the others healthy.
+  it.each([7, 14, 30])(
+    "returns 200 with %i daily points per area for ?days=%i",
+    async (days) => {
+      const res = await request(app)
+        .get(`/api/dashboard/trends?days=${days}`)
+        .set("Authorization", `Bearer ${managerToken}`);
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      const sample = res.body.find(
+        (r: { areaId: number }) => r.areaId === areaWithProfile.id,
+      );
+      expect(sample).toBeTruthy();
+      expect(sample.points).toHaveLength(days);
+    },
+  );
 });
