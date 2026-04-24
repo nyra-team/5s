@@ -12,6 +12,15 @@ import { usersTable } from "./users";
  * `field` column stores the camelCase override key
  * (e.g. "encouragementMinPercent") so it can be matched against the
  * existing FIELD_META on the client without an extra mapping table.
+ *
+ * Retention: this table is bounded by `pruneOperatorSettingsAudit()` in
+ * the API server, which runs inline after every audit insert and keeps
+ * only the most recent N rows per `field` (default 50, override via
+ * `OPERATOR_SETTINGS_AUDIT_KEEP_PER_FIELD`). With three threshold fields
+ * the table is therefore capped at ~150 rows in steady state, instead of
+ * growing forever. The admin UI surfaces only the last 5 entries, so the
+ * cap is well above what's user-visible while still leaving a deep
+ * compliance trail. See `artifacts/api-server/src/lib/audit-prune.ts`.
  */
 export const operatorSettingsAuditTable = pgTable("operator_settings_audit", {
   id: serial("id").primaryKey(),

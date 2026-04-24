@@ -20,6 +20,8 @@ import {
   loadEffectiveOperatorThresholds,
   type ThresholdSources,
 } from "../lib/operator-thresholds.js";
+import { pruneOperatorSettingsAudit } from "../lib/audit-prune.js";
+import { logger } from "../lib/logger.js";
 
 const router: IRouter = Router();
 
@@ -272,6 +274,20 @@ router.put(
       }
       if (auditValues.length > 0) {
         await db.insert(operatorSettingsAuditTable).values(auditValues);
+        // Enforce the per-field retention cap right after we insert. Pruning
+        // inline (instead of on a timer) means the table can only grow when
+        // a manager actually edits a threshold, and each edit immediately
+        // bounds the table to a known size — no separate scheduler needed.
+        // Failures are logged and swallowed so a transient prune error never
+        // rejects the manager's save.
+        try {
+          await pruneOperatorSettingsAudit();
+        } catch (err) {
+          logger.error(
+            { err },
+            "operator_settings_audit: post-insert prune failed",
+          );
+        }
       }
     }
 

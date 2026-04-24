@@ -355,6 +355,81 @@ describe("operator-thresholds audit trail", () => {
     );
     expect(newValues).toEqual([16, 15, 14, 13, 12]);
   });
+
+  it("prunes the audit table to the per-field retention cap on every save", async () => {
+    // Tighten the cap so we can prove the policy ran without seeding 50+ rows.
+    const KEY = "OPERATOR_SETTINGS_AUDIT_KEEP_PER_FIELD";
+    const original = process.env[KEY];
+    process.env[KEY] = "3";
+    try {
+      // Six edits, each one moving `priorBestWindowDays` so they all share
+      // a single field. After the 6th save the prune should have trimmed
+      // the on-disk table to the 3 newest rows (the cap), even though the
+      // surfaced history slice would only show 5 by default.
+      for (const v of [1, 2, 3, 4, 5, 6]) {
+        await request(app)
+          .put("/api/operator-thresholds")
+          .set("Authorization", `Bearer ${managerToken}`)
+          .send({ priorBestWindowDays: v });
+      }
+      const rows = await db
+        .select({ newValue: operatorSettingsAuditTable.newValue })
+        .from(operatorSettingsAuditTable);
+      expect(rows).toHaveLength(3);
+      const sorted = rows.map((r) => r.newValue).sort((a, b) => (a! - b!));
+      // Exactly the three highest-numbered (most recent) values survived.
+      expect(sorted).toEqual([4, 5, 6]);
+    } finally {
+      if (original === undefined) delete process.env[KEY];
+      else process.env[KEY] = original;
+    }
+  });
+
+  it("keeps each field's tail independently when pruning", async () => {
+    // Two distinct fields edited at different cadences. With a per-field
+    // cap, a noisy field can't push out a quieter field's history.
+    const KEY = "OPERATOR_SETTINGS_AUDIT_KEEP_PER_FIELD";
+    const original = process.env[KEY];
+    process.env[KEY] = "2";
+    try {
+      // Field A: five edits → must trim to last 2.
+      for (const v of [10, 11, 12, 13, 14]) {
+        await request(app)
+          .put("/api/operator-thresholds")
+          .set("Authorization", `Bearer ${managerToken}`)
+          .send({ priorBestWindowDays: v });
+      }
+      // Field B: just two edits → must remain intact.
+      for (const v of [55, 60]) {
+        await request(app)
+          .put("/api/operator-thresholds")
+          .set("Authorization", `Bearer ${managerToken}`)
+          .send({ encouragementMinPercent: v });
+      }
+
+      const rows = await db
+        .select({
+          field: operatorSettingsAuditTable.field,
+          newValue: operatorSettingsAuditTable.newValue,
+        })
+        .from(operatorSettingsAuditTable);
+      const grouped = new Map<string, number[]>();
+      for (const r of rows) {
+        const list = grouped.get(r.field) ?? [];
+        list.push(r.newValue!);
+        grouped.set(r.field, list);
+      }
+      expect(
+        (grouped.get("priorBestWindowDays") ?? []).sort((a, b) => a - b),
+      ).toEqual([13, 14]);
+      expect(
+        (grouped.get("encouragementMinPercent") ?? []).sort((a, b) => a - b),
+      ).toEqual([55, 60]);
+    } finally {
+      if (original === undefined) delete process.env[KEY];
+      else process.env[KEY] = original;
+    }
+  });
 });
 
 describe("GET /operator-thresholds (per-area provenance)", () => {

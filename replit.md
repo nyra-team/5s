@@ -39,7 +39,7 @@ A full-stack web application for manufacturing environments to enforce 5S compli
 - **Escalation System**:
     - Automatic escalation for low-scoring submissions (<60%).
     - Managers receive notifications via email (Resend) and Slack for new and aging escalations, with configurable grouping and re-ping mechanisms.
-- **Operator Threshold Tuning**: Runtime-tunable parameters (`encouragementMinPercent`, `priorBestWindowDays`, `dueSoonThresholdMinutes`) with precedence: environment variables > per-area DB override > global DB override > shipped default.
+- **Operator Threshold Tuning**: Runtime-tunable parameters (`encouragementMinPercent`, `priorBestWindowDays`, `dueSoonThresholdMinutes`) with precedence: environment variables > per-area DB override > global DB override > shipped default. Every per-field change writes to `operator_settings_audit`; that table is bounded by an inline post-insert prune that keeps the last N rows per field (default 50, override via `OPERATOR_SETTINGS_AUDIT_KEEP_PER_FIELD`) so the table can't grow unbounded — see `artifacts/api-server/src/lib/audit-prune.ts`.
 - **Shift Management**: Automatically detects operator shifts. Managers can configure timezone and shift start hours in-app, with environment variables taking precedence.
 
 ### Feature Specifications
