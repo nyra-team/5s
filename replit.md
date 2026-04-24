@@ -49,6 +49,8 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
+- `pnpm --filter @workspace/api-server run test` — run API integration tests (vitest + supertest, hits the dev DB; isolates by tagging fixtures with a per-run prefix)
+- `pnpm --filter @workspace/five-s run test` — run frontend component tests (vitest + jsdom + @testing-library/react)
 - `pnpm --filter @workspace/scripts run seed` — seed database with default data
 - `python ml_service/app.py` — start CLIP ML service on port 8100
 
