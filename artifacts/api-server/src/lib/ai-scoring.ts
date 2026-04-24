@@ -409,7 +409,7 @@ async function recordScoringMetric(
 
 async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
   const { framePaths, areaName, machineTag, learnedProfile, environmentType } = opts;
-  const modelVersion = `gpt-5-mini-${environmentType ?? "factory"}-v3`;
+  const modelVersion = `gpt-5-${environmentType ?? "factory"}-v1`;
 
   const profileBlock = learnedProfile && learnedProfile.status === "TRAINED"
     ? `\nLEARNED AREA PROFILE (this area's own norm — score deviations from it as well):
@@ -440,7 +440,7 @@ async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
   // `seed` is best-effort: the proxy may ignore it for models that don't
   // support it, which is fine — temperature 0 alone gives strong determinism.
   const baseRequest = {
-    model: "gpt-5-mini",
+    model: "gpt-5",
     response_format: { type: "json_object" as const },
     max_completion_tokens: 2048,
     temperature: 0,

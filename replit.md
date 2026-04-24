@@ -34,7 +34,7 @@ A full-stack web application designed for manufacturing environments to enforce 
     - Leverages CLIP ViT-B/32 embeddings to compare submission photos against ideal workstation photos using cosine similarity.
     - Multiple scoring modes: `CALIBRATED` (using Ridge regression from manager labels), `VLM_BLENDED` (70% VLM, 30% CLIP), `SIMILARITY_ONLY`, and `FALLBACK`.
     - CLIP similarity is rescaled to a 0-25 score range for granular differentiation.
-    - VLM (gpt-5-mini) provides per-pillar scores (0-5) along with textual issues and recommendations, including location references. VLM scores are blended with CLIP for comprehensive feedback.
+    - VLM (gpt-5) provides per-pillar scores (0-5) along with textual issues and recommendations, including location references. VLM scores are blended with CLIP for comprehensive feedback.
 - **Manager Labeling**: Managers provide ground-truth pillar scores for submissions, which are used to train and calibrate the AI model using Ridge regression.
 - **Escalation System**:
     - Automatically creates escalations for low-scoring submissions (<60%).
@@ -65,7 +65,7 @@ A full-stack web application designed for manufacturing environments to enforce 
 
 - **Database**: PostgreSQL (Primary database).
 - **AI/ML Service**: Python FastAPI service running CLIP ViT-B/32 (open_clip_torch) and scikit-learn for embeddings, similarity, and model training.
-- **VLM Service**: OpenAI-compatible API via Replit AI Integrations (gpt-5-mini) for visual language model capabilities.
+- **VLM Service**: OpenAI-compatible API via Replit AI Integrations (gpt-5) for visual language model capabilities.
 - **Email Service**: Resend for sending email notifications.
 - **Messaging Service**: Slack for sending notification webhooks.
 - **Package Manager**: pnpm
@@ -188,7 +188,7 @@ The frontend reads this same config via `GET /shift/config` (cached app-wide thr
 
 - **Database**: PostgreSQL (Primary database).
 - **AI/ML Service**: Python FastAPI service running CLIP ViT-B/32 (open_clip_torch) and scikit-learn for embeddings, similarity, and model training.
-- **VLM Service**: OpenAI-compatible API via Replit AI Integrations (gpt-5-mini) for visual language model capabilities.
+- **VLM Service**: OpenAI-compatible API via Replit AI Integrations (gpt-5) for visual language model capabilities.
 - **Email Service**: Resend for sending email notifications.
 - **Messaging Service**: Slack for sending notification webhooks.
 - **Package Manager**: pnpm
