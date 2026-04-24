@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   _resetShiftConfigCache,
   formatZonedDate,
@@ -229,6 +229,146 @@ describe("getCurrentShift (driven by configured hours and timezone)", () => {
     const validLabels = new Set(["7:00 AM", "3:00 PM", "11:00 PM"]);
     expect(validLabels.has(r.startTime), `start label ${r.startTime}`).toBe(true);
     expect(validLabels.has(r.endTime), `end label ${r.endTime}`).toBe(true);
+  });
+});
+
+describe("DST fall-back (NY 2025-11-02) shift A and shift C UTC ranges", () => {
+  beforeEach(() => clearShiftEnv());
+
+  it("shift A on the fall-back day starts at 07:00 EST (after the rollback)", () => {
+    // 02:00 EDT becomes 01:00 EST that morning, so by 07:00 local we are
+    // already in EST (UTC-5). 07:00 - (-5) = 12:00 UTC; 15:00 EST = 20:00 UTC.
+    setShiftEnv({
+      SHIFT_TIMEZONE: "America/New_York",
+      SHIFT_A_START_HOUR: "7",
+      SHIFT_B_START_HOUR: "15",
+      SHIFT_C_START_HOUR: "23",
+    });
+    const { start, end } = getISTShiftRange("2025-11-02", "A");
+    expect(start.toISOString()).toBe("2025-11-02T12:00:00.000Z");
+    expect(end.toISOString()).toBe("2025-11-02T20:00:00.000Z");
+  });
+
+  it("shift C wrap on the fall-back day uses EST on both sides of midnight", () => {
+    setShiftEnv({
+      SHIFT_TIMEZONE: "America/New_York",
+      SHIFT_A_START_HOUR: "7",
+      SHIFT_B_START_HOUR: "15",
+      SHIFT_C_START_HOUR: "23",
+    });
+    const { start, end } = getISTShiftRange("2025-11-02", "C");
+    // 23:00 EST Nov 2 = 04:00 UTC Nov 3; 07:00 EST Nov 3 = 12:00 UTC Nov 3.
+    expect(start.toISOString()).toBe("2025-11-03T04:00:00.000Z");
+    expect(end.toISOString()).toBe("2025-11-03T12:00:00.000Z");
+    // A standard-length 8h shift, since both ends are now in EST.
+    expect(end.getTime() - start.getTime()).toBe(8 * 60 * 60 * 1000);
+  });
+});
+
+describe("getISTShiftRange shift C anchoring (no dateStr)", () => {
+  beforeEach(() => clearShiftEnv());
+  afterEach(() => {
+    vi.useRealTimers();
+    clearShiftEnv();
+  });
+
+  it("anchors to YESTERDAY when 'now' is before A-start (early morning of shift C)", () => {
+    // Default IST schedule. Pretend "now" is 2025-06-15 03:00 IST
+    // (= 2025-06-14T21:30:00Z), which is mid-shift C that started the
+    // previous evening. Without an explicit dateStr the helper must pick the
+    // window that contains us, not the one starting tonight.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2025-06-14T21:30:00.000Z"));
+    const { start, end } = getISTShiftRange(undefined, "C");
+    expect(start.toISOString()).toBe("2025-06-14T16:30:00.000Z"); // 22:00 IST 06-14
+    expect(end.toISOString()).toBe("2025-06-15T00:30:00.000Z"); //   06:00 IST 06-15
+  });
+
+  it("anchors to TODAY when 'now' is after A-start (shift C starts tonight)", () => {
+    // Default IST schedule. "Now" is 2025-06-15 23:30 IST
+    // (= 2025-06-15T18:00:00Z) — squarely inside shift C of 06-15. The
+    // helper should return today's C window (22:00 IST 06-15 → 06:00 IST 06-16).
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2025-06-15T18:00:00.000Z"));
+    const { start, end } = getISTShiftRange(undefined, "C");
+    expect(start.toISOString()).toBe("2025-06-15T16:30:00.000Z"); // 22:00 IST 06-15
+    expect(end.toISOString()).toBe("2025-06-16T00:30:00.000Z"); //   06:00 IST 06-16
+  });
+
+  it("an explicit dateStr disables the 'anchor to yesterday' behavior even pre-dawn", () => {
+    // Same pre-dawn instant as the first test, but with dateStr="2025-06-15".
+    // With the date pinned the helper must always return that day's
+    // C-start → next-day A-start, regardless of where "now" falls.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2025-06-14T21:30:00.000Z"));
+    const { start, end } = getISTShiftRange("2025-06-15", "C");
+    expect(start.toISOString()).toBe("2025-06-15T16:30:00.000Z");
+    expect(end.toISOString()).toBe("2025-06-16T00:30:00.000Z");
+  });
+
+  it("anchor logic respects the configured (non-IST) timezone", () => {
+    // NY facility (EDT in June, A=7). "Now" is 2025-06-15 04:00 EDT
+    // (= 2025-06-15T08:00:00Z). hour 4 < A 7 → must anchor to yesterday.
+    setShiftEnv({
+      SHIFT_TIMEZONE: "America/New_York",
+      SHIFT_A_START_HOUR: "7",
+      SHIFT_B_START_HOUR: "15",
+      SHIFT_C_START_HOUR: "23",
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2025-06-15T08:00:00.000Z"));
+    const { start, end } = getISTShiftRange(undefined, "C");
+    // Yesterday C-start = 23:00 EDT 06-14 = 03:00 UTC 06-15.
+    // Today A-start = 07:00 EDT 06-15 = 11:00 UTC 06-15.
+    expect(start.toISOString()).toBe("2025-06-15T03:00:00.000Z");
+    expect(end.toISOString()).toBe("2025-06-15T11:00:00.000Z");
+  });
+});
+
+describe("getCurrentShift (with frozen system time)", () => {
+  beforeEach(() => clearShiftEnv());
+  afterEach(() => {
+    vi.useRealTimers();
+    clearShiftEnv();
+  });
+
+  it("returns shift C in the small hours of the morning under default IST", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2025-06-14T21:30:00.000Z")); // 03:00 IST 06-15
+    const r = getCurrentShift();
+    expect(r.shift).toBe("C");
+    expect(r.startTime).toBe("10:00 PM");
+    expect(r.endTime).toBe("6:00 AM");
+  });
+
+  it("returns shift A under custom NY hours when 'now' is mid-morning EDT", () => {
+    setShiftEnv({
+      SHIFT_TIMEZONE: "America/New_York",
+      SHIFT_A_START_HOUR: "7",
+      SHIFT_B_START_HOUR: "15",
+      SHIFT_C_START_HOUR: "23",
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2025-06-15T18:00:00.000Z")); // 14:00 EDT
+    const r = getCurrentShift();
+    expect(r.shift).toBe("A");
+    expect(r.startTime).toBe("7:00 AM");
+    expect(r.endTime).toBe("3:00 PM");
+  });
+
+  it("returns shift B at the B-start boundary (inclusive on B-start)", () => {
+    setShiftEnv({
+      SHIFT_TIMEZONE: "America/New_York",
+      SHIFT_A_START_HOUR: "7",
+      SHIFT_B_START_HOUR: "15",
+      SHIFT_C_START_HOUR: "23",
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2025-06-15T19:00:00.000Z")); // 15:00 EDT exactly
+    const r = getCurrentShift();
+    expect(r.shift).toBe("B");
+    expect(r.startTime).toBe("3:00 PM");
+    expect(r.endTime).toBe("11:00 PM");
   });
 });
 
