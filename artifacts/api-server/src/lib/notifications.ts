@@ -355,19 +355,29 @@ interface ManagerRow {
   quietHoursWeekdayMask: number;
 }
 
-async function markEscalationsNotified(escalationIds: number[]): Promise<void> {
+/**
+ * Outcome strings persisted to `escalations.notify_delivery_status` and
+ * surfaced to the manager UI. Keep these in sync with the schema doc-comment
+ * and the OpenAPI `Escalation.notifyDeliveryStatus` enum.
+ */
+export type NotifyDeliveryStatus = "DELIVERED" | "SKIPPED_RECOVERY_WINDOW";
+
+async function markEscalationsNotified(
+  escalationIds: number[],
+  status: NotifyDeliveryStatus,
+): Promise<void> {
   if (escalationIds.length === 0) return;
   try {
     await db
       .update(escalationsTable)
-      .set({ notifiedAt: new Date() })
+      .set({ notifiedAt: new Date(), notifyDeliveryStatus: status })
       .where(inArray(escalationsTable.id, escalationIds));
   } catch (err) {
     // Best-effort: even if we fail to stamp notified_at, the alert was already
     // delivered. The startup sweep will then re-deliver, which is annoying
     // but better than silent loss — log loudly so we notice.
     logger.error(
-      { err, escalationIds },
+      { err, escalationIds, status },
       "notify: failed to stamp notified_at after dispatch (may re-notify on next restart)",
     );
   }
@@ -434,7 +444,10 @@ async function dispatch(
   // case where no provider is configured (those are explicitly logged inside
   // sendSlack/sendEmails). We only skip stamping when manager loading itself
   // failed above, because that's a transient condition we want to retry.
-  await markEscalationsNotified(events.map((e) => e.escalationId));
+  await markEscalationsNotified(
+    events.map((e) => e.escalationId),
+    "DELIVERED",
+  );
 }
 
 export interface RecoverySweepResult {
@@ -585,6 +598,20 @@ export async function recoverPendingEscalationNotifications(): Promise<RecoveryS
           lookbackMs,
         },
         "notify: undeliverable — escalation older than recovery window, marking notified",
+      );
+    }
+    // `notified_at` was already stamped by the atomic claim above; we just
+    // need to record *why* dispatch was skipped so the manager UI can render
+    // the "Delivery skipped" badge instead of treating these as delivered.
+    try {
+      await db
+        .update(escalationsTable)
+        .set({ notifyDeliveryStatus: "SKIPPED_RECOVERY_WINDOW" })
+        .where(inArray(escalationsTable.id, tooOld.map((r) => r.escalationId)));
+    } catch (err) {
+      logger.error(
+        { err, escalationIds: tooOld.map((r) => r.escalationId) },
+        "notify: failed to stamp notify_delivery_status=SKIPPED_RECOVERY_WINDOW (badge will be missing)",
       );
     }
   }

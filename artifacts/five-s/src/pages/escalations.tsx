@@ -3,6 +3,7 @@ import {
   useAcknowledgeEscalation,
   useResolveEscalation,
   Escalation,
+  EscalationNotifyDeliveryStatus,
   getListEscalationsQueryKey,
   getGetEscalationCountQueryKey,
 } from "@workspace/api-client-react";
@@ -12,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, BellRing, CheckCircle2, Eye, Inbox } from "lucide-react";
+import { AlertTriangle, BellOff, BellRing, CheckCircle2, Eye, Inbox } from "lucide-react";
 
 const STATUSES = [
   { value: "OPEN", label: "Open" },
@@ -337,6 +338,7 @@ function EscalationCard({
             "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200"
           }`}>{e.status}</span>
           <RepingBadge count={e.repingCount} lastRepingAt={e.lastRepingAt} />
+          <DeliverySkippedBadge status={e.notifyDeliveryStatus} />
         </div>
         <div className="flex gap-2">
           {e.status === "OPEN" && (
@@ -371,6 +373,30 @@ function EscalationCard({
         </div>
       </div>
     </div>
+  );
+}
+
+function DeliverySkippedBadge({
+  status,
+}: {
+  status?: EscalationNotifyDeliveryStatus;
+}) {
+  if (status !== "SKIPPED_RECOVERY_WINDOW") return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="inline-flex items-center gap-1 text-[11.5px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 dark:bg-slate-500/25 dark:text-slate-200 cursor-help"
+          data-testid="badge-delivery-skipped"
+        >
+          <BellOff className="w-3 h-3" />
+          Delivery skipped
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-[260px] text-center">
+        This escalation was older than the notification recovery window when the API restarted, so no email or Slack message was actually sent. It still appears here for follow-up.
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

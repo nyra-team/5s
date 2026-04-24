@@ -41,6 +41,7 @@ export * from "./dashboardSummaryType";
 export * from "./errorResponseType";
 export * from "./escalationCountType";
 export * from "./escalationType";
+export * from "./escalationTypeNotifyDeliveryStatus";
 export * from "./escalationTypeStatus";
 export * from "./getActiveNudgesByAreaParams";
 export * from "./getActiveNudgesByAreaShift";

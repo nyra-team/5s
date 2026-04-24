@@ -907,6 +907,12 @@ export const ListEscalationsResponseItem = zod.object({
     .date()
     .nullish()
     .describe("Timestamp of the most recent reminder ping, if any."),
+  notifyDeliveryStatus: zod
+    .enum(["DELIVERED", "SKIPPED_RECOVERY_WINDOW"])
+    .nullish()
+    .describe(
+      'Outcome of the most recent notification dispatch attempt for this\nescalation. `DELIVERED` means the API made a best-effort send to\nthe configured email\/Slack providers (individual provider failures\nare logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`\nmeans the startup-recovery sweep found this row older than the\nrecovery window and gave up on dispatching it — managers see a\n\"delivery skipped\" badge so they know the alert never went out.\n`null` when no dispatch has happened yet.\n',
+    ),
 });
 export const ListEscalationsResponse = zod.array(ListEscalationsResponseItem);
 
@@ -949,6 +955,12 @@ export const AcknowledgeEscalationResponse = zod.object({
     .date()
     .nullish()
     .describe("Timestamp of the most recent reminder ping, if any."),
+  notifyDeliveryStatus: zod
+    .enum(["DELIVERED", "SKIPPED_RECOVERY_WINDOW"])
+    .nullish()
+    .describe(
+      'Outcome of the most recent notification dispatch attempt for this\nescalation. `DELIVERED` means the API made a best-effort send to\nthe configured email\/Slack providers (individual provider failures\nare logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`\nmeans the startup-recovery sweep found this row older than the\nrecovery window and gave up on dispatching it — managers see a\n\"delivery skipped\" badge so they know the alert never went out.\n`null` when no dispatch has happened yet.\n',
+    ),
 });
 
 /**
@@ -983,6 +995,12 @@ export const ResolveEscalationResponse = zod.object({
     .date()
     .nullish()
     .describe("Timestamp of the most recent reminder ping, if any."),
+  notifyDeliveryStatus: zod
+    .enum(["DELIVERED", "SKIPPED_RECOVERY_WINDOW"])
+    .nullish()
+    .describe(
+      'Outcome of the most recent notification dispatch attempt for this\nescalation. `DELIVERED` means the API made a best-effort send to\nthe configured email\/Slack providers (individual provider failures\nare logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`\nmeans the startup-recovery sweep found this row older than the\nrecovery window and gave up on dispatching it — managers see a\n\"delivery skipped\" badge so they know the alert never went out.\n`null` when no dispatch has happened yet.\n',
+    ),
 });
 
 /**
@@ -1180,6 +1198,12 @@ export const GetLiveShiftResponse = zod.object({
         .date()
         .nullish()
         .describe("Timestamp of the most recent reminder ping, if any."),
+      notifyDeliveryStatus: zod
+        .enum(["DELIVERED", "SKIPPED_RECOVERY_WINDOW"])
+        .nullish()
+        .describe(
+          'Outcome of the most recent notification dispatch attempt for this\nescalation. `DELIVERED` means the API made a best-effort send to\nthe configured email\/Slack providers (individual provider failures\nare logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`\nmeans the startup-recovery sweep found this row older than the\nrecovery window and gave up on dispatching it — managers see a\n\"delivery skipped\" badge so they know the alert never went out.\n`null` when no dispatch has happened yet.\n',
+        ),
     }),
   ),
 });

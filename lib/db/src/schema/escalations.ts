@@ -25,6 +25,19 @@ export const escalationsTable = pgTable("escalations", {
   // is NULL are scanned at startup so an API restart mid-grouping-window
   // doesn't silently swallow manager alerts.
   notifiedAt: timestamp("notified_at", { withTimezone: true }),
+  // Tracks the *outcome* of the notify attempt that stamped `notifiedAt`.
+  // NULL alongside a NULL `notifiedAt` means dispatch hasn't happened yet.
+  // Known values:
+  //   "DELIVERED"               — providers were attempted (Slack/Resend);
+  //                               individual provider failures are logged but
+  //                               we still mark delivered to avoid re-pinging
+  //                               on every restart.
+  //   "SKIPPED_RECOVERY_WINDOW" — the startup recovery sweep found this row
+  //                               older than the recovery window and gave up
+  //                               on dispatching it, stamping `notifiedAt` so
+  //                               it stops being re-scanned. Surfaced in the
+  //                               manager UI as a "delivery skipped" badge.
+  notifyDeliveryStatus: text("notify_delivery_status"),
   repingCount: integer("reping_count").notNull().default(0),
   lastRepingAt: timestamp("last_reping_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -680,6 +680,26 @@ export const EscalationStatus = {
   RESOLVED: "RESOLVED",
 } as const;
 
+/**
+ * Outcome of the most recent notification dispatch attempt for this
+escalation. `DELIVERED` means the API made a best-effort send to
+the configured email/Slack providers (individual provider failures
+are logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`
+means the startup-recovery sweep found this row older than the
+recovery window and gave up on dispatching it — managers see a
+"delivery skipped" badge so they know the alert never went out.
+`null` when no dispatch has happened yet.
+
+ */
+export type EscalationNotifyDeliveryStatus =
+  | (typeof EscalationNotifyDeliveryStatus)[keyof typeof EscalationNotifyDeliveryStatus]
+  | null;
+
+export const EscalationNotifyDeliveryStatus = {
+  DELIVERED: "DELIVERED",
+  SKIPPED_RECOVERY_WINDOW: "SKIPPED_RECOVERY_WINDOW",
+} as const;
+
 export interface Escalation {
   id: number;
   submissionId: number;
@@ -700,6 +720,16 @@ export interface Escalation {
   repingCount: number;
   /** Timestamp of the most recent reminder ping, if any. */
   lastRepingAt?: string | null;
+  /** Outcome of the most recent notification dispatch attempt for this
+escalation. `DELIVERED` means the API made a best-effort send to
+the configured email/Slack providers (individual provider failures
+are logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`
+means the startup-recovery sweep found this row older than the
+recovery window and gave up on dispatching it — managers see a
+"delivery skipped" badge so they know the alert never went out.
+`null` when no dispatch has happened yet.
+ */
+  notifyDeliveryStatus?: EscalationNotifyDeliveryStatus;
 }
 
 export interface EscalationCount {

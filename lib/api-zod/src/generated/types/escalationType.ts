@@ -5,6 +5,7 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { EscalationTypeNotifyDeliveryStatus } from "./escalationTypeNotifyDeliveryStatus";
 import type { EscalationTypeStatus } from "./escalationTypeStatus";
 
 export interface EscalationType {
@@ -27,4 +28,14 @@ export interface EscalationType {
   repingCount: number;
   /** Timestamp of the most recent reminder ping, if any. */
   lastRepingAt?: Date | null;
+  /** Outcome of the most recent notification dispatch attempt for this
+escalation. `DELIVERED` means the API made a best-effort send to
+the configured email/Slack providers (individual provider failures
+are logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`
+means the startup-recovery sweep found this row older than the
+recovery window and gave up on dispatching it — managers see a
+"delivery skipped" badge so they know the alert never went out.
+`null` when no dispatch has happened yet.
+ */
+  notifyDeliveryStatus?: EscalationTypeNotifyDeliveryStatus;
 }
