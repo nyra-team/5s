@@ -176,14 +176,19 @@ export function buildUploadErrorToast(err: unknown, fallbackTitle: string): Uplo
   };
 }
 
-// Lightweight, keyword-driven severity inference for AI suggestion strings.
-// The model returns plain text actions today (no per-suggestion severity
-// field in the API contract), so we infer one client-side using the same
-// vocabulary 5S/GMP audits use ("contamination", "spill", "leak" → high;
-// "label", "missing tag" → medium; everything else → low). This colours the
-// rail on each row so an operator can scan a long list and immediately see
-// which item to do first, without any backend change.
+// Severity colouring for AI suggestion rows.
+// We prefer the AI-provided severity attached to each AIRecommendation/AIIssue
+// (`aiRecommendationsJson[i].severity`) — the model now classifies each item
+// as high/medium/low and we persist it. For older submissions written before
+// that field existed, we fall back to a keyword-driven inference so the row
+// still gets a meaningful colour rail instead of silently defaulting to
+// "low" for everything historic.
 type SuggestionSeverity = "high" | "medium" | "low";
+
+function normalizeAiSeverity(s: string | null | undefined): SuggestionSeverity | null {
+  if (s === "high" || s === "medium" || s === "low") return s;
+  return null;
+}
 
 const HIGH_SEVERITY_PATTERNS: RegExp[] = [
   /\b(contamination|contaminant|hazard|hazardous|unsafe|spill|leak|leakage|fire|smoke|sharp|exposed|broken glass|chemical|toxic|biohazard)\b/i,
@@ -240,21 +245,39 @@ function severityStyles(s: SuggestionSeverity): {
   };
 }
 
-function SuggestionRow({ text, index }: { text: string; index: number }) {
-  const sev = inferSuggestionSeverity(text);
+function SuggestionRow({
+  text,
+  index,
+  aiSeverity,
+}: {
+  text: string;
+  index: number;
+  // Severity returned by the AI on the matching AIRecommendation/AIIssue. When
+  // present we trust it; when missing (older submissions, or the model omitted
+  // it) we fall back to keyword-based inference so the row still gets a useful
+  // colour cue instead of silently defaulting to low.
+  aiSeverity?: SuggestionSeverity | null;
+}) {
+  const sev: SuggestionSeverity = aiSeverity ?? inferSuggestionSeverity(text);
   const style = severityStyles(sev);
+  const sourceAttr = aiSeverity ? "ai" : "inferred";
   return (
     <li
       className={`text-[13.5px] flex gap-2 items-start bg-secondary/60 p-3 pl-2.5 rounded-xl ${style.rail}`}
       data-testid={`suggestion-row-${index}`}
       data-severity={sev}
+      data-severity-source={sourceAttr}
     >
       <ArrowRight className={`w-4 h-4 shrink-0 mt-0.5 ${style.iconColor}`} aria-hidden="true" />
       <span className="leading-snug text-foreground/90 flex-1 min-w-0">{text}</span>
       <span
         className={`shrink-0 px-1.5 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wide ${style.pillBg} ${style.pillText}`}
         aria-label={`Severity: ${style.label}`}
-        title={`AI severity: ${style.label}`}
+        title={
+          aiSeverity
+            ? `AI severity: ${style.label}`
+            : `Inferred severity: ${style.label}`
+        }
       >
         {style.label}
       </span>
@@ -938,7 +961,19 @@ function RecentDetailDialog({
                 </p>
                 <ul className="space-y-2">
                   {data.suggestionsJson.map((s: string, i: number) => (
-                    <SuggestionRow key={i} text={s} index={i} />
+                    <SuggestionRow
+                      key={i}
+                      text={s}
+                      index={i}
+                      // suggestionsJson is derived 1:1 from aiRecommendationsJson
+                      // on the server (`recommendations.map(r => r.action)`),
+                      // so the indices line up. Older submissions lack the
+                      // recommendations array entirely; SuggestionRow falls
+                      // back to keyword inference when severity is null.
+                      aiSeverity={normalizeAiSeverity(
+                        data.aiRecommendationsJson?.[i]?.severity ?? null,
+                      )}
+                    />
                   ))}
                 </ul>
               </div>
@@ -1428,7 +1463,17 @@ export function AreaCard({
             </p>
             <ul className="space-y-2">
               {sub.suggestionsJson?.map((s, i) => (
-                <SuggestionRow key={i} text={s} index={i} />
+                <SuggestionRow
+                  key={i}
+                  text={s}
+                  index={i}
+                  // Same indices as aiRecommendationsJson; falls back to
+                  // keyword inference for older submissions without the
+                  // recommendations payload.
+                  aiSeverity={normalizeAiSeverity(
+                    sub.aiRecommendationsJson?.[i]?.severity ?? null,
+                  )}
+                />
               ))}
               {(!sub.suggestionsJson || sub.suggestionsJson.length === 0) && (
                 <li className="text-[13.5px] text-muted-foreground italic bg-secondary/60 p-3 rounded-xl">
