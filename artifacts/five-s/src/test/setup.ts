@@ -60,3 +60,18 @@ if (typeof window !== "undefined" && !window.URL.createObjectURL) {
   window.URL.createObjectURL = () => "blob:mock";
   window.URL.revokeObjectURL = () => {};
 }
+
+// jsdom doesn't implement the pointer capture APIs that Radix primitives
+// (Toast, Select, Slider, etc.) call on pointer events. Without these stubs
+// any Radix component that wires pointer handlers throws unhandled
+// "target.hasPointerCapture is not a function" errors during interaction.
+if (typeof window !== "undefined") {
+  const proto = window.HTMLElement.prototype as unknown as {
+    hasPointerCapture?: (id: number) => boolean;
+    setPointerCapture?: (id: number) => void;
+    releasePointerCapture?: (id: number) => void;
+  };
+  if (!proto.hasPointerCapture) proto.hasPointerCapture = () => false;
+  if (!proto.setPointerCapture) proto.setPointerCapture = () => {};
+  if (!proto.releasePointerCapture) proto.releasePointerCapture = () => {};
+}
