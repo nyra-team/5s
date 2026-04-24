@@ -11,6 +11,7 @@ import {
   useGetActiveNudges,
   useGetActiveNudgesByArea,
   useDismissNudge,
+  useUndismissNudge,
   getGetSubmissionQueryKey,
   getGetAreaProfileQueryKey,
   AreaStatus,
@@ -1690,6 +1691,7 @@ function NudgeBanner({
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const dismissMutation = useDismissNudge();
+  const undismissMutation = useUndismissNudge();
 
   if (nudges.length === 0) return null;
   // nudges are returned newest-first by fetchByIds; pick index 0 as primary.
@@ -1699,17 +1701,62 @@ function NudgeBanner({
   const relative = formatDistanceToNowStrict(createdAt, { addSuffix: true });
   const absolute = format(createdAt, "MMM d, yyyy h:mm a");
 
+  const invalidateBadges = () => {
+    // Refetch persistent badges so the banner state updates immediately rather
+    // than after the 60s poll. The toast endpoint is per-recipient and
+    // doesn't reflect server-side dismissal, so we don't invalidate it.
+    queryClient.invalidateQueries({
+      queryKey: getGetActiveNudgesByAreaQueryKey({ shift: selectedShift }),
+    });
+  };
+
+  const handleUndo = (nudgeId: number) => {
+    // Radix's ToastAction closes the toast automatically when tapped; we
+    // just need to roll back the dismissal on the server and refresh the
+    // persistent badge query so the banner re-appears.
+    undismissMutation.mutate(
+      { id: nudgeId },
+      {
+        onSuccess: () => invalidateBadges(),
+        onError: () =>
+          toast({
+            variant: "destructive",
+            title: "Couldn't restore nudge",
+            description: "Please try again.",
+          }),
+      },
+    );
+  };
+
   const handleDismiss = () => {
     dismissMutation.mutate(
       { id: primary.id },
       {
         onSuccess: () => {
-          // Refetch persistent badges so the banner clears immediately rather
-          // than after the 60s poll. The toast endpoint is per-recipient and
-          // doesn't reflect server-side dismissal, so we don't invalidate it.
-          queryClient.invalidateQueries({
-            queryKey: getGetActiveNudgesByAreaQueryKey({ shift: selectedShift }),
+          invalidateBadges();
+          // Capture the nudge id at toast-creation time so a later undo tap
+          // refers to the right row even if `nudges` has since changed.
+          const dismissedNudgeId = primary.id;
+          const t = toast({
+            title: "Nudge dismissed",
+            description: primary.machine
+              ? `Cleared “${primary.machine}” reminder.`
+              : "Cleared the manager's reminder.",
+            action: (
+              <ToastAction
+                altText="Undo dismiss"
+                data-testid={`button-undo-dismiss-nudge-${dismissedNudgeId}`}
+                onClick={() => handleUndo(dismissedNudgeId)}
+              >
+                Undo
+              </ToastAction>
+            ),
           });
+          // The shadcn useToast `TOAST_REMOVE_DELAY` is effectively infinite,
+          // so we own the lifetime here: auto-close after ~6s. Calling
+          // `dismiss` on an already-closed toast is a no-op, so this is safe
+          // even if the user tapped Undo first.
+          window.setTimeout(() => t.dismiss(), 6000);
         },
         onError: () =>
           toast({

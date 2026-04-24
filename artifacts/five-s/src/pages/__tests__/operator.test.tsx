@@ -113,6 +113,11 @@ vi.mock("@workspace/api-client-react", () => {
       mutateAsync: vi.fn(async () => undefined),
       isPending: false,
     }),
+    useUndismissNudge: () => ({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(async () => undefined),
+      isPending: false,
+    }),
     getGetCurrentShiftQueryKey: () => ["shift"],
     getGetOperatorStatusQueryKey: () => ["status"],
     getGetNextChecksQueryKey: () => ["next-checks"],

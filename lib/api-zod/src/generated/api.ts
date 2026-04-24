@@ -1016,6 +1016,25 @@ export const DismissNudgeResponse = zod.object({
 });
 
 /**
+ * @summary Operator restores a nudge they just dismissed by tapping "Undo"
+ */
+export const UndismissNudgeParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UndismissNudgeResponse = zod.object({
+  id: zod.number(),
+  areaId: zod.number(),
+  areaName: zod.string(),
+  machine: zod.string().nullish(),
+  shift: zod.enum(["A", "B", "C"]),
+  message: zod.string().nullish(),
+  createdByEmail: zod.string(),
+  createdAt: zod.coerce.date(),
+  dismissedAt: zod.coerce.date().nullish(),
+});
+
+/**
  * @summary Operator pulls undismissed nudges (without dismissing them) so they can render as persistent badges on area cards
  */
 export const GetActiveNudgesByAreaQueryParams = zod.object({

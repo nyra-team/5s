@@ -114,6 +114,63 @@ router.get(
   },
 );
 
+// Operators can undo a fresh OPERATOR_DISMISS — used by the "Undo" toast that
+// appears for ~6s after they tap the X on a nudge banner. We only restore
+// nudges whose dismissReason was OPERATOR_DISMISS, never SUBMISSION: a
+// submission-cleared nudge has been addressed by new evidence and bringing
+// it back would be misleading. The 6s window is enforced client-side by
+// auto-dismissing the toast; the server is permissive so a slow tap on a
+// degraded connection still works.
+router.post(
+  "/nudges/:id/undismiss",
+  authMiddleware,
+  requireRole("OPERATOR"),
+  async (req, res): Promise<void> => {
+    const id = Number.parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+
+    const [existing] = await db
+      .select({
+        id: nudgesTable.id,
+        dismissedAt: nudgesTable.dismissedAt,
+        dismissReason: nudgesTable.dismissReason,
+      })
+      .from(nudgesTable)
+      .where(eq(nudgesTable.id, id));
+
+    if (!existing) {
+      res.status(404).json({ error: "Nudge not found" });
+      return;
+    }
+
+    // If it's already active again, return the current row idempotently so a
+    // double-tap of Undo doesn't 409.
+    if (existing.dismissedAt != null) {
+      if (existing.dismissReason !== "OPERATOR_DISMISS") {
+        res.status(409).json({
+          error: "Nudge cannot be restored once a submission has cleared it",
+        });
+        return;
+      }
+      await db
+        .update(nudgesTable)
+        .set({ dismissedAt: null, dismissedByUserId: null, dismissReason: null })
+        .where(
+          and(
+            eq(nudgesTable.id, id),
+            eq(nudgesTable.dismissReason, "OPERATOR_DISMISS"),
+          ),
+        );
+    }
+
+    const [shaped] = await fetchByIds([id]);
+    res.json(shaped);
+  },
+);
+
 // Operators can dismiss a specific active nudge they've already addressed
 // (e.g. handled offline, or it no longer applies because the area was already
 // submitted earlier this shift). Idempotent: dismissing an already-dismissed

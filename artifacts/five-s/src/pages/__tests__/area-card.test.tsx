@@ -44,6 +44,7 @@ vi.mock("@workspace/api-client-react", async () => {
       isPending: false,
     }),
     useDismissNudge: idle,
+    useUndismissNudge: idle,
     useGetAreaProfile: noopQuery,
     useGetSubmission: noopQuery,
   };

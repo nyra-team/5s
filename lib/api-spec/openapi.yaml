@@ -769,6 +769,37 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /nudges/{id}/undismiss:
+    post:
+      operationId: undismissNudge
+      tags: [nudges]
+      summary: Operator restores a nudge they just dismissed by tapping "Undo"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Nudge restored (or already active)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Nudge"
+        "404":
+          description: Nudge not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Nudge cannot be restored — it was cleared by a submission, not by the operator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /nudges/active-by-area:
     get:
       operationId: getActiveNudgesByArea

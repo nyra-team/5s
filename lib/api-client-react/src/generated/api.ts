@@ -3044,6 +3044,90 @@ export const useDismissNudge = <
 };
 
 /**
+ * @summary Operator restores a nudge they just dismissed by tapping "Undo"
+ */
+export const getUndismissNudgeUrl = (id: number) => {
+  return `/api/nudges/${id}/undismiss`;
+};
+
+export const undismissNudge = async (
+  id: number,
+  options?: RequestInit,
+): Promise<Nudge> => {
+  return customFetch<Nudge>(getUndismissNudgeUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getUndismissNudgeMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof undismissNudge>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof undismissNudge>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["undismissNudge"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof undismissNudge>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return undismissNudge(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UndismissNudgeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof undismissNudge>>
+>;
+
+export type UndismissNudgeMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Operator restores a nudge they just dismissed by tapping "Undo"
+ */
+export const useUndismissNudge = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof undismissNudge>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof undismissNudge>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getUndismissNudgeMutationOptions(options));
+};
+
+/**
  * @summary Operator pulls undismissed nudges (without dismissing them) so they can render as persistent badges on area cards
  */
 export const getGetActiveNudgesByAreaUrl = (
