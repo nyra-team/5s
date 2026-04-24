@@ -25,7 +25,10 @@ import { recordCheck } from "../lib/schedule";
 import { dismissNudgesForSubmission } from "./nudges";
 import { logger } from "../lib/logger.js";
 import { notifyEscalationCreated } from "../lib/notifications.js";
-import { PRIOR_BEST_WINDOW_MS } from "../lib/operator-thresholds.js";
+import {
+  loadEffectiveOperatorThresholds,
+  priorBestWindowMs,
+} from "../lib/operator-thresholds.js";
 
 const ESCALATION_THRESHOLD_PERCENT = (() => {
   const raw = parseInt(process.env.ESCALATION_THRESHOLD_PERCENT ?? "", 10);
@@ -485,6 +488,11 @@ router.get("/operator/recent", authMiddleware, async (req, res): Promise<void> =
   // Pull a wide window so we can compute prevScoreTotal and bestScoreInLastWeek
   // without an extra round-trip per area. The strip itself only renders `limit`.
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+  // Resolve the prior-best window per request so admin-tuned overrides
+  // (env var or DB) take effect on the next call without a redeploy.
+  const effectiveThresholds = await loadEffectiveOperatorThresholds();
+  const PRIOR_BEST_WINDOW_MS = priorBestWindowMs(effectiveThresholds);
 
   const rows = await db
     .select({

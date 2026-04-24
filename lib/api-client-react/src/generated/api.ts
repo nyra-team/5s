@@ -48,6 +48,7 @@ import type {
   NextCheck,
   NotificationPreferences,
   Nudge,
+  OperatorThresholds,
   QuickApproveLabelBody,
   RecentSubmission,
   ReuploadSubmissionBody,
@@ -56,6 +57,7 @@ import type {
   UpdateAreaBody,
   UpdateAreaProfileBody,
   UpdateNotificationPreferencesBody,
+  UpdateOperatorThresholdsBody,
   User,
 } from "./api.schemas";
 
@@ -3238,3 +3240,165 @@ export function useGetAreaModelStatus<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Get the effective operator thresholds (with override provenance)
+ */
+export const getGetOperatorThresholdsUrl = () => {
+  return `/api/operator-thresholds`;
+};
+
+export const getOperatorThresholds = async (
+  options?: RequestInit,
+): Promise<OperatorThresholds> => {
+  return customFetch<OperatorThresholds>(getGetOperatorThresholdsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOperatorThresholdsQueryKey = () => {
+  return [`/api/operator-thresholds`] as const;
+};
+
+export const getGetOperatorThresholdsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOperatorThresholds>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOperatorThresholds>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetOperatorThresholdsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOperatorThresholds>>
+  > = ({ signal }) => getOperatorThresholds({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOperatorThresholds>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOperatorThresholdsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOperatorThresholds>>
+>;
+export type GetOperatorThresholdsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the effective operator thresholds (with override provenance)
+ */
+
+export function useGetOperatorThresholds<
+  TData = Awaited<ReturnType<typeof getOperatorThresholds>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOperatorThresholds>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOperatorThresholdsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update DB-backed operator threshold overrides (manager only)
+ */
+export const getUpdateOperatorThresholdsUrl = () => {
+  return `/api/operator-thresholds`;
+};
+
+export const updateOperatorThresholds = async (
+  updateOperatorThresholdsBody: UpdateOperatorThresholdsBody,
+  options?: RequestInit,
+): Promise<OperatorThresholds> => {
+  return customFetch<OperatorThresholds>(getUpdateOperatorThresholdsUrl(), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateOperatorThresholdsBody),
+  });
+};
+
+export const getUpdateOperatorThresholdsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateOperatorThresholds>>,
+    TError,
+    { data: BodyType<UpdateOperatorThresholdsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateOperatorThresholds>>,
+  TError,
+  { data: BodyType<UpdateOperatorThresholdsBody> },
+  TContext
+> => {
+  const mutationKey = ["updateOperatorThresholds"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateOperatorThresholds>>,
+    { data: BodyType<UpdateOperatorThresholdsBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return updateOperatorThresholds(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateOperatorThresholdsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateOperatorThresholds>>
+>;
+export type UpdateOperatorThresholdsMutationBody =
+  BodyType<UpdateOperatorThresholdsBody>;
+export type UpdateOperatorThresholdsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update DB-backed operator threshold overrides (manager only)
+ */
+export const useUpdateOperatorThresholds = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateOperatorThresholds>>,
+    TError,
+    { data: BodyType<UpdateOperatorThresholdsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateOperatorThresholds>>,
+  TError,
+  { data: BodyType<UpdateOperatorThresholdsBody> },
+  TContext
+> => {
+  return useMutation(getUpdateOperatorThresholdsMutationOptions(options));
+};

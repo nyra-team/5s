@@ -1,6 +1,6 @@
 import { useAuth } from "@/lib/auth";
 import { Link, useLocation } from "wouter";
-import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List, Inbox, Activity, Bell } from "lucide-react";
+import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List, Inbox, Activity, Bell, Sliders } from "lucide-react";
 import { useGetEscalationCount, useGetMyNotificationPreferences } from "@workspace/api-client-react";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
@@ -61,6 +61,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/areas", label: "Areas", icon: LayoutGrid, badge: 0 },
     { href: "/escalations", label: "Escalations", icon: Inbox, badge: openCount },
     { href: "/notifications", label: "Notifications", icon: Bell, badge: 0 },
+    { href: "/operator-thresholds", label: "Thresholds", icon: Sliders, badge: 0 },
   ];
 
   return (

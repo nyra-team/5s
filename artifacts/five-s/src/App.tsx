@@ -18,6 +18,7 @@ import Areas from "@/pages/areas";
 import Escalations from "@/pages/escalations";
 import LiveShift from "@/pages/live";
 import Notifications from "@/pages/notifications";
+import OperatorThresholds from "@/pages/operator-thresholds";
 
 const queryClient = new QueryClient();
 
@@ -78,6 +79,14 @@ function Router() {
         <ProtectedRoute allowedRoles={["MANAGER"]}>
           <Layout>
             <Notifications />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+
+      <Route path="/operator-thresholds">
+        <ProtectedRoute allowedRoles={["MANAGER"]}>
+          <Layout>
+            <OperatorThresholds />
           </Layout>
         </ProtectedRoute>
       </Route>

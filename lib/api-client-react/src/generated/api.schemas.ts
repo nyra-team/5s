@@ -87,6 +87,94 @@ export interface UpdateNotificationPreferencesBody {
 }
 
 /**
+ * Per-field override values (null when no override is set at this layer).
+ */
+export interface OperatorThresholdSources {
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  encouragementMinPercent: number | null;
+  /**
+   * @minimum 1
+   * @maximum 365
+   */
+  priorBestWindowDays: number | null;
+  /**
+   * @minimum 0
+   * @maximum 1440
+   */
+  dueSoonThresholdMinutes: number | null;
+}
+
+/**
+ * Static fallback values shipped with the build.
+ */
+export type OperatorThresholdsDefaults = {
+  encouragementMinPercent: number;
+  priorBestWindowDays: number;
+  dueSoonThresholdMinutes: number;
+};
+
+/**
+ * Effective operator-facing thresholds (env > DB > default), plus the
+per-layer overrides so the admin UI can show provenance.
+
+ */
+export interface OperatorThresholds {
+  /**
+   * Display percent at which a submission is considered "good".
+   * @minimum 0
+   * @maximum 100
+   */
+  encouragementMinPercent: number;
+  /**
+   * Lookback window (days) for prior-best per area.
+   * @minimum 1
+   * @maximum 365
+   */
+  priorBestWindowDays: number;
+  /**
+   * Time-to-due (minutes) at which an area check is "due soon".
+   * @minimum 0
+   * @maximum 1440
+   */
+  dueSoonThresholdMinutes: number;
+  /** Static fallback values shipped with the build. */
+  defaults: OperatorThresholdsDefaults;
+  envOverrides: OperatorThresholdSources;
+  dbOverrides: OperatorThresholdSources;
+  /** When the DB override row was last touched. */
+  updatedAt?: string | null;
+  /** Manager who last touched the DB override row. */
+  updatedByUserId?: number | null;
+}
+
+/**
+ * Patch for the DB-backed override row. Per-field semantics:
+omitted = leave existing value, null = clear the override
+(fall back to env/default), integer = set the override.
+
+ */
+export interface UpdateOperatorThresholdsBody {
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  encouragementMinPercent?: number | null;
+  /**
+   * @minimum 1
+   * @maximum 365
+   */
+  priorBestWindowDays?: number | null;
+  /**
+   * @minimum 0
+   * @maximum 1440
+   */
+  dueSoonThresholdMinutes?: number | null;
+}
+
+/**
  * The kind of physical setting this area represents. Drives the AI rubric used to score submissions.
  */
 export type AreaEnvironmentType =

@@ -34,6 +34,8 @@ tags:
     description: Live shift snapshot for managers
   - name: preferences
     description: Per-user preferences (notifications, etc.)
+  - name: settings
+    description: Admin-tunable settings (operator thresholds, etc.)
 
 paths:
   /healthz:
@@ -788,6 +790,36 @@ paths:
               schema:
                 $ref: "#/components/schemas/ModelStatus"
 
+  /operator-thresholds:
+    get:
+      operationId: getOperatorThresholds
+      tags: [settings]
+      summary: Get the effective operator thresholds (with override provenance)
+      responses:
+        "200":
+          description: Effective thresholds + sources
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorThresholds"
+    put:
+      operationId: updateOperatorThresholds
+      tags: [settings]
+      summary: Update DB-backed operator threshold overrides (manager only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOperatorThresholdsBody"
+      responses:
+        "200":
+          description: Effective thresholds after the update
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorThresholds"
+
 components:
   schemas:
     HealthStatus:
@@ -913,6 +945,109 @@ components:
           type: integer
           minimum: 0
           maximum: 127
+
+    OperatorThresholdSources:
+      type: object
+      description: Per-field override values (null when no override is set at this layer).
+      properties:
+        encouragementMinPercent:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 100
+        priorBestWindowDays:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 365
+        dueSoonThresholdMinutes:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 1440
+      required:
+        - encouragementMinPercent
+        - priorBestWindowDays
+        - dueSoonThresholdMinutes
+
+    OperatorThresholds:
+      type: object
+      description: |
+        Effective operator-facing thresholds (env > DB > default), plus the
+        per-layer overrides so the admin UI can show provenance.
+      properties:
+        encouragementMinPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Display percent at which a submission is considered "good".
+        priorBestWindowDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: Lookback window (days) for prior-best per area.
+        dueSoonThresholdMinutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+          description: Time-to-due (minutes) at which an area check is "due soon".
+        defaults:
+          type: object
+          description: Static fallback values shipped with the build.
+          properties:
+            encouragementMinPercent:
+              type: integer
+            priorBestWindowDays:
+              type: integer
+            dueSoonThresholdMinutes:
+              type: integer
+          required:
+            - encouragementMinPercent
+            - priorBestWindowDays
+            - dueSoonThresholdMinutes
+        envOverrides:
+          $ref: "#/components/schemas/OperatorThresholdSources"
+        dbOverrides:
+          $ref: "#/components/schemas/OperatorThresholdSources"
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the DB override row was last touched.
+        updatedByUserId:
+          type: integer
+          nullable: true
+          description: Manager who last touched the DB override row.
+      required:
+        - encouragementMinPercent
+        - priorBestWindowDays
+        - dueSoonThresholdMinutes
+        - defaults
+        - envOverrides
+        - dbOverrides
+
+    UpdateOperatorThresholdsBody:
+      type: object
+      description: |
+        Patch for the DB-backed override row. Per-field semantics:
+        omitted = leave existing value, null = clear the override
+        (fall back to env/default), integer = set the override.
+      properties:
+        encouragementMinPercent:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 100
+        priorBestWindowDays:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 365
+        dueSoonThresholdMinutes:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 1440
 
     Area:
       type: object

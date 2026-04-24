@@ -78,12 +78,11 @@ import {
   purgeStaleCaptureDrafts,
 } from "@/lib/capture-drafts";
 import { getShiftLabels } from "@/lib/theme";
-import { OPERATOR_THRESHOLDS } from "@/lib/operator-thresholds";
+import { useEffectiveOperatorThresholds } from "@/lib/operator-thresholds";
 
 const SHIFT_OPTIONS = getShiftLabels();
 
 const RECENT_STRIP_PREF_KEY = "operator.recentStrip.collapsed";
-const { ENCOURAGEMENT_MIN_PERCENT, DUE_SOON_THRESHOLD_MS } = OPERATOR_THRESHOLDS;
 
 type DueState = "overdue" | "due-soon" | "ok";
 
@@ -181,10 +180,14 @@ function SuggestionRow({ text, index }: { text: string; index: number }) {
   );
 }
 
-function dueStateFor(nc: NextCheck | undefined, now: number): DueState {
+function dueStateFor(
+  nc: NextCheck | undefined,
+  now: number,
+  dueSoonThresholdMs: number,
+): DueState {
   if (!nc) return "ok";
   if (nc.overdue || new Date(nc.nextDueAt).getTime() <= now) return "overdue";
-  if (new Date(nc.nextDueAt).getTime() - now <= DUE_SOON_THRESHOLD_MS) return "due-soon";
+  if (new Date(nc.nextDueAt).getTime() - now <= dueSoonThresholdMs) return "due-soon";
   return "ok";
 }
 
@@ -219,6 +222,9 @@ export default function OperatorHome() {
     { query: { queryKey: getGetOperatorRecentQueryKey({ limit: 12 }) } }
   );
   const recent = recentRaw ?? [];
+  // Resolved operator thresholds (env > DB > default), polled slowly so admin
+  // tweaks land on the next refetch without a hard refresh.
+  const thresholds = useEffectiveOperatorThresholds();
   // Pull active nudges from managers periodically. The endpoint is OPERATOR-only
   // and tracks per-recipient seen state server-side via seen_by_user_ids_json,
   // so each operator sees a given nudge exactly once across refetches. We still
@@ -325,7 +331,7 @@ export default function OperatorHome() {
     const now = Date.now();
     const priority = (s: AreaStatus): number => {
       if (s.submitted) return 4;
-      const due = dueStateFor(areaDueMap.get(s.areaId), now);
+      const due = dueStateFor(areaDueMap.get(s.areaId), now, thresholds.dueSoonThresholdMs);
       if (due === "overdue") return 0;
       if (due === "due-soon") return 1;
       return 2;
@@ -338,7 +344,7 @@ export default function OperatorHome() {
     });
     // tick keeps sorting fresh as time passes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statuses, areaDueMap, tick]);
+  }, [statuses, areaDueMap, tick, thresholds.dueSoonThresholdMs]);
 
   // Map submission.id -> RecentSubmission so AreaCard can read prior-week best
   // for the encouragement chip without a second fetch.
@@ -357,10 +363,10 @@ export default function OperatorHome() {
     for (const r of recent) {
       if (m.has(r.areaId)) continue;
       const pct = Math.round(r.scoreTotal * 4);
-      if (pct >= ENCOURAGEMENT_MIN_PERCENT) m.set(r.areaId, { scorePercent: pct, createdAt: r.createdAt });
+      if (pct >= thresholds.encouragementMinPercent) m.set(r.areaId, { scorePercent: pct, createdAt: r.createdAt });
     }
     return m;
-  }, [recent]);
+  }, [recent, thresholds.encouragementMinPercent]);
 
   // When we don't yet know the current shift, render an explicit loading or
   // error state for the shift pills instead of pre-selecting "A". The operator
@@ -462,7 +468,7 @@ export default function OperatorHome() {
                 <AreaCard
                   status={status}
                   selectedShift={activeShift}
-                  dueState={dueStateFor(areaDueMap.get(status.areaId), Date.now())}
+                  dueState={dueStateFor(areaDueMap.get(status.areaId), Date.now(), thresholds.dueSoonThresholdMs)}
                   dueInfo={areaDueMap.get(status.areaId)}
                   recentForSubmission={
                     status.submitted && status.submission
@@ -471,6 +477,7 @@ export default function OperatorHome() {
                   }
                   lastGood={lastGoodByAreaId.get(status.areaId) ?? null}
                   activeNudges={nudgesByAreaId.get(status.areaId) ?? []}
+                  encouragementMinPercent={thresholds.encouragementMinPercent}
                 />
               </motion.div>
             ))}
@@ -870,6 +877,7 @@ export function AreaCard({
   recentForSubmission,
   lastGood,
   activeNudges,
+  encouragementMinPercent,
 }: {
   status: AreaStatus;
   selectedShift: "A" | "B" | "C";
@@ -878,6 +886,7 @@ export function AreaCard({
   recentForSubmission: RecentSubmission | undefined;
   lastGood: { scorePercent: number; createdAt: string } | null;
   activeNudges: Nudge[];
+  encouragementMinPercent: number;
 }) {
   const [isCaptureOpen, setIsCaptureOpen] = useState(false);
   const [isReuploadMode, setIsReuploadMode] = useState(false);
@@ -1158,7 +1167,7 @@ export function AreaCard({
     // "+N vs last time" when there is a prior submission but no week-best.
     const ctx = recentForSubmission;
     let encouragement: { kind: "best" | "delta"; label: string } | null = null;
-    if (ctx && ctx.scoreTotal === sub.scoreTotal && scorePercent >= ENCOURAGEMENT_MIN_PERCENT) {
+    if (ctx && ctx.scoreTotal === sub.scoreTotal && scorePercent >= encouragementMinPercent) {
       if (
         ctx.bestScoreInLastWeek == null ||
         ctx.scoreTotal > ctx.bestScoreInLastWeek

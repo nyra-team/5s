@@ -1166,3 +1166,289 @@ export const GetAreaModelStatusResponse = zod.object({
   latestScoringMode: zod.string().nullish(),
   latestModelVersion: zod.string().nullish(),
 });
+
+/**
+ * @summary Get the effective operator thresholds (with override provenance)
+ */
+export const getOperatorThresholdsResponseEncouragementMinPercentMin = 0;
+export const getOperatorThresholdsResponseEncouragementMinPercentMax = 100;
+
+export const getOperatorThresholdsResponsePriorBestWindowDaysMax = 365;
+
+export const getOperatorThresholdsResponseDueSoonThresholdMinutesMin = 0;
+export const getOperatorThresholdsResponseDueSoonThresholdMinutesMax = 1440;
+
+export const getOperatorThresholdsResponseEnvOverridesEncouragementMinPercentMin = 0;
+export const getOperatorThresholdsResponseEnvOverridesEncouragementMinPercentMax = 100;
+
+export const getOperatorThresholdsResponseEnvOverridesPriorBestWindowDaysMax = 365;
+
+export const getOperatorThresholdsResponseEnvOverridesDueSoonThresholdMinutesMin = 0;
+export const getOperatorThresholdsResponseEnvOverridesDueSoonThresholdMinutesMax = 1440;
+
+export const getOperatorThresholdsResponseDbOverridesEncouragementMinPercentMin = 0;
+export const getOperatorThresholdsResponseDbOverridesEncouragementMinPercentMax = 100;
+
+export const getOperatorThresholdsResponseDbOverridesPriorBestWindowDaysMax = 365;
+
+export const getOperatorThresholdsResponseDbOverridesDueSoonThresholdMinutesMin = 0;
+export const getOperatorThresholdsResponseDbOverridesDueSoonThresholdMinutesMax = 1440;
+
+export const GetOperatorThresholdsResponse = zod
+  .object({
+    encouragementMinPercent: zod
+      .number()
+      .min(getOperatorThresholdsResponseEncouragementMinPercentMin)
+      .max(getOperatorThresholdsResponseEncouragementMinPercentMax)
+      .describe(
+        'Display percent at which a submission is considered \"good\".',
+      ),
+    priorBestWindowDays: zod
+      .number()
+      .min(1)
+      .max(getOperatorThresholdsResponsePriorBestWindowDaysMax)
+      .describe("Lookback window (days) for prior-best per area."),
+    dueSoonThresholdMinutes: zod
+      .number()
+      .min(getOperatorThresholdsResponseDueSoonThresholdMinutesMin)
+      .max(getOperatorThresholdsResponseDueSoonThresholdMinutesMax)
+      .describe(
+        'Time-to-due (minutes) at which an area check is \"due soon\".',
+      ),
+    defaults: zod
+      .object({
+        encouragementMinPercent: zod.number(),
+        priorBestWindowDays: zod.number(),
+        dueSoonThresholdMinutes: zod.number(),
+      })
+      .describe("Static fallback values shipped with the build."),
+    envOverrides: zod
+      .object({
+        encouragementMinPercent: zod
+          .number()
+          .min(
+            getOperatorThresholdsResponseEnvOverridesEncouragementMinPercentMin,
+          )
+          .max(
+            getOperatorThresholdsResponseEnvOverridesEncouragementMinPercentMax,
+          )
+          .nullable(),
+        priorBestWindowDays: zod
+          .number()
+          .min(1)
+          .max(getOperatorThresholdsResponseEnvOverridesPriorBestWindowDaysMax)
+          .nullable(),
+        dueSoonThresholdMinutes: zod
+          .number()
+          .min(
+            getOperatorThresholdsResponseEnvOverridesDueSoonThresholdMinutesMin,
+          )
+          .max(
+            getOperatorThresholdsResponseEnvOverridesDueSoonThresholdMinutesMax,
+          )
+          .nullable(),
+      })
+      .describe(
+        "Per-field override values (null when no override is set at this layer).",
+      ),
+    dbOverrides: zod
+      .object({
+        encouragementMinPercent: zod
+          .number()
+          .min(
+            getOperatorThresholdsResponseDbOverridesEncouragementMinPercentMin,
+          )
+          .max(
+            getOperatorThresholdsResponseDbOverridesEncouragementMinPercentMax,
+          )
+          .nullable(),
+        priorBestWindowDays: zod
+          .number()
+          .min(1)
+          .max(getOperatorThresholdsResponseDbOverridesPriorBestWindowDaysMax)
+          .nullable(),
+        dueSoonThresholdMinutes: zod
+          .number()
+          .min(
+            getOperatorThresholdsResponseDbOverridesDueSoonThresholdMinutesMin,
+          )
+          .max(
+            getOperatorThresholdsResponseDbOverridesDueSoonThresholdMinutesMax,
+          )
+          .nullable(),
+      })
+      .describe(
+        "Per-field override values (null when no override is set at this layer).",
+      ),
+    updatedAt: zod.coerce
+      .date()
+      .nullish()
+      .describe("When the DB override row was last touched."),
+    updatedByUserId: zod
+      .number()
+      .nullish()
+      .describe("Manager who last touched the DB override row."),
+  })
+  .describe(
+    "Effective operator-facing thresholds (env > DB > default), plus the\nper-layer overrides so the admin UI can show provenance.\n",
+  );
+
+/**
+ * @summary Update DB-backed operator threshold overrides (manager only)
+ */
+export const updateOperatorThresholdsBodyEncouragementMinPercentMin = 0;
+export const updateOperatorThresholdsBodyEncouragementMinPercentMax = 100;
+
+export const updateOperatorThresholdsBodyPriorBestWindowDaysMax = 365;
+
+export const updateOperatorThresholdsBodyDueSoonThresholdMinutesMin = 0;
+export const updateOperatorThresholdsBodyDueSoonThresholdMinutesMax = 1440;
+
+export const UpdateOperatorThresholdsBody = zod
+  .object({
+    encouragementMinPercent: zod
+      .number()
+      .min(updateOperatorThresholdsBodyEncouragementMinPercentMin)
+      .max(updateOperatorThresholdsBodyEncouragementMinPercentMax)
+      .nullish(),
+    priorBestWindowDays: zod
+      .number()
+      .min(1)
+      .max(updateOperatorThresholdsBodyPriorBestWindowDaysMax)
+      .nullish(),
+    dueSoonThresholdMinutes: zod
+      .number()
+      .min(updateOperatorThresholdsBodyDueSoonThresholdMinutesMin)
+      .max(updateOperatorThresholdsBodyDueSoonThresholdMinutesMax)
+      .nullish(),
+  })
+  .describe(
+    "Patch for the DB-backed override row. Per-field semantics:\nomitted = leave existing value, null = clear the override\n(fall back to env\/default), integer = set the override.\n",
+  );
+
+export const updateOperatorThresholdsResponseEncouragementMinPercentMin = 0;
+export const updateOperatorThresholdsResponseEncouragementMinPercentMax = 100;
+
+export const updateOperatorThresholdsResponsePriorBestWindowDaysMax = 365;
+
+export const updateOperatorThresholdsResponseDueSoonThresholdMinutesMin = 0;
+export const updateOperatorThresholdsResponseDueSoonThresholdMinutesMax = 1440;
+
+export const updateOperatorThresholdsResponseEnvOverridesEncouragementMinPercentMin = 0;
+export const updateOperatorThresholdsResponseEnvOverridesEncouragementMinPercentMax = 100;
+
+export const updateOperatorThresholdsResponseEnvOverridesPriorBestWindowDaysMax = 365;
+
+export const updateOperatorThresholdsResponseEnvOverridesDueSoonThresholdMinutesMin = 0;
+export const updateOperatorThresholdsResponseEnvOverridesDueSoonThresholdMinutesMax = 1440;
+
+export const updateOperatorThresholdsResponseDbOverridesEncouragementMinPercentMin = 0;
+export const updateOperatorThresholdsResponseDbOverridesEncouragementMinPercentMax = 100;
+
+export const updateOperatorThresholdsResponseDbOverridesPriorBestWindowDaysMax = 365;
+
+export const updateOperatorThresholdsResponseDbOverridesDueSoonThresholdMinutesMin = 0;
+export const updateOperatorThresholdsResponseDbOverridesDueSoonThresholdMinutesMax = 1440;
+
+export const UpdateOperatorThresholdsResponse = zod
+  .object({
+    encouragementMinPercent: zod
+      .number()
+      .min(updateOperatorThresholdsResponseEncouragementMinPercentMin)
+      .max(updateOperatorThresholdsResponseEncouragementMinPercentMax)
+      .describe(
+        'Display percent at which a submission is considered \"good\".',
+      ),
+    priorBestWindowDays: zod
+      .number()
+      .min(1)
+      .max(updateOperatorThresholdsResponsePriorBestWindowDaysMax)
+      .describe("Lookback window (days) for prior-best per area."),
+    dueSoonThresholdMinutes: zod
+      .number()
+      .min(updateOperatorThresholdsResponseDueSoonThresholdMinutesMin)
+      .max(updateOperatorThresholdsResponseDueSoonThresholdMinutesMax)
+      .describe(
+        'Time-to-due (minutes) at which an area check is \"due soon\".',
+      ),
+    defaults: zod
+      .object({
+        encouragementMinPercent: zod.number(),
+        priorBestWindowDays: zod.number(),
+        dueSoonThresholdMinutes: zod.number(),
+      })
+      .describe("Static fallback values shipped with the build."),
+    envOverrides: zod
+      .object({
+        encouragementMinPercent: zod
+          .number()
+          .min(
+            updateOperatorThresholdsResponseEnvOverridesEncouragementMinPercentMin,
+          )
+          .max(
+            updateOperatorThresholdsResponseEnvOverridesEncouragementMinPercentMax,
+          )
+          .nullable(),
+        priorBestWindowDays: zod
+          .number()
+          .min(1)
+          .max(
+            updateOperatorThresholdsResponseEnvOverridesPriorBestWindowDaysMax,
+          )
+          .nullable(),
+        dueSoonThresholdMinutes: zod
+          .number()
+          .min(
+            updateOperatorThresholdsResponseEnvOverridesDueSoonThresholdMinutesMin,
+          )
+          .max(
+            updateOperatorThresholdsResponseEnvOverridesDueSoonThresholdMinutesMax,
+          )
+          .nullable(),
+      })
+      .describe(
+        "Per-field override values (null when no override is set at this layer).",
+      ),
+    dbOverrides: zod
+      .object({
+        encouragementMinPercent: zod
+          .number()
+          .min(
+            updateOperatorThresholdsResponseDbOverridesEncouragementMinPercentMin,
+          )
+          .max(
+            updateOperatorThresholdsResponseDbOverridesEncouragementMinPercentMax,
+          )
+          .nullable(),
+        priorBestWindowDays: zod
+          .number()
+          .min(1)
+          .max(
+            updateOperatorThresholdsResponseDbOverridesPriorBestWindowDaysMax,
+          )
+          .nullable(),
+        dueSoonThresholdMinutes: zod
+          .number()
+          .min(
+            updateOperatorThresholdsResponseDbOverridesDueSoonThresholdMinutesMin,
+          )
+          .max(
+            updateOperatorThresholdsResponseDbOverridesDueSoonThresholdMinutesMax,
+          )
+          .nullable(),
+      })
+      .describe(
+        "Per-field override values (null when no override is set at this layer).",
+      ),
+    updatedAt: zod.coerce
+      .date()
+      .nullish()
+      .describe("When the DB override row was last touched."),
+    updatedByUserId: zod
+      .number()
+      .nullish()
+      .describe("Manager who last touched the DB override row."),
+  })
+  .describe(
+    "Effective operator-facing thresholds (env > DB > default), plus the\nper-layer overrides so the admin UI can show provenance.\n",
+  );

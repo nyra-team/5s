@@ -82,6 +82,11 @@ vi.mock("@workspace/api-client-react", () => {
     useGetActiveNudgesByArea: stub("nudgesByArea"),
     useGetAreaProfile: stub("profile"),
     useGetSubmission: stub("submission"),
+    // useEffectiveOperatorThresholds() reads this. Returning `undefined` data
+    // exercises the fallback-to-defaults path, which is the safest default
+    // for the existing tests (they were written against the constants).
+    useGetOperatorThresholds: () => ({ data: undefined, isLoading: false }),
+    getGetOperatorThresholdsQueryKey: () => ["operator-thresholds"],
     useCreateSubmission: () => ({
       mutate: vi.fn(),
       isPending: false,

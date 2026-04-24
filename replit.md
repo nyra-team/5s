@@ -95,6 +95,34 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - Env knobs (all optional): `ESCALATION_REPING_THRESHOLD_MINUTES` (default 15), `ESCALATION_REPING_MAX_COUNT` (default 2; set to `0` to disable the scheduler), `ESCALATION_REPING_CHECK_INTERVAL_MS` (default 60000).
 - The interval is `unref()`-ed so it never blocks process exit. The scheduler is wired in `index.ts` only — tests load `app.ts` directly and therefore never start it.
 
+## Operator threshold tuning (Task 69)
+
+- Three operator-facing cutoffs are runtime-tunable without a redeploy:
+  `encouragementMinPercent` (display % at which a submission is "good"),
+  `priorBestWindowDays` (lookback for prior-best per area), and
+  `dueSoonThresholdMinutes` ("due soon" lead time for area checks).
+- Precedence: **env var > DB override > shipped default**. Defaults live in
+  `artifacts/api-server/src/lib/operator-thresholds.ts` and the parallel
+  frontend file `artifacts/five-s/src/lib/operator-thresholds.ts`.
+- Env-var overrides (read once per process): `ENCOURAGEMENT_MIN_PERCENT`,
+  `PRIOR_BEST_WINDOW_DAYS`, `DUE_SOON_THRESHOLD_MS` (note: ms, not minutes —
+  legacy name preserved). Invalid values fall through to the next layer.
+- DB overrides live in the singleton `operator_settings` row (id=1) with
+  three nullable int columns + `updated_by_user_id` / `updated_at`.
+- Endpoints: `GET /api/operator-thresholds` (any auth) returns the effective
+  values plus full provenance (`defaults`, `envOverrides`, `dbOverrides`).
+  `PUT /api/operator-thresholds` (manager-only) accepts a partial body —
+  omitted = leave untouched, `null` = clear the override, integer = set.
+  Out-of-range values are silently dropped (matches the permissive style of
+  `/me/notification-preferences`).
+- The operator UI (`useEffectiveOperatorThresholds`) polls every 60s; the
+  server-side `/operator/recent` route reloads thresholds per request, so
+  admin tweaks pick up on the next call without a process restart.
+- Manager admin UI lives at `/operator-thresholds` (Sliders icon nav tab,
+  manager-only route). Draft state syncs from server only when the saved
+  override values change (content fingerprint), so polling refetches don't
+  wipe in-flight edits.
+
 ## Architecture
 
 - See `artifacts/api-server/src/routes/README.md` for route conventions (notably: never use `sql\`... = ANY(${jsArray})\`` — use drizzle's `inArray()` helper, which handles single-element arrays correctly)

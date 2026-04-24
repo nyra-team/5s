@@ -6,3 +6,4 @@ export * from "./area-profiles";
 export * from "./escalations";
 export * from "./area-schedules";
 export * from "./nudges";
+export * from "./operator-settings";
