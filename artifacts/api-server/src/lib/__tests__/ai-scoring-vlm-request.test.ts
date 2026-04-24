@@ -103,9 +103,9 @@ describe("callVLM request payload", () => {
 
     const req = createMock.mock.calls[0][0];
 
-    expect(req.model).toBe("gpt-5");
+    expect(req.model).toBe("gpt-5-mini");
     expect(req.response_format).toEqual({ type: "json_object" });
-    // Must be high enough to cover gpt-5's hidden reasoning tokens AND the
+    // Must be high enough to cover the gpt-5 family's hidden reasoning tokens AND the
     // structured JSON output — see the comment on `baseRequest` in
     // ai-scoring.ts. A regression to a small cap (e.g. 2048) leaves the
     // entire budget consumed by reasoning, the response body comes back
@@ -144,7 +144,7 @@ describe("callVLM request payload", () => {
       for (const k of FORBIDDEN_PARAMS) {
         expect(req, `call #${i + 1} must NOT include "${k}"`).not.toHaveProperty(k);
       }
-      expect(req.model).toBe("gpt-5");
+      expect(req.model).toBe("gpt-5-mini");
       expect(req.response_format).toEqual({ type: "json_object" });
       expect(req.max_completion_tokens).toBe(8192);
       expect(req.top_p).toBe(1);

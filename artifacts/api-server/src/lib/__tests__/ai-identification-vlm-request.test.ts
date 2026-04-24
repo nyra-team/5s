@@ -99,7 +99,7 @@ describe("callIdentificationVLM request payload", () => {
 
     const req = createMock.mock.calls[0][0];
 
-    expect(req.model).toBe("gpt-5");
+    expect(req.model).toBe("gpt-5-mini");
     expect(req.response_format).toEqual({ type: "json_object" });
     expect(req.max_completion_tokens).toBe(1024);
     expect(Array.isArray(req.messages)).toBe(true);

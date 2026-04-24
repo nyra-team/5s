@@ -16,11 +16,11 @@ import { extractKeyframes, isVideoFile } from "./keyframes.js";
 import { db, aiScoringMetricsTable } from "@workspace/db";
 
 // modelVersion string written into the metrics row for identification calls.
-// Distinct from the scoring rows' `gpt-5-<env>-v1` so the dashboard's
+// Distinct from the scoring rows' `gpt-5-mini-<env>-v1` so the dashboard's
 // per-model rollup can split scoring vs identification spend even when both
 // pipelines share the underlying OpenAI model. Bump the suffix if the model
 // or prompt changes meaningfully.
-const IDENTIFICATION_MODEL_VERSION = "gpt-5-identification-v1";
+const IDENTIFICATION_MODEL_VERSION = "gpt-5-mini-identification-v1";
 
 // Coerce a possibly-undefined token-count field to a finite number, or null.
 // Centralized so the three usage fields (prompt/completion/total) share one
@@ -148,7 +148,7 @@ export async function callIdentificationVLM(
   let response: Awaited<ReturnType<typeof openai.chat.completions.create>>;
   try {
     response = await openai.chat.completions.create({
-      model: "gpt-5",
+      model: "gpt-5-mini",
       response_format: { type: "json_object" },
       max_completion_tokens: 1024,
       messages: [
