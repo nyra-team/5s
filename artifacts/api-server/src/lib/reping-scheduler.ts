@@ -7,6 +7,7 @@ interface RepingConfig {
   thresholdMinutes: number;
   maxRepings: number;
   checkIntervalMs: number;
+  stuckThresholdMs: number;
 }
 
 function readConfig(): RepingConfig {
@@ -22,7 +23,14 @@ function readConfig(): RepingConfig {
     process.env.ESCALATION_REPING_CHECK_INTERVAL_MS,
     60_000,
   );
-  return { thresholdMinutes, maxRepings, checkIntervalMs };
+  // Default to 5x the check interval so a sweep that takes longer than five
+  // missed ticks is treated as stuck and surfaces a loud warning. Operators
+  // can tighten or loosen this at runtime without a code change.
+  const stuckThresholdMs = parsePositiveInt(
+    process.env.ESCALATION_REPING_STUCK_THRESHOLD_MS,
+    checkIntervalMs * 5,
+  );
+  return { thresholdMinutes, maxRepings, checkIntervalMs, stuckThresholdMs };
 }
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -155,9 +163,169 @@ export async function runRepingSweep(now: Date = new Date()): Promise<number> {
   return dispatched;
 }
 
+/**
+ * Snapshot of scheduler liveness exposed for operator visibility. This is
+ * deliberately a flat shape so it can be logged or surfaced through a
+ * health route without further translation.
+ */
+export interface RepingSchedulerHealth {
+  /** Wall-clock time the scheduler interval was started; null if not running. */
+  startedAt: Date | null;
+  /** Total ticks the interval has fired (including ones skipped by overlap). */
+  ticks: number;
+  /** Sweeps that actually began running (i.e. no overlap skip). */
+  sweepsStarted: number;
+  /** Sweeps that returned successfully. */
+  sweepsCompleted: number;
+  /** Sweeps that threw before completing. */
+  sweepsFailed: number;
+  /** Ticks that found a previous sweep still running and bailed out. */
+  ticksSkippedByOverlap: number;
+  /** Times the watchdog flagged a sweep as stuck. */
+  watchdogWarnings: number;
+  /** Start time of the in-flight sweep, if one is running right now. */
+  currentSweepStartedAt: Date | null;
+  /** Start time of the most recently begun sweep (running or finished). */
+  lastSweepStartedAt: Date | null;
+  /** Completion time of the most recent successful sweep. */
+  lastSweepCompletedAt: Date | null;
+  /** Duration of the most recent completed sweep, in milliseconds. */
+  lastSweepDurationMs: number | null;
+  /** Number of escalations dispatched by the most recent completed sweep. */
+  lastSweepDispatched: number | null;
+  /** Most recent failure summary so operators can see why sweeps are erroring. */
+  lastSweepError: { message: string; at: Date } | null;
+}
+
+function createInitialHealth(): RepingSchedulerHealth {
+  return {
+    startedAt: null,
+    ticks: 0,
+    sweepsStarted: 0,
+    sweepsCompleted: 0,
+    sweepsFailed: 0,
+    ticksSkippedByOverlap: 0,
+    watchdogWarnings: 0,
+    currentSweepStartedAt: null,
+    lastSweepStartedAt: null,
+    lastSweepCompletedAt: null,
+    lastSweepDurationMs: null,
+    lastSweepDispatched: null,
+    lastSweepError: null,
+  };
+}
+
+let health: RepingSchedulerHealth = createInitialHealth();
+
+export function getRepingSchedulerHealth(): Readonly<RepingSchedulerHealth> {
+  return { ...health };
+}
+
+/**
+ * Test seam — node:test cases share a process, so the scheduler's module-level
+ * counters need an explicit reset between cases to keep assertions independent.
+ */
+export function resetRepingSchedulerHealthForTesting(): void {
+  health = createInitialHealth();
+}
+
+/**
+ * Wrap a single sweep in the bookkeeping every operator-visible signal needs:
+ * tracks start/finish timestamps, duration, dispatched count, and arms a
+ * one-shot watchdog timer that emits a loud warning if the sweep exceeds
+ * `stuckThresholdMs`. Exported so tests can exercise the watchdog without
+ * standing up the full setInterval loop.
+ */
+export async function runMonitoredRepingSweep(opts?: {
+  stuckThresholdMs?: number;
+  now?: Date;
+  /**
+   * Test-only seam: lets a unit test substitute a slow / hanging inner sweep
+   * so the watchdog code path can be exercised deterministically without
+   * having to stall the real database.
+   */
+  runner?: (now?: Date) => Promise<number>;
+}): Promise<number> {
+  const config = readConfig();
+  const stuckThresholdMs =
+    opts?.stuckThresholdMs ?? config.stuckThresholdMs;
+  const runner = opts?.runner ?? runRepingSweep;
+
+  const startedAt = new Date();
+  health.sweepsStarted += 1;
+  health.currentSweepStartedAt = startedAt;
+  health.lastSweepStartedAt = startedAt;
+
+  // One-shot watchdog: if the sweep is still in flight when this fires, the
+  // process is most likely blocked on a never-resolving promise (slow notifier,
+  // hung DB connection, etc.) and every subsequent tick will be silently
+  // skipped by the `running` flag. Make that situation loud.
+  let watchdogFired = false;
+  const watchdog = setTimeout(() => {
+    watchdogFired = true;
+    health.watchdogWarnings += 1;
+    logger.warn(
+      {
+        stuckThresholdMs,
+        sweepStartedAt: startedAt.toISOString(),
+        elapsedMs: Date.now() - startedAt.getTime(),
+        lastSweepCompletedAt:
+          health.lastSweepCompletedAt?.toISOString() ?? null,
+        watchdogWarnings: health.watchdogWarnings,
+      },
+      "reping: sweep is taking longer than expected — scheduler may be stalled",
+    );
+  }, stuckThresholdMs);
+  // Don't keep the event loop alive solely for the watchdog (matches the
+  // unref() on the interval timer below — important for clean test exits).
+  if (typeof watchdog.unref === "function") watchdog.unref();
+
+  try {
+    const dispatched = await runner(opts?.now);
+    const completedAt = new Date();
+    const durationMs = completedAt.getTime() - startedAt.getTime();
+    health.sweepsCompleted += 1;
+    health.lastSweepCompletedAt = completedAt;
+    health.lastSweepDurationMs = durationMs;
+    health.lastSweepDispatched = dispatched;
+    if (watchdogFired) {
+      // The watchdog already screamed; emit the matching "recovered" signal
+      // so log readers can pair them up and confirm the scheduler unstuck
+      // itself rather than being silently restarted.
+      logger.warn(
+        { durationMs, dispatched, stuckThresholdMs },
+        "reping: previously-stuck sweep finally completed",
+      );
+    } else {
+      logger.info(
+        { durationMs, dispatched },
+        "reping: sweep completed",
+      );
+    }
+    return dispatched;
+  } catch (err) {
+    health.sweepsFailed += 1;
+    health.lastSweepError = {
+      message: err instanceof Error ? err.message : String(err),
+      at: new Date(),
+    };
+    throw err;
+  } finally {
+    clearTimeout(watchdog);
+    health.currentSweepStartedAt = null;
+  }
+}
+
 let timer: NodeJS.Timeout | null = null;
 
-export function startRepingScheduler(): () => void {
+export function startRepingScheduler(opts?: {
+  /**
+   * Test-only seam: pass through the same `runner` override accepted by
+   * `runMonitoredRepingSweep`. Lets a test drive the real interval loop with
+   * a controllable inner sweep so overlap behavior can be observed end-to-end.
+   */
+  runner?: (now?: Date) => Promise<number>;
+}): () => void {
   if (timer) return stopRepingScheduler;
   const config = readConfig();
   if (config.maxRepings === 0) {
@@ -165,20 +333,44 @@ export function startRepingScheduler(): () => void {
     return () => {};
   }
 
+  health = createInitialHealth();
+  health.startedAt = new Date();
+
   logger.info(
     {
       thresholdMinutes: config.thresholdMinutes,
       maxRepings: config.maxRepings,
       checkIntervalMs: config.checkIntervalMs,
+      stuckThresholdMs: config.stuckThresholdMs,
     },
     "reping: scheduler started",
   );
 
   let running = false;
   timer = setInterval(() => {
-    if (running) return;
+    health.ticks += 1;
+    if (running) {
+      // Don't silently swallow overlap — operators need to see when sweeps
+      // are piling up, which is the early signal that something is hung.
+      health.ticksSkippedByOverlap += 1;
+      logger.warn(
+        {
+          ticksSkippedByOverlap: health.ticksSkippedByOverlap,
+          currentSweepStartedAt:
+            health.currentSweepStartedAt?.toISOString() ?? null,
+          elapsedMs: health.currentSweepStartedAt
+            ? Date.now() - health.currentSweepStartedAt.getTime()
+            : null,
+        },
+        "reping: skipping tick — previous sweep still running",
+      );
+      return;
+    }
     running = true;
-    runRepingSweep()
+    runMonitoredRepingSweep({
+      stuckThresholdMs: config.stuckThresholdMs,
+      runner: opts?.runner,
+    })
       .catch((err) => logger.error({ err }, "reping: sweep crashed"))
       .finally(() => {
         running = false;
@@ -195,4 +387,7 @@ export function stopRepingScheduler(): void {
     clearInterval(timer);
     timer = null;
   }
+  // Clear `startedAt` so a downstream consumer (health route, dashboard, etc.)
+  // doesn't keep reporting the scheduler as "running since X" after shutdown.
+  health.startedAt = null;
 }

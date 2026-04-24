@@ -8,7 +8,15 @@ import {
   type RepingContext,
   setRepingNotifierForTesting,
 } from "../src/lib/notifications.js";
-import { runRepingSweep } from "../src/lib/reping-scheduler.js";
+import {
+  getRepingSchedulerHealth,
+  resetRepingSchedulerHealthForTesting,
+  runMonitoredRepingSweep,
+  runRepingSweep,
+  startRepingScheduler,
+  stopRepingScheduler,
+} from "../src/lib/reping-scheduler.js";
+import { api } from "./helpers.js";
 
 interface Recorded {
   payload: EscalationNotification;
@@ -281,5 +289,170 @@ describe("runRepingSweep", () => {
       1,
       "reping_count incremented exactly once despite two racing sweeps",
     );
+  });
+});
+
+describe("runMonitoredRepingSweep — health + watchdog", () => {
+  beforeEach(() => {
+    resetRepingSchedulerHealthForTesting();
+  });
+  afterEach(() => {
+    resetRepingSchedulerHealthForTesting();
+  });
+
+  test("records start, completion, duration, and dispatched count on success", async () => {
+    const dispatched = await runMonitoredRepingSweep({
+      stuckThresholdMs: 60_000,
+      runner: async () => 7,
+    });
+    assert.equal(dispatched, 7);
+
+    const h = getRepingSchedulerHealth();
+    assert.equal(h.sweepsStarted, 1);
+    assert.equal(h.sweepsCompleted, 1);
+    assert.equal(h.sweepsFailed, 0);
+    assert.equal(h.watchdogWarnings, 0);
+    assert.equal(h.lastSweepDispatched, 7);
+    assert.notEqual(h.lastSweepStartedAt, null);
+    assert.notEqual(h.lastSweepCompletedAt, null);
+    assert.equal(h.currentSweepStartedAt, null);
+    assert.ok(
+      h.lastSweepDurationMs !== null && h.lastSweepDurationMs >= 0,
+      "duration should be a non-negative number",
+    );
+    assert.equal(h.lastSweepError, null);
+  });
+
+  test("watchdog flags a stuck sweep but the eventual completion still updates health", async () => {
+    // Give the inner runner enough time to overshoot the watchdog threshold,
+    // then resolve so the health snapshot reflects a *completed* slow sweep.
+    const dispatched = await runMonitoredRepingSweep({
+      stuckThresholdMs: 5,
+      runner: () =>
+        new Promise<number>((resolve) => {
+          setTimeout(() => resolve(0), 50);
+        }),
+    });
+    assert.equal(dispatched, 0);
+
+    const h = getRepingSchedulerHealth();
+    assert.equal(h.watchdogWarnings, 1, "watchdog must fire once for a stuck sweep");
+    assert.equal(h.sweepsStarted, 1);
+    assert.equal(h.sweepsCompleted, 1, "the sweep eventually completed");
+    assert.equal(h.sweepsFailed, 0);
+    assert.ok(
+      h.lastSweepDurationMs !== null && h.lastSweepDurationMs >= 5,
+      "recorded duration should reflect the slow sweep",
+    );
+    assert.equal(h.currentSweepStartedAt, null);
+  });
+
+  test("a fast sweep does not trip the watchdog", async () => {
+    await runMonitoredRepingSweep({
+      stuckThresholdMs: 10_000,
+      runner: async () => 0,
+    });
+    const h = getRepingSchedulerHealth();
+    assert.equal(h.watchdogWarnings, 0);
+    assert.equal(h.sweepsCompleted, 1);
+  });
+
+  test("startRepingScheduler skips overlapping ticks and records them in health", async () => {
+    // Drive the real interval loop with a deliberately slow injected runner
+    // so we can observe overlap accounting end-to-end without involving the
+    // real database. We have to override the env BEFORE startRepingScheduler
+    // is called because readConfig() snapshots it at that moment.
+    const ORIGINAL_INTERVAL = process.env.ESCALATION_REPING_CHECK_INTERVAL_MS;
+    const ORIGINAL_STUCK = process.env.ESCALATION_REPING_STUCK_THRESHOLD_MS;
+    process.env.ESCALATION_REPING_CHECK_INTERVAL_MS = "20";
+    // Keep the watchdog quiet for this test — we only care about overlap.
+    process.env.ESCALATION_REPING_STUCK_THRESHOLD_MS = "10000";
+    let runs = 0;
+    try {
+      const stop = startRepingScheduler({
+        runner: async () => {
+          runs += 1;
+          // Hang well past the 20ms tick interval so several subsequent
+          // ticks must be skipped while this sweep is still running.
+          await new Promise<void>((r) => setTimeout(r, 120));
+          return 0;
+        },
+      });
+      try {
+        // Wait long enough for ~6 ticks to fire while the first sweep is
+        // still in flight, guaranteeing at least a couple of overlap skips.
+        await new Promise<void>((r) => setTimeout(r, 150));
+      } finally {
+        stop();
+      }
+      const h = getRepingSchedulerHealth();
+      assert.ok(runs >= 1, "at least one sweep should have started");
+      assert.ok(
+        h.ticksSkippedByOverlap >= 1,
+        `expected at least one tick skipped by overlap, got ${h.ticksSkippedByOverlap}`,
+      );
+      assert.equal(
+        h.sweepsStarted,
+        runs,
+        "sweepsStarted should match the actual runner invocations",
+      );
+    } finally {
+      stopRepingScheduler();
+      if (ORIGINAL_INTERVAL === undefined)
+        delete process.env.ESCALATION_REPING_CHECK_INTERVAL_MS;
+      else process.env.ESCALATION_REPING_CHECK_INTERVAL_MS = ORIGINAL_INTERVAL;
+      if (ORIGINAL_STUCK === undefined)
+        delete process.env.ESCALATION_REPING_STUCK_THRESHOLD_MS;
+      else process.env.ESCALATION_REPING_STUCK_THRESHOLD_MS = ORIGINAL_STUCK;
+    }
+  });
+
+  test("stopRepingScheduler clears startedAt so consumers don't see stale liveness", async () => {
+    const stop = startRepingScheduler({ runner: async () => 0 });
+    assert.notEqual(getRepingSchedulerHealth().startedAt, null);
+    stop();
+    assert.equal(
+      getRepingSchedulerHealth().startedAt,
+      null,
+      "startedAt should be cleared after stop so the scheduler isn't reported as still running",
+    );
+  });
+
+  test("GET /internal/reping-health returns the scheduler health snapshot", async () => {
+    await runMonitoredRepingSweep({
+      stuckThresholdMs: 60_000,
+      runner: async () => 3,
+    });
+    const res = await api<{
+      sweepsCompleted: number;
+      lastSweepDispatched: number | null;
+      lastSweepCompletedAt: string | null;
+      watchdogWarnings: number;
+    }>(null, "GET", "/api/internal/reping-health");
+    assert.equal(res.status, 200);
+    assert.equal(res.body.sweepsCompleted, 1);
+    assert.equal(res.body.lastSweepDispatched, 3);
+    assert.notEqual(res.body.lastSweepCompletedAt, null);
+    assert.equal(res.body.watchdogWarnings, 0);
+  });
+
+  test("an erroring sweep increments sweepsFailed and records lastSweepError", async () => {
+    await assert.rejects(
+      runMonitoredRepingSweep({
+        stuckThresholdMs: 60_000,
+        runner: async () => {
+          throw new Error("db blew up");
+        },
+      }),
+      /db blew up/,
+    );
+
+    const h = getRepingSchedulerHealth();
+    assert.equal(h.sweepsStarted, 1);
+    assert.equal(h.sweepsCompleted, 0);
+    assert.equal(h.sweepsFailed, 1);
+    assert.equal(h.currentSweepStartedAt, null);
+    assert.notEqual(h.lastSweepError, null);
+    assert.equal(h.lastSweepError?.message, "db blew up");
   });
 });
