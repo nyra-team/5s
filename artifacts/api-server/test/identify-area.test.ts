@@ -2,9 +2,15 @@ import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { db, areaProfilesTable } from "@workspace/db";
 import { TestWorld, getBaseUrl } from "./helpers.js";
+import {
+  __setIdentifyAreaForTests,
+  type IdentificationAreaProfile,
+  type IdentificationInput,
+  type IdentificationResult,
+} from "../src/lib/ai-identification.js";
 
-interface IdentifyResult {
-  candidates: Array<{ areaId: number; confidence: number; reason?: string }>;
+interface IdentifyResponse {
+  candidates: Array<{ areaId: number; areaName?: string; confidence: number; reason?: string }>;
   hasTrainedAreas: boolean;
   rationale: string | null;
 }
@@ -15,7 +21,7 @@ interface IdentifyResult {
 // VLM call is skipped, multer still has a valid file to write to disk.
 async function postIdentifyArea(token: string | null): Promise<{
   status: number;
-  body: IdentifyResult | { error: string };
+  body: IdentifyResponse | { error: string };
 }> {
   const fd = new FormData();
   // 1x1 transparent PNG. Concrete bytes don't matter when no TRAINED profiles
@@ -40,7 +46,7 @@ async function postIdentifyArea(token: string | null): Promise<{
   } catch {
     parsed = text;
   }
-  return { status: resp.status, body: parsed as IdentifyResult | { error: string } };
+  return { status: resp.status, body: parsed as IdentifyResponse | { error: string } };
 }
 
 describe("POST /api/submissions/identify-area", () => {
@@ -68,7 +74,7 @@ describe("POST /api/submissions/identify-area", () => {
 
     const r = await postIdentifyArea(operator.token);
     assert.equal(r.status, 200);
-    const body = r.body as IdentifyResult;
+    const body = r.body as IdentifyResponse;
     assert.equal(body.hasTrainedAreas, false);
     assert.deepEqual(body.candidates, []);
     assert.equal(body.rationale, null);
@@ -85,5 +91,199 @@ describe("POST /api/submissions/identify-area", () => {
       body: fd,
     });
     assert.equal(resp.status, 400);
+  });
+
+  describe("success path (with stubbed identifier)", () => {
+    // The stub plays the role of the VLM: given the trained profiles passed
+    // by the route, it picks whichever one looks most like a "welding" area
+    // based on its summary/items/machines text. This lets us verify the
+    // route's end-to-end shape — profile assembly, candidate ordering,
+    // rationale passthrough — without hitting a real model.
+    function scoreProfile(p: IdentificationAreaProfile): number {
+      const haystack = [
+        p.areaName,
+        p.summary ?? "",
+        ...p.items,
+        ...p.machines,
+        ...p.layout,
+      ]
+        .join(" ")
+        .toLowerCase();
+      const keywords = ["weld", "torch", "spark", "ppe", "helmet"];
+      let score = 0;
+      for (const kw of keywords) if (haystack.includes(kw)) score += 1;
+      return score;
+    }
+
+    let lastInput: IdentificationInput | null = null;
+
+    beforeEach(() => {
+      lastInput = null;
+      __setIdentifyAreaForTests(async (input) => {
+        lastInput = input;
+        // Rank by keyword score; break ties deterministically by areaId so
+        // the assertions about ordering don't depend on Map insertion order.
+        const ranked = [...input.profiles]
+          .map((p) => ({ p, s: scoreProfile(p) }))
+          .sort((a, b) => (b.s - a.s) || (a.p.areaId - b.p.areaId));
+        const top = ranked[0];
+        const candidates = ranked.map(({ p, s }, idx) => ({
+          areaId: p.areaId,
+          areaName: p.areaName,
+          // Top match gets a clearly higher confidence than the rest, mimicking
+          // how the real prompt is supposed to behave.
+          confidence: idx === 0 && s > 0 ? 0.92 : Math.max(0.05, 0.3 - idx * 0.1),
+        }));
+        const result: IdentificationResult = {
+          candidates,
+          rationale: top && scoreProfile(top.p) > 0
+            ? `Visible welding torch and helmet match "${top.p.areaName}".`
+            : null,
+        };
+        return result;
+      });
+    });
+
+    afterEach(() => {
+      __setIdentifyAreaForTests(null);
+    });
+
+    test("ranks the matching trained area first with high confidence", async () => {
+      const operator = await world.createUser("OPERATOR");
+
+      // Two clearly-distinct trained areas. The "welding" one should win
+      // because the stubbed identifier rewards weld/torch/helmet keywords.
+      const welding = await world.createArea("weldingbay");
+      const packaging = await world.createArea("packaging");
+      await db.insert(areaProfilesTable).values([
+        {
+          areaId: welding.id,
+          status: "TRAINED",
+          summary: "Welding bay with active torch work and PPE racks.",
+          itemsJson: ["welding helmet", "spark mat", "rod box"],
+          machinesJson: ["MIG welder", "plasma torch"],
+          layoutJson: ["torch station along east wall"],
+        },
+        {
+          areaId: packaging.id,
+          status: "TRAINED",
+          summary: "Packaging line with conveyor and tape stations.",
+          itemsJson: ["cardboard boxes", "tape rolls", "labels"],
+          machinesJson: ["conveyor belt", "shrink wrapper"],
+          layoutJson: ["pallet area near roll-up door"],
+        },
+      ]);
+
+      const r = await postIdentifyArea(operator.token);
+      assert.equal(r.status, 200);
+      const body = r.body as IdentifyResponse;
+      assert.equal(body.hasTrainedAreas, true);
+
+      // Stub was called with the route's assembled profile list (both TRAINED
+      // areas, no LEARNING ones).
+      assert.ok(lastInput, "identifyArea should have been invoked");
+      assert.equal(lastInput!.mediaType, "image");
+      const passedIds = lastInput!.profiles.map((p) => p.areaId).sort((a, b) => a - b);
+      assert.deepEqual(passedIds, [welding.id, packaging.id].sort((a, b) => a - b));
+
+      // The welding area must be the top candidate, with a confidence
+      // that's visibly higher than the runner-up so the UI's "AI thinks…"
+      // suggestion is unambiguous.
+      assert.ok(body.candidates.length >= 2, "expected both areas in the response");
+      assert.equal(body.candidates[0].areaId, welding.id);
+      assert.ok(
+        body.candidates[0].confidence >= 0.7,
+        `top confidence too low: ${body.candidates[0].confidence}`,
+      );
+      assert.ok(
+        body.candidates[0].confidence - body.candidates[1].confidence >= 0.2,
+        `top should beat runner-up by a clear margin: ${JSON.stringify(body.candidates)}`,
+      );
+      assert.ok(
+        typeof body.rationale === "string" && body.rationale.length > 0,
+        "rationale should be passed through to the response",
+      );
+    });
+
+    test("ignores LEARNING profiles when assembling candidates", async () => {
+      const operator = await world.createUser("OPERATOR");
+
+      // Two TRAINED areas plus one LEARNING area. The LEARNING one would be
+      // a textual match for the welding keywords, but it must NOT be sent
+      // to the identifier — only TRAINED profiles are candidates.
+      const welding = await world.createArea("weldingbay");
+      const packaging = await world.createArea("packaging");
+      const learningWeld = await world.createArea("learningweld");
+      await db.insert(areaProfilesTable).values([
+        {
+          areaId: welding.id,
+          status: "TRAINED",
+          summary: "Welding bay with torch and helmet.",
+          itemsJson: ["welding helmet"],
+          machinesJson: ["MIG welder"],
+          layoutJson: [],
+        },
+        {
+          areaId: packaging.id,
+          status: "TRAINED",
+          summary: "Packaging line.",
+          itemsJson: ["boxes"],
+          machinesJson: ["conveyor"],
+          layoutJson: [],
+        },
+        {
+          areaId: learningWeld.id,
+          status: "LEARNING",
+          summary: "Another welding zone — but still learning.",
+          itemsJson: ["torch", "helmet"],
+          machinesJson: ["welder"],
+          layoutJson: [],
+        },
+      ]);
+
+      const r = await postIdentifyArea(operator.token);
+      assert.equal(r.status, 200);
+      const body = r.body as IdentifyResponse;
+      assert.equal(body.hasTrainedAreas, true);
+
+      assert.ok(lastInput);
+      const passedIds = new Set(lastInput!.profiles.map((p) => p.areaId));
+      assert.ok(passedIds.has(welding.id));
+      assert.ok(passedIds.has(packaging.id));
+      assert.ok(
+        !passedIds.has(learningWeld.id),
+        "LEARNING profiles must not be passed to the identifier",
+      );
+
+      // The TRAINED welding area still wins.
+      assert.equal(body.candidates[0].areaId, welding.id);
+      const returnedIds = new Set(body.candidates.map((c) => c.areaId));
+      assert.ok(!returnedIds.has(learningWeld.id));
+    });
+
+    test("falls back to empty candidates when the identifier throws", async () => {
+      // The route catches identifier errors and returns an empty-candidates
+      // 200 so the operator UI can fall back to manual area selection
+      // without surfacing a blocking error. Verify that contract here so a
+      // future refactor doesn't accidentally start 5xx-ing instead.
+      __setIdentifyAreaForTests(async () => {
+        throw new Error("simulated VLM failure");
+      });
+
+      const operator = await world.createUser("OPERATOR");
+      const trained = await world.createArea("trainedarea");
+      await db.insert(areaProfilesTable).values({
+        areaId: trained.id,
+        status: "TRAINED",
+        summary: "Trained area",
+      });
+
+      const r = await postIdentifyArea(operator.token);
+      assert.equal(r.status, 200);
+      const body = r.body as IdentifyResponse;
+      assert.equal(body.hasTrainedAreas, true);
+      assert.deepEqual(body.candidates, []);
+      assert.equal(body.rationale, null);
+    });
   });
 });

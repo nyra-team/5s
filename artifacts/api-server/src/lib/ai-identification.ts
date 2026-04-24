@@ -154,7 +154,7 @@ async function callIdentificationVLM(
   return { candidates, rationale };
 }
 
-export async function identifyArea(input: IdentificationInput): Promise<IdentificationResult> {
+async function identifyAreaImpl(input: IdentificationInput): Promise<IdentificationResult> {
   if (input.profiles.length === 0) {
     return { candidates: [], rationale: null };
   }
@@ -181,6 +181,24 @@ export async function identifyArea(input: IdentificationInput): Promise<Identifi
   }
 
   return callIdentificationVLM(framePaths, input.profiles);
+}
+
+// Mutable seam so tests can swap out the VLM-backed identifier with a
+// deterministic stub. The route imports `identifyArea` (not `_impl`), so
+// the wrapper below always dispatches through the current implementation.
+type IdentifyAreaFn = (input: IdentificationInput) => Promise<IdentificationResult>;
+let _impl: IdentifyAreaFn = identifyAreaImpl;
+
+export function identifyArea(input: IdentificationInput): Promise<IdentificationResult> {
+  return _impl(input);
+}
+
+/**
+ * Test-only: replace the identifyArea implementation. Pass `null` to restore
+ * the real VLM-backed implementation. Production callers must never use this.
+ */
+export function __setIdentifyAreaForTests(fn: IdentifyAreaFn | null): void {
+  _impl = fn ?? identifyAreaImpl;
 }
 
 export { isVideoFile };
