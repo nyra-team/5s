@@ -470,10 +470,20 @@ export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
   // `seed` is best-effort: the proxy may ignore it for models that don't
   // support it. gpt-5 only accepts the default temperature (1), so we omit
   // the parameter entirely rather than sending an unsupported value.
+  //
+  // `max_completion_tokens` must be large enough to cover gpt-5's hidden
+  // reasoning tokens AND the structured JSON output. In practice gpt-5 spends
+  // 1.5k–2k tokens on reasoning before emitting any visible content for this
+  // rubric, so a 2048 cap was being fully consumed by reasoning, leaving zero
+  // tokens for the actual response (finish_reason="length", empty content,
+  // validation failure on "missing object 'pillar_scores'"). 8192 leaves
+  // ~6k tokens of headroom for the full reasoning + 5 per-pillar reasonings
+  // + up to 8 issues + 8 recommendations + the profile block, with margin
+  // for complex scenes that need extra reasoning.
   const baseRequest = {
     model: "gpt-5",
     response_format: { type: "json_object" as const },
-    max_completion_tokens: 2048,
+    max_completion_tokens: 8192,
     top_p: 1,
     seed: 5,
   };

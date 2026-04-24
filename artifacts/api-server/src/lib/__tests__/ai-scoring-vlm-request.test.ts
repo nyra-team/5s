@@ -105,7 +105,13 @@ describe("callVLM request payload", () => {
 
     expect(req.model).toBe("gpt-5");
     expect(req.response_format).toEqual({ type: "json_object" });
-    expect(req.max_completion_tokens).toBe(2048);
+    // Must be high enough to cover gpt-5's hidden reasoning tokens AND the
+    // structured JSON output — see the comment on `baseRequest` in
+    // ai-scoring.ts. A regression to a small cap (e.g. 2048) leaves the
+    // entire budget consumed by reasoning, the response body comes back
+    // empty, and every submission falls through to the AI-unavailable
+    // fallback.
+    expect(req.max_completion_tokens).toBe(8192);
     expect(req.top_p).toBe(1);
     expect(req.seed).toBe(5);
     expect(Array.isArray(req.messages)).toBe(true);
@@ -140,7 +146,7 @@ describe("callVLM request payload", () => {
       }
       expect(req.model).toBe("gpt-5");
       expect(req.response_format).toEqual({ type: "json_object" });
-      expect(req.max_completion_tokens).toBe(2048);
+      expect(req.max_completion_tokens).toBe(8192);
       expect(req.top_p).toBe(1);
       expect(req.seed).toBe(5);
     }
