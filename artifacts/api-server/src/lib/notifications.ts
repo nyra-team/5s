@@ -13,6 +13,13 @@ export interface EscalationNotification {
   recommendedActions: string[];
 }
 
+export interface QuietHoursPrefs {
+  quietHoursEnabled: boolean;
+  quietHoursStart: string;
+  quietHoursEnd: string;
+  quietHoursWeekdayMask: number;
+}
+
 const DEFAULT_GROUPING_WINDOW_MS = 5 * 60 * 1000;
 
 function groupingWindowMs(): number {
@@ -47,6 +54,60 @@ function inboxLink(): string {
   const base = appBaseUrl();
   const path = `/escalations`;
   return base ? `${base}${path}` : path;
+}
+
+function parseHHMM(s: string | null | undefined): number | null {
+  if (!s) return null;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(s);
+  if (!m) return null;
+  const h = parseInt(m[1], 10);
+  const mn = parseInt(m[2], 10);
+  if (!Number.isFinite(h) || !Number.isFinite(mn)) return null;
+  if (h < 0 || h > 23 || mn < 0 || mn > 59) return null;
+  return h * 60 + mn;
+}
+
+/**
+ * Returns true when `now` falls inside the recipient's quiet-hours window,
+ * interpreted in IST. Window may wrap past midnight (end < start). The
+ * weekday mask gates by the *starting* day of the window: for a 22:00–07:00
+ * Mon window, evening Monday and early Tuesday morning are both in scope.
+ *
+ * Exported for tests.
+ */
+export function isInQuietHours(prefs: QuietHoursPrefs, now: Date = new Date()): boolean {
+  if (!prefs.quietHoursEnabled) return false;
+  const startM = parseHHMM(prefs.quietHoursStart);
+  const endM = parseHHMM(prefs.quietHoursEnd);
+  if (startM == null || endM == null) return false;
+  if (startM === endM) return false; // empty / always-quiet ambiguous → treat as off
+
+  const mask = prefs.quietHoursWeekdayMask;
+  if (!Number.isFinite(mask) || mask <= 0) return false;
+
+  // Shift "now" by +5:30 and read UTC fields to get IST clock values.
+  const istMs = now.getTime() + (5 * 60 + 30) * 60 * 1000;
+  const ist = new Date(istMs);
+  const istDay = ist.getUTCDay(); // 0 = Sun … 6 = Sat
+  const istMin = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+
+  if (startM < endM) {
+    // Same-day window [start, end). Gated by today's weekday.
+    if ((mask & (1 << istDay)) === 0) return false;
+    return istMin >= startM && istMin < endM;
+  }
+
+  // Wrapping window. Two halves, each gated by the *starting* day:
+  //   today  (>= start)         → today's weekday bit
+  //   today  (< end)            → yesterday's weekday bit
+  if (istMin >= startM) {
+    return (mask & (1 << istDay)) !== 0;
+  }
+  if (istMin < endM) {
+    const prevDay = (istDay + 6) % 7;
+    return (mask & (1 << prevDay)) !== 0;
+  }
+  return false;
 }
 
 interface PendingBucket {
@@ -124,10 +185,21 @@ export async function flushPendingEscalationNotifications(): Promise<void> {
   await Promise.all(ids.map((id) => flushArea(id)));
 }
 
+interface ManagerRow {
+  id: number;
+  email: string;
+  notifyEmailEnabled: boolean;
+  notifySlackEnabled: boolean;
+  quietHoursEnabled: boolean;
+  quietHoursStart: string;
+  quietHoursEnd: string;
+  quietHoursWeekdayMask: number;
+}
+
 async function dispatch(events: EscalationNotification[]): Promise<void> {
   if (events.length === 0) return;
 
-  let managers: Array<{ id: number; email: string; notifyEmailEnabled: boolean; notifySlackEnabled: boolean }>;
+  let managers: ManagerRow[];
   try {
     managers = await db
       .select({
@@ -135,6 +207,10 @@ async function dispatch(events: EscalationNotification[]): Promise<void> {
         email: usersTable.email,
         notifyEmailEnabled: usersTable.notifyEmailEnabled,
         notifySlackEnabled: usersTable.notifySlackEnabled,
+        quietHoursEnabled: usersTable.quietHoursEnabled,
+        quietHoursStart: usersTable.quietHoursStart,
+        quietHoursEnd: usersTable.quietHoursEnd,
+        quietHoursWeekdayMask: usersTable.quietHoursWeekdayMask,
       })
       .from(usersTable)
       .where(eq(usersTable.role, "MANAGER"));
@@ -146,12 +222,31 @@ async function dispatch(events: EscalationNotification[]): Promise<void> {
     return;
   }
 
-  const emailRecipients = managers.filter((m) => m.notifyEmailEnabled).map((m) => m.email);
-  const anySlackSubscriber = managers.some((m) => m.notifySlackEnabled);
+  const now = new Date();
+  const quiet = managers.filter((m) => isInQuietHours(m, now));
+  const quietIds = new Set(quiet.map((m) => m.id));
+
+  if (quiet.length > 0) {
+    logger.info(
+      {
+        count: events.length,
+        areaName: events[0].areaName,
+        quietManagers: quiet.map((m) => m.email),
+      },
+      "notify: suppressing recipients in quiet hours",
+    );
+  }
+
+  const emailRecipients = managers
+    .filter((m) => m.notifyEmailEnabled && !quietIds.has(m.id))
+    .map((m) => m.email);
+  const anySlackSubscriberActive = managers.some(
+    (m) => m.notifySlackEnabled && !quietIds.has(m.id),
+  );
 
   await Promise.allSettled([
     emailRecipients.length > 0 ? sendEmails(emailRecipients, events) : Promise.resolve(),
-    anySlackSubscriber ? sendSlack(events) : Promise.resolve(),
+    anySlackSubscriberActive ? sendSlack(events) : Promise.resolve(),
   ]);
 }
 

@@ -820,12 +820,32 @@ components:
         email:
           type: string
           description: The address email notifications would be sent to (the user's account email).
+        quietHoursEnabled:
+          type: boolean
+          description: When true, notifications are suppressed for this recipient during the configured window.
+        quietHoursStart:
+          type: string
+          description: Quiet-hours window start in IST, 24h "HH:MM" format.
+          pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+        quietHoursEnd:
+          type: string
+          description: Quiet-hours window end in IST, 24h "HH:MM" format. May wrap past midnight (end < start).
+          pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+        quietHoursWeekdayMask:
+          type: integer
+          minimum: 0
+          maximum: 127
+          description: 7-bit mask of weekdays the window applies to. Bit 0 = Sunday … bit 6 = Saturday. 127 = every day.
       required:
         - notifyEmailEnabled
         - notifySlackEnabled
         - emailConfigured
         - slackConfigured
         - email
+        - quietHoursEnabled
+        - quietHoursStart
+        - quietHoursEnd
+        - quietHoursWeekdayMask
 
     UpdateNotificationPreferencesBody:
       type: object
@@ -834,6 +854,18 @@ components:
           type: boolean
         notifySlackEnabled:
           type: boolean
+        quietHoursEnabled:
+          type: boolean
+        quietHoursStart:
+          type: string
+          pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+        quietHoursEnd:
+          type: string
+          pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+        quietHoursWeekdayMask:
+          type: integer
+          minimum: 0
+          maximum: 127
 
     Area:
       type: object

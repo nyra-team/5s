@@ -9,4 +9,14 @@
 export interface UpdateNotificationPreferencesBodyType {
   notifyEmailEnabled?: boolean;
   notifySlackEnabled?: boolean;
+  quietHoursEnabled?: boolean;
+  /** @pattern ^([01]\d|2[0-3]):[0-5]\d$ */
+  quietHoursStart?: string;
+  /** @pattern ^([01]\d|2[0-3]):[0-5]\d$ */
+  quietHoursEnd?: string;
+  /**
+   * @minimum 0
+   * @maximum 127
+   */
+  quietHoursWeekdayMask?: number;
 }

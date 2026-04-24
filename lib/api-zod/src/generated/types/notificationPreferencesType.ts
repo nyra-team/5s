@@ -15,4 +15,22 @@ export interface NotificationPreferencesType {
   slackConfigured: boolean;
   /** The address email notifications would be sent to (the user's account email). */
   email: string;
+  /** When true, notifications are suppressed for this recipient during the configured window. */
+  quietHoursEnabled: boolean;
+  /**
+   * Quiet-hours window start in IST, 24h "HH:MM" format.
+   * @pattern ^([01]\d|2[0-3]):[0-5]\d$
+   */
+  quietHoursStart: string;
+  /**
+   * Quiet-hours window end in IST, 24h "HH:MM" format. May wrap past midnight (end < start).
+   * @pattern ^([01]\d|2[0-3]):[0-5]\d$
+   */
+  quietHoursEnd: string;
+  /**
+   * 7-bit mask of weekdays the window applies to. Bit 0 = Sunday … bit 6 = Saturday. 127 = every day.
+   * @minimum 0
+   * @maximum 127
+   */
+  quietHoursWeekdayMask: number;
 }

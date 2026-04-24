@@ -5,10 +5,22 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { useEffect, useState } from "react";
-import { Bell, Mail, MessageSquare, AlertCircle, CheckCircle2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Bell, Mail, MessageSquare, AlertCircle, CheckCircle2, MoonStar } from "lucide-react";
 
 type Channel = "email" | "slack";
+
+// Display order is Mon..Sun (the way humans read a work week), but the bit
+// indices are JS Date#getDay (0 = Sun … 6 = Sat) so they match the server.
+const WEEKDAYS: Array<{ label: string; bit: number }> = [
+  { label: "Mon", bit: 1 },
+  { label: "Tue", bit: 2 },
+  { label: "Wed", bit: 3 },
+  { label: "Thu", bit: 4 },
+  { label: "Fri", bit: 5 },
+  { label: "Sat", bit: 6 },
+  { label: "Sun", bit: 0 },
+];
 
 export default function NotificationsPage() {
   const { data, isLoading } = useGetMyNotificationPreferences();
@@ -20,23 +32,42 @@ export default function NotificationsPage() {
   // whenever it lands or refreshes.
   const [emailOn, setEmailOn] = useState(false);
   const [slackOn, setSlackOn] = useState(false);
+  const [quietOn, setQuietOn] = useState(false);
+  const [quietStart, setQuietStart] = useState("22:00");
+  const [quietEnd, setQuietEnd] = useState("07:00");
+  const [weekdayMask, setWeekdayMask] = useState(127);
 
   useEffect(() => {
     if (!data) return;
     setEmailOn(data.notifyEmailEnabled);
     setSlackOn(data.notifySlackEnabled);
+    setQuietOn(data.quietHoursEnabled);
+    setQuietStart(data.quietHoursStart);
+    setQuietEnd(data.quietHoursEnd);
+    setWeekdayMask(data.quietHoursWeekdayMask);
   }, [data]);
 
-  const persist = async (next: { notifyEmailEnabled?: boolean; notifySlackEnabled?: boolean }) => {
+  const persist = async (next: {
+    notifyEmailEnabled?: boolean;
+    notifySlackEnabled?: boolean;
+    quietHoursEnabled?: boolean;
+    quietHoursStart?: string;
+    quietHoursEnd?: string;
+    quietHoursWeekdayMask?: number;
+  }) => {
     try {
       await update.mutateAsync({ data: next });
       queryClient.invalidateQueries({ queryKey: getGetMyNotificationPreferencesQueryKey() });
       toast({ title: "Preferences saved" });
     } catch {
-      // Roll back the optimistic toggle so the UI matches the server.
+      // Roll back optimistic state so the UI matches the server.
       if (data) {
         setEmailOn(data.notifyEmailEnabled);
         setSlackOn(data.notifySlackEnabled);
+        setQuietOn(data.quietHoursEnabled);
+        setQuietStart(data.quietHoursStart);
+        setQuietEnd(data.quietHoursEnd);
+        setWeekdayMask(data.quietHoursWeekdayMask);
       }
       toast({ variant: "destructive", title: "Failed to save preferences" });
     }
@@ -51,6 +82,54 @@ export default function NotificationsPage() {
       persist({ notifySlackEnabled: value });
     }
   };
+
+  const onQuietToggle = (value: boolean) => {
+    setQuietOn(value);
+    persist({ quietHoursEnabled: value });
+  };
+
+  // Time inputs fire onChange on every keystroke; debounce so a fully-typed
+  // value is what hits the server.
+  const startDebounceRef = useRef<number | null>(null);
+  const endDebounceRef = useRef<number | null>(null);
+  const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+  const onStartChange = (v: string) => {
+    setQuietStart(v);
+    if (!TIME_RE.test(v)) return;
+    if (startDebounceRef.current) window.clearTimeout(startDebounceRef.current);
+    startDebounceRef.current = window.setTimeout(() => {
+      persist({ quietHoursStart: v });
+    }, 400);
+  };
+
+  const onEndChange = (v: string) => {
+    setQuietEnd(v);
+    if (!TIME_RE.test(v)) return;
+    if (endDebounceRef.current) window.clearTimeout(endDebounceRef.current);
+    endDebounceRef.current = window.setTimeout(() => {
+      persist({ quietHoursEnd: v });
+    }, 400);
+  };
+
+  const onToggleDay = (bit: number) => {
+    const next = weekdayMask ^ (1 << bit);
+    setWeekdayMask(next);
+    persist({ quietHoursWeekdayMask: next });
+  };
+
+  const summary = useMemo(() => {
+    if (!quietOn) return "Quiet hours are off — you'll be alerted any time, every day.";
+    const days =
+      weekdayMask === 127
+        ? "every day"
+        : weekdayMask === 0
+          ? "no days (window inactive)"
+          : `on ${WEEKDAYS.filter((d) => weekdayMask & (1 << d.bit)).map((d) => d.label).join(", ")}`;
+    const wraps = quietStart >= quietEnd;
+    const tail = wraps ? " (next morning)" : "";
+    return `Muted ${quietStart}–${quietEnd}${tail} IST ${days}.`;
+  }, [quietOn, quietStart, quietEnd, weekdayMask]);
 
   if (isLoading || !data) {
     return (
@@ -97,6 +176,77 @@ export default function NotificationsPage() {
           testid="toggle-slack"
         />
       </div>
+
+      <section className="bg-card rounded-2xl shadow-soft hairline">
+        <div className="px-5 py-4 flex items-start gap-4">
+          <div className="mt-1 w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-foreground/80 shrink-0">
+            <MoonStar className="w-4 h-4" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[15px] font-medium tracking-tight">Quiet hours</p>
+                <p className="text-[12.5px] text-muted-foreground">
+                  Mute alerts you can't act on. Email is skipped; Slack is only
+                  posted if at least one other subscriber is active.
+                </p>
+              </div>
+              <Switch checked={quietOn} onChange={onQuietToggle} testid="toggle-quiet-hours" />
+            </div>
+
+            {quietOn && (
+              <div className="mt-4 space-y-4">
+                <div className="flex flex-wrap items-end gap-3">
+                  <TimeField
+                    label="Start (IST)"
+                    value={quietStart}
+                    onChange={onStartChange}
+                    testid="quiet-hours-start"
+                  />
+                  <TimeField
+                    label="End (IST)"
+                    value={quietEnd}
+                    onChange={onEndChange}
+                    testid="quiet-hours-end"
+                  />
+                </div>
+
+                <div>
+                  <p className="text-[12.5px] text-muted-foreground mb-2">Apply on</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {WEEKDAYS.map((d) => {
+                      const on = (weekdayMask & (1 << d.bit)) !== 0;
+                      return (
+                        <button
+                          key={d.bit}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() => onToggleDay(d.bit)}
+                          data-testid={`quiet-hours-day-${d.label.toLowerCase()}`}
+                          className={`text-[12px] font-medium px-2.5 py-1 rounded-full transition-colors ${
+                            on
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-secondary text-foreground/70 hover:text-foreground"
+                          }`}
+                        >
+                          {d.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <p
+              className="mt-3 text-[11.5px] text-muted-foreground"
+              data-testid="quiet-hours-summary"
+            >
+              {summary}
+            </p>
+          </div>
+        </div>
+      </section>
 
       <p className="text-[12.5px] text-muted-foreground">
         Each notification includes the area, score percentage, failing pillars, and a
@@ -154,6 +304,31 @@ function ChannelRow({
         </div>
       </div>
     </div>
+  );
+}
+
+function TimeField({
+  label,
+  value,
+  onChange,
+  testid,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  testid: string;
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[11.5px] text-muted-foreground">{label}</span>
+      <input
+        type="time"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        data-testid={testid}
+        className="bg-secondary text-foreground rounded-lg px-3 py-1.5 text-[14px] tabular-nums hairline focus:outline-none focus:ring-2 focus:ring-primary/40"
+      />
+    </label>
   );
 }
 

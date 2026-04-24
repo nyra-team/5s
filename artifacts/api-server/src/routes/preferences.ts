@@ -12,7 +12,13 @@ interface PreferencesShape {
   emailConfigured: boolean;
   slackConfigured: boolean;
   email: string;
+  quietHoursEnabled: boolean;
+  quietHoursStart: string;
+  quietHoursEnd: string;
+  quietHoursWeekdayMask: number;
 }
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 async function loadPreferences(userId: number): Promise<PreferencesShape | null> {
   const [user] = await db
@@ -20,6 +26,10 @@ async function loadPreferences(userId: number): Promise<PreferencesShape | null>
       email: usersTable.email,
       notifyEmailEnabled: usersTable.notifyEmailEnabled,
       notifySlackEnabled: usersTable.notifySlackEnabled,
+      quietHoursEnabled: usersTable.quietHoursEnabled,
+      quietHoursStart: usersTable.quietHoursStart,
+      quietHoursEnd: usersTable.quietHoursEnd,
+      quietHoursWeekdayMask: usersTable.quietHoursWeekdayMask,
     })
     .from(usersTable)
     .where(eq(usersTable.id, userId));
@@ -29,6 +39,10 @@ async function loadPreferences(userId: number): Promise<PreferencesShape | null>
     email: user.email,
     notifyEmailEnabled: user.notifyEmailEnabled,
     notifySlackEnabled: user.notifySlackEnabled,
+    quietHoursEnabled: user.quietHoursEnabled,
+    quietHoursStart: user.quietHoursStart,
+    quietHoursEnd: user.quietHoursEnd,
+    quietHoursWeekdayMask: user.quietHoursWeekdayMask,
     emailConfigured: status.emailConfigured,
     slackConfigured: status.slackConfigured,
   };
@@ -45,11 +59,35 @@ router.put("/me/notification-preferences", authMiddleware, requireRole("MANAGER"
   const { userId } = (req as any).user as { userId: number };
   const body = req.body ?? {};
 
-  // Permissive: only the boolean fields the schema accepts are persisted.
-  // Anything else is silently ignored so older clients keep working.
-  const patch: { notifyEmailEnabled?: boolean; notifySlackEnabled?: boolean } = {};
+  // Permissive: only known fields with valid shape are persisted. Anything
+  // else (or anything malformed) is silently ignored so older clients keep
+  // working and a stray bad field can't reject the whole payload.
+  const patch: {
+    notifyEmailEnabled?: boolean;
+    notifySlackEnabled?: boolean;
+    quietHoursEnabled?: boolean;
+    quietHoursStart?: string;
+    quietHoursEnd?: string;
+    quietHoursWeekdayMask?: number;
+  } = {};
+
   if (typeof body.notifyEmailEnabled === "boolean") patch.notifyEmailEnabled = body.notifyEmailEnabled;
   if (typeof body.notifySlackEnabled === "boolean") patch.notifySlackEnabled = body.notifySlackEnabled;
+  if (typeof body.quietHoursEnabled === "boolean") patch.quietHoursEnabled = body.quietHoursEnabled;
+  if (typeof body.quietHoursStart === "string" && HHMM_RE.test(body.quietHoursStart)) {
+    patch.quietHoursStart = body.quietHoursStart;
+  }
+  if (typeof body.quietHoursEnd === "string" && HHMM_RE.test(body.quietHoursEnd)) {
+    patch.quietHoursEnd = body.quietHoursEnd;
+  }
+  if (
+    typeof body.quietHoursWeekdayMask === "number" &&
+    Number.isInteger(body.quietHoursWeekdayMask) &&
+    body.quietHoursWeekdayMask >= 0 &&
+    body.quietHoursWeekdayMask <= 127
+  ) {
+    patch.quietHoursWeekdayMask = body.quietHoursWeekdayMask;
+  }
 
   if (Object.keys(patch).length > 0) {
     await db.update(usersTable).set(patch).where(eq(usersTable.id, userId));

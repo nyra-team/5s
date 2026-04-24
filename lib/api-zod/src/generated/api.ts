@@ -883,6 +883,13 @@ export const GetLabelsResponse = zod.array(GetLabelsResponseItem);
 /**
  * @summary Get the calling user's notification preferences (and provider config status)
  */
+export const getMyNotificationPreferencesResponseQuietHoursStartRegExp =
+  new RegExp("^([01]\\d|2[0-3]):[0-5]\\d$");
+export const getMyNotificationPreferencesResponseQuietHoursEndRegExp =
+  new RegExp("^([01]\\d|2[0-3]):[0-5]\\d$");
+export const getMyNotificationPreferencesResponseQuietHoursWeekdayMaskMin = 0;
+export const getMyNotificationPreferencesResponseQuietHoursWeekdayMaskMax = 127;
+
 export const GetMyNotificationPreferencesResponse = zod.object({
   notifyEmailEnabled: zod.boolean(),
   notifySlackEnabled: zod.boolean(),
@@ -899,15 +906,65 @@ export const GetMyNotificationPreferencesResponse = zod.object({
     .describe(
       "The address email notifications would be sent to (the user's account email).",
     ),
+  quietHoursEnabled: zod
+    .boolean()
+    .describe(
+      "When true, notifications are suppressed for this recipient during the configured window.",
+    ),
+  quietHoursStart: zod
+    .string()
+    .regex(getMyNotificationPreferencesResponseQuietHoursStartRegExp)
+    .describe('Quiet-hours window start in IST, 24h \"HH:MM\" format.'),
+  quietHoursEnd: zod
+    .string()
+    .regex(getMyNotificationPreferencesResponseQuietHoursEndRegExp)
+    .describe(
+      'Quiet-hours window end in IST, 24h \"HH:MM\" format. May wrap past midnight (end < start).',
+    ),
+  quietHoursWeekdayMask: zod
+    .number()
+    .min(getMyNotificationPreferencesResponseQuietHoursWeekdayMaskMin)
+    .max(getMyNotificationPreferencesResponseQuietHoursWeekdayMaskMax)
+    .describe(
+      "7-bit mask of weekdays the window applies to. Bit 0 = Sunday … bit 6 = Saturday. 127 = every day.",
+    ),
 });
 
 /**
  * @summary Update the calling user's notification preferences
  */
+export const updateMyNotificationPreferencesBodyQuietHoursStartRegExp =
+  new RegExp("^([01]\\d|2[0-3]):[0-5]\\d$");
+export const updateMyNotificationPreferencesBodyQuietHoursEndRegExp =
+  new RegExp("^([01]\\d|2[0-3]):[0-5]\\d$");
+export const updateMyNotificationPreferencesBodyQuietHoursWeekdayMaskMin = 0;
+export const updateMyNotificationPreferencesBodyQuietHoursWeekdayMaskMax = 127;
+
 export const UpdateMyNotificationPreferencesBody = zod.object({
   notifyEmailEnabled: zod.boolean().optional(),
   notifySlackEnabled: zod.boolean().optional(),
+  quietHoursEnabled: zod.boolean().optional(),
+  quietHoursStart: zod
+    .string()
+    .regex(updateMyNotificationPreferencesBodyQuietHoursStartRegExp)
+    .optional(),
+  quietHoursEnd: zod
+    .string()
+    .regex(updateMyNotificationPreferencesBodyQuietHoursEndRegExp)
+    .optional(),
+  quietHoursWeekdayMask: zod
+    .number()
+    .min(updateMyNotificationPreferencesBodyQuietHoursWeekdayMaskMin)
+    .max(updateMyNotificationPreferencesBodyQuietHoursWeekdayMaskMax)
+    .optional(),
 });
+
+export const updateMyNotificationPreferencesResponseQuietHoursStartRegExp =
+  new RegExp("^([01]\\d|2[0-3]):[0-5]\\d$");
+export const updateMyNotificationPreferencesResponseQuietHoursEndRegExp =
+  new RegExp("^([01]\\d|2[0-3]):[0-5]\\d$");
+export const updateMyNotificationPreferencesResponseQuietHoursWeekdayMaskMin = 0;
+export const updateMyNotificationPreferencesResponseQuietHoursWeekdayMaskMax = 127;
 
 export const UpdateMyNotificationPreferencesResponse = zod.object({
   notifyEmailEnabled: zod.boolean(),
@@ -924,6 +981,28 @@ export const UpdateMyNotificationPreferencesResponse = zod.object({
     .string()
     .describe(
       "The address email notifications would be sent to (the user's account email).",
+    ),
+  quietHoursEnabled: zod
+    .boolean()
+    .describe(
+      "When true, notifications are suppressed for this recipient during the configured window.",
+    ),
+  quietHoursStart: zod
+    .string()
+    .regex(updateMyNotificationPreferencesResponseQuietHoursStartRegExp)
+    .describe('Quiet-hours window start in IST, 24h \"HH:MM\" format.'),
+  quietHoursEnd: zod
+    .string()
+    .regex(updateMyNotificationPreferencesResponseQuietHoursEndRegExp)
+    .describe(
+      'Quiet-hours window end in IST, 24h \"HH:MM\" format. May wrap past midnight (end < start).',
+    ),
+  quietHoursWeekdayMask: zod
+    .number()
+    .min(updateMyNotificationPreferencesResponseQuietHoursWeekdayMaskMin)
+    .max(updateMyNotificationPreferencesResponseQuietHoursWeekdayMaskMax)
+    .describe(
+      "7-bit mask of weekdays the window applies to. Bit 0 = Sunday … bit 6 = Saturday. 127 = every day.",
     ),
 });
 
