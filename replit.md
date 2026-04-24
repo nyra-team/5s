@@ -84,6 +84,7 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 
 ## Architecture
 
+- See `artifacts/api-server/src/routes/README.md` for route conventions (notably: never use `sql\`... = ANY(${jsArray})\`` — use drizzle's `inArray()` helper, which handles single-element arrays correctly)
 - OpenAPI spec at `lib/api-spec/openapi.yaml` is single source of truth
 - Codegen produces React Query hooks (`lib/api-client-react`) and Zod schemas (`lib/api-zod`)
 - Static file serving for uploads at `/api/uploads/`
