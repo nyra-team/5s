@@ -29,6 +29,7 @@ import {
   getGetOperatorRecentQueryKey,
   getGetActiveNudgesQueryKey,
   getGetActiveNudgesByAreaQueryKey,
+  getGetShiftConfigQueryKey,
 } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,6 +88,7 @@ import {
   purgeStaleCaptureDrafts,
 } from "@/lib/capture-drafts";
 import { useShiftConfig } from "@/lib/shift-config";
+import { useFacilitySettingsChangeListener } from "@/lib/facility-settings";
 import { useEffectiveOperatorThresholds } from "@/lib/operator-thresholds";
 import { EnvironmentChecklist, normalizeEnvironment } from "@/lib/environment";
 
@@ -421,6 +423,7 @@ export default function OperatorHome() {
     },
   );
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const seenNudgesRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
@@ -436,6 +439,27 @@ export default function OperatorHome() {
       });
     }
   }, [activeNudges, toast]);
+
+  // When a manager retunes shift A/B/C hours (or the timezone) from the
+  // Shifts page, surface a non-blocking toast so the operator knows their
+  // schedule just shifted under them — and proactively invalidate the
+  // queries that bucket by shift (current shift, area grid, next checks)
+  // so the page reflects the new boundaries on the next tick instead of
+  // waiting up to a minute for the polled refetch to land. The shift-config
+  // query is cached for an hour with no focus/mount refetch, so it MUST be
+  // invalidated explicitly here or the pill labels ("6 AM – 2 PM") will
+  // keep showing the old hours after everything else has refreshed.
+  useFacilitySettingsChangeListener(() => {
+    toast({
+      title: "Shift hours just updated",
+      description:
+        "A manager changed the shift schedule. Refreshing your view…",
+    });
+    queryClient.invalidateQueries({ queryKey: getGetCurrentShiftQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetOperatorStatusQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetNextChecksQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetShiftConfigQueryKey() });
+  });
 
   // Build the area-level due map (machine === null entries) for the area grid.
   const areaDueMap = useMemo(() => {

@@ -103,6 +103,12 @@ vi.mock("@workspace/api-client-react", () => {
       isLoading: false,
     }),
     getGetShiftConfigQueryKey: () => ["shift-config"],
+    // useFacilitySettingsChangeListener() polls /facility-settings to detect
+    // mid-day shift-hour edits by a manager. Returning `undefined` exercises
+    // the no-data-yet branch (no listener fire), which is the right baseline
+    // for these tests — they don't simulate a settings edit.
+    useGetFacilitySettings: () => ({ data: undefined, isLoading: false }),
+    getGetFacilitySettingsQueryKey: () => ["facility-settings"],
     useCreateSubmission: () => ({
       mutate: vi.fn(),
       isPending: false,
