@@ -48,6 +48,7 @@ import {
   ChevronUp,
   CalendarClock,
   Bell,
+  Save,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -72,6 +73,7 @@ import {
   loadCaptureDraft,
   saveCaptureDraft,
   deleteCaptureDraft,
+  peekCaptureDraftMeta,
   purgeStaleCaptureDrafts,
 } from "@/lib/capture-drafts";
 import { getShiftLabels } from "@/lib/theme";
@@ -635,10 +637,14 @@ function AreaCard({
   const [media, setMedia] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [machineTag, setMachineTag] = useState("");
-  // Per (operator, area) resumable draft. Hydrated from IndexedDB on mount so
-  // operators don't lose media/tag if they switch apps or get interrupted.
+  // Per (operator, area) resumable draft. We only PEEK at the saved timestamp
+  // on mount so the pending card can show a "Draft saved" pill without paying
+  // the cost of hydrating the media Blob for every card on the grid. The full
+  // draft (media + machineTag) is loaded lazily when the operator opens the
+  // capture sheet to actually resume.
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
-  const draftHydratedRef = useRef(false);
+  const draftMetaCheckedRef = useRef(false);
+  const draftMediaLoadedRef = useRef(false);
 
   const recordVideoInputRef = useRef<HTMLInputElement>(null);
   const pickVideoInputRef = useRef<HTMLInputElement>(null);
@@ -662,33 +668,46 @@ function AreaCard({
 
   const isVideo = (f: File | null) => !!f && f.type.startsWith("video/");
 
-  // Hydrate any saved draft for this (operator, area) once on mount. We only
-  // resume drafts in the "create" flow — once submitted, the operator uses
-  // the re-capture flow which doesn't rely on local drafts.
+  // Peek at draft metadata once on mount so the pending card can render a
+  // "Draft saved" pill without loading media. We only surface drafts in the
+  // "create" flow — once submitted, the operator uses the re-capture flow
+  // which doesn't rely on local drafts.
   useEffect(() => {
-    if (draftHydratedRef.current) return;
+    if (draftMetaCheckedRef.current) return;
     if (operatorId == null) return;
     if (status.submitted) return;
-    draftHydratedRef.current = true;
+    draftMetaCheckedRef.current = true;
     let cancelled = false;
     void (async () => {
-      const draft = await loadCaptureDraft(operatorId, status.areaId);
-      if (cancelled || !draft) return;
-      const file = new File([draft.media], draft.mediaName || "capture", {
-        type: draft.mediaType || draft.media.type || "application/octet-stream",
-      });
-      setMedia(file);
-      setMachineTag(draft.machineTag || "");
-      setPreviewUrl((current) => {
-        if (current) URL.revokeObjectURL(current);
-        return URL.createObjectURL(draft.media);
-      });
-      setDraftSavedAt(draft.savedAt);
+      const meta = await peekCaptureDraftMeta(operatorId, status.areaId);
+      if (cancelled || !meta) return;
+      setDraftSavedAt(meta.savedAt);
     })();
     return () => {
       cancelled = true;
     };
   }, [operatorId, status.areaId, status.submitted]);
+
+  // Lazily hydrate the full draft (media + machineTag) — called when the
+  // operator opens the capture sheet to actually resume the in-progress draft.
+  const hydrateDraftMedia = async (): Promise<boolean> => {
+    if (operatorId == null) return false;
+    if (draftMediaLoadedRef.current) return media != null;
+    draftMediaLoadedRef.current = true;
+    const draft = await loadCaptureDraft(operatorId, status.areaId);
+    if (!draft) return false;
+    const file = new File([draft.media], draft.mediaName || "capture", {
+      type: draft.mediaType || draft.media.type || "application/octet-stream",
+    });
+    setMedia(file);
+    setMachineTag(draft.machineTag || "");
+    setPreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return URL.createObjectURL(draft.media);
+    });
+    setDraftSavedAt(draft.savedAt);
+    return true;
+  };
 
   // Persist the in-progress capture (debounced) so a swipe-away or signal drop
   // doesn't lose what the operator just selected.
@@ -718,6 +737,8 @@ function AreaCard({
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     setDraftSavedAt(null);
+    // Allow a future hydrate attempt if a fresh draft is saved later.
+    draftMediaLoadedRef.current = false;
   };
 
   const handleFileSelect = (mode: "create" | "reupload") => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -737,12 +758,18 @@ function AreaCard({
 
   const openCaptureSheet = () => {
     setIsReuploadMode(false);
-    // If we hydrated a draft (media present from a prior session), keep it so
-    // the operator can resume; otherwise start clean.
+    // If a draft exists for this (operator, area) but media hasn't been
+    // hydrated yet (we only peeked at the timestamp on mount), pull it from
+    // IndexedDB now so the resume banner + preview show up. If there's no
+    // draft, start clean.
     if (!media) {
-      setMachineTag("");
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(null);
+      if (draftSavedAt != null && !draftMediaLoadedRef.current) {
+        void hydrateDraftMedia();
+      } else {
+        setMachineTag("");
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        setPreviewUrl(null);
+      }
     }
     setIsCaptureOpen(true);
   };
@@ -1073,6 +1100,16 @@ function AreaCard({
                   data-testid={`pill-duesoon-${status.areaId}`}
                 >
                   <CalendarClock className="w-3.5 h-3.5" /> Due soon
+                </p>
+              )}
+              {draftSavedAt != null && (
+                <p
+                  className="inline-flex items-center gap-1.5 text-[12px] font-medium text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 px-2.5 py-1 rounded-full"
+                  data-testid={`pill-draft-saved-${status.areaId}`}
+                  title={`Draft saved ${format(new Date(draftSavedAt), "MMM d, h:mm a")}`}
+                >
+                  <Save className="w-3.5 h-3.5" /> Draft saved{" "}
+                  {formatDistanceToNowStrict(new Date(draftSavedAt), { addSuffix: true })}
                 </p>
               )}
             </div>

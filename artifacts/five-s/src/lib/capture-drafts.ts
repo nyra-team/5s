@@ -73,6 +73,40 @@ export async function loadCaptureDraft(
   }
 }
 
+export interface CaptureDraftMeta {
+  operatorId: number;
+  areaId: number;
+  savedAt: number;
+}
+
+export async function peekCaptureDraftMeta(
+  operatorId: number,
+  areaId: number,
+  now: number = Date.now(),
+): Promise<CaptureDraftMeta | null> {
+  if (!isIdbAvailable()) return null;
+  try {
+    const db = await openDb();
+    return await new Promise<CaptureDraftMeta | null>((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const req = tx.objectStore(STORE_NAME).get(makeKey(operatorId, areaId));
+      req.onsuccess = () => {
+        const stored = req.result as StoredDraft | undefined;
+        if (!stored) return resolve(null);
+        if (now - stored.savedAt > CAPTURE_DRAFT_TTL_MS) return resolve(null);
+        resolve({
+          operatorId: stored.operatorId,
+          areaId: stored.areaId,
+          savedAt: stored.savedAt,
+        });
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function saveCaptureDraft(draft: CaptureDraft): Promise<void> {
   if (!isIdbAvailable()) return;
   try {
