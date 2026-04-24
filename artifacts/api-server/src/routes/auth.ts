@@ -33,7 +33,12 @@ router.post("/auth/login", async (req, res): Promise<void> => {
   const token = signToken({ userId: user.id, role: user.role });
   res.json({
     token,
-    user: { id: user.id, email: user.email, role: user.role },
+    user: {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      role: user.role,
+    },
   });
 });
 
@@ -49,7 +54,12 @@ router.get("/auth/me", authMiddleware, async (req, res): Promise<void> => {
     return;
   }
 
-  res.json({ id: user.id, email: user.email, role: user.role });
+  res.json({
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    role: user.role,
+  });
 });
 
 export default router;

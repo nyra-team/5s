@@ -1522,6 +1522,10 @@ components:
           type: integer
         email:
           type: string
+        displayName:
+          type: string
+          nullable: true
+          description: Optional human-readable name. UI falls back to the email's local-part when null.
         role:
           type: string
           enum: [OPERATOR, MANAGER]
@@ -3322,6 +3326,10 @@ components:
           type: string
           nullable: true
           description: Email of the operator who performed the most recent operator-dismiss for this area in the current shift, paired with `lastOperatorDismissedNudgeAt`. Null if unknown or no such dismissal occurred.
+        lastOperatorDismissedNudgeByDisplayName:
+          type: string
+          nullable: true
+          description: Optional human-readable name of the dismissing operator. UI prefers this over the email when present.
       required: [areaId, areaName]
 
     LiveShiftOverdueCheck:
@@ -3351,6 +3359,10 @@ components:
           type: string
           nullable: true
           description: Email of the operator who performed the most recent operator-dismiss for this area+machine in the current shift, paired with `lastOperatorDismissedNudgeAt`. Null if unknown or no such dismissal occurred.
+        lastOperatorDismissedNudgeByDisplayName:
+          type: string
+          nullable: true
+          description: Optional human-readable name of the dismissing operator. UI prefers this over the email when present.
       required: [areaId, areaName, overdueSinceMinutes, cadenceSeconds]
 
     LiveShiftLowScoring:

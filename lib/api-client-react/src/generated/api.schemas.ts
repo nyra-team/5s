@@ -62,6 +62,8 @@ export const UserRole = {
 export interface User {
   id: number;
   email: string;
+  /** Optional human-readable name. UI falls back to the email's local-part when null. */
+  displayName?: string | null;
   role: UserRole;
 }
 
@@ -1285,6 +1287,8 @@ export interface LiveShiftPendingArea {
   lastOperatorDismissedNudgeAt?: string | null;
   /** Email of the operator who performed the most recent operator-dismiss for this area in the current shift, paired with `lastOperatorDismissedNudgeAt`. Null if unknown or no such dismissal occurred. */
   lastOperatorDismissedNudgeByEmail?: string | null;
+  /** Optional human-readable name of the dismissing operator. UI prefers this over the email when present. */
+  lastOperatorDismissedNudgeByDisplayName?: string | null;
 }
 
 export interface LiveShiftOverdueCheck {
@@ -1298,6 +1302,8 @@ export interface LiveShiftOverdueCheck {
   lastOperatorDismissedNudgeAt?: string | null;
   /** Email of the operator who performed the most recent operator-dismiss for this area+machine in the current shift, paired with `lastOperatorDismissedNudgeAt`. Null if unknown or no such dismissal occurred. */
   lastOperatorDismissedNudgeByEmail?: string | null;
+  /** Optional human-readable name of the dismissing operator. UI prefers this over the email when present. */
+  lastOperatorDismissedNudgeByDisplayName?: string | null;
 }
 
 export interface LiveShiftLowScoring {

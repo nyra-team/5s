@@ -14,4 +14,6 @@ export interface LiveShiftPendingAreaType {
   lastOperatorDismissedNudgeAt?: Date | null;
   /** Email of the operator who performed the most recent operator-dismiss for this area in the current shift, paired with `lastOperatorDismissedNudgeAt`. Null if unknown or no such dismissal occurred. */
   lastOperatorDismissedNudgeByEmail?: string | null;
+  /** Optional human-readable name of the dismissing operator. UI prefers this over the email when present. */
+  lastOperatorDismissedNudgeByDisplayName?: string | null;
 }

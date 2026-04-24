@@ -47,6 +47,9 @@ beforeAll(async () => {
       email: `${RUN_TAG}-op@test.local`,
       passwordHash: "x",
       role: "OPERATOR",
+      // Set a friendly name so we can assert managers see it on the chip
+      // instead of the email's local-part.
+      displayName: "Op Tester",
     })
     .returning();
   operatorId = o.id;
@@ -180,6 +183,7 @@ describe("nudge dismissal attribution", () => {
       areaId: number;
       lastOperatorDismissedNudgeAt: string | null;
       lastOperatorDismissedNudgeByEmail: string | null;
+      lastOperatorDismissedNudgeByDisplayName: string | null;
     }>).find((p) => p.areaId === area.id);
     expect(pending).toBeDefined();
     expect(pending!.lastOperatorDismissedNudgeAt).not.toBeNull();
@@ -188,6 +192,9 @@ describe("nudge dismissal attribution", () => {
     expect(pending!.lastOperatorDismissedNudgeByEmail).toBe(
       `${RUN_TAG}-op@test.local`,
     );
+    // Friendly displayName accompanies the email so corporate-id logins
+    // still render legibly on the manager's chip (Task #111).
+    expect(pending!.lastOperatorDismissedNudgeByDisplayName).toBe("Op Tester");
   });
 
   it("GET /shift/live exposes lastOperatorDismissedNudgeByEmail on overdueChecks for the dismissed machine", async () => {

@@ -7,6 +7,11 @@ export const usersTable = pgTable("users", {
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull().default("OPERATOR"),
+  // Optional human-readable name shown in the UI in place of the email's
+  // local-part (e.g. on the manager's "Dismissed by …" chip). Nullable so
+  // existing rows and self-signups that never set a name keep working —
+  // surfaces fall back to the email-local-part when this is unset.
+  displayName: text("display_name"),
   // Notification preferences. Only consulted for MANAGER users today, but kept
   // on the base users table so we can extend to operator-facing notifications
   // later without a second migration. Email defaults on for managers because

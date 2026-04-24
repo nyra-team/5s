@@ -92,15 +92,27 @@ function NudgeButton({
 function DismissedWithoutSubmitChip({
   at,
   byEmail,
+  byDisplayName,
 }: {
   at: Date | string;
   byEmail?: string | null;
+  byDisplayName?: string | null;
 }) {
+  // Prefer the human-readable name when the operator has one set; otherwise
+  // fall back to the email's local-part (with a trailing "@…" so it's clear
+  // we've truncated). Only when both are missing do we use the generic copy.
+  const trimmedDisplayName = byDisplayName?.trim() || null;
   const shortName = byEmail ? byEmail.split("@")[0] : null;
-  const label = shortName ? `Dismissed by ${shortName}@…` : "Operator dismissed";
-  const title = byEmail
-    ? `${byEmail} dismissed the nudge without submitting fresh evidence`
-    : "Operator dismissed the nudge without submitting fresh evidence";
+  const label = trimmedDisplayName
+    ? `Dismissed by ${trimmedDisplayName}`
+    : shortName
+      ? `Dismissed by ${shortName}@…`
+      : "Operator dismissed";
+  const title = trimmedDisplayName
+    ? `${trimmedDisplayName}${byEmail ? ` (${byEmail})` : ""} dismissed the nudge without submitting fresh evidence`
+    : byEmail
+      ? `${byEmail} dismissed the nudge without submitting fresh evidence`
+      : "Operator dismissed the nudge without submitting fresh evidence";
   return (
     <span
       className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/15 rounded-full px-2 py-0.5 mt-1.5"
@@ -134,6 +146,7 @@ function PendingAreaCard({ item, shift }: { item: LiveShiftPendingArea; shift: C
           <DismissedWithoutSubmitChip
             at={item.lastOperatorDismissedNudgeAt}
             byEmail={item.lastOperatorDismissedNudgeByEmail}
+            byDisplayName={item.lastOperatorDismissedNudgeByDisplayName}
           />
         )}
       </div>
@@ -172,6 +185,7 @@ function OverdueCard({ item, shift }: { item: LiveShiftOverdueCheck; shift: Crea
           <DismissedWithoutSubmitChip
             at={item.lastOperatorDismissedNudgeAt}
             byEmail={item.lastOperatorDismissedNudgeByEmail}
+            byDisplayName={item.lastOperatorDismissedNudgeByDisplayName}
           />
         )}
       </div>

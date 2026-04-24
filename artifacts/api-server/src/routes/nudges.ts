@@ -349,6 +349,10 @@ const OPERATOR_DISMISS_REASON: NudgeDismissReason = "OPERATOR_DISMISS";
 export interface OperatorDismissedNudgeInfo {
   dismissedAt: Date;
   dismissedByEmail: string | null;
+  // Optional human-readable name for the dismissing operator, surfaced on
+  // manager-facing chips so corporate-id logins (e.g. emp1234@plant.local)
+  // are immediately legible. Null when the user row has no displayName set.
+  dismissedByDisplayName: string | null;
 }
 
 export async function getOperatorDismissedNudgeByArea(
@@ -359,6 +363,7 @@ export async function getOperatorDismissedNudgeByArea(
       areaId: nudgesTable.areaId,
       dismissedAt: nudgesTable.dismissedAt,
       dismissedByEmail: usersTable.email,
+      dismissedByDisplayName: usersTable.displayName,
     })
     .from(nudgesTable)
     .leftJoin(usersTable, eq(nudgesTable.dismissedByUserId, usersTable.id))
@@ -377,6 +382,7 @@ export async function getOperatorDismissedNudgeByArea(
       map.set(r.areaId, {
         dismissedAt: r.dismissedAt,
         dismissedByEmail: r.dismissedByEmail ?? null,
+        dismissedByDisplayName: r.dismissedByDisplayName ?? null,
       });
     }
   }
@@ -392,6 +398,7 @@ export async function getOperatorDismissedNudgesByAreaMachine(
       machine: nudgesTable.machine,
       dismissedAt: nudgesTable.dismissedAt,
       dismissedByEmail: usersTable.email,
+      dismissedByDisplayName: usersTable.displayName,
     })
     .from(nudgesTable)
     .leftJoin(usersTable, eq(nudgesTable.dismissedByUserId, usersTable.id))
@@ -411,6 +418,7 @@ export async function getOperatorDismissedNudgesByAreaMachine(
       map.set(key, {
         dismissedAt: r.dismissedAt,
         dismissedByEmail: r.dismissedByEmail ?? null,
+        dismissedByDisplayName: r.dismissedByDisplayName ?? null,
       });
     }
   }

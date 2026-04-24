@@ -10,5 +10,7 @@ import type { UserTypeRole } from "./userTypeRole";
 export interface UserType {
   id: number;
   email: string;
+  /** Optional human-readable name. UI falls back to the email's local-part when null. */
+  displayName?: string | null;
   role: UserTypeRole;
 }

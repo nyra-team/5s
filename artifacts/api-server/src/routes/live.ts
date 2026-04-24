@@ -75,6 +75,8 @@ router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, r
         // re-capturing" event we want managers to see.
         lastOperatorDismissedNudgeAt: dismissed?.dismissedAt ?? null,
         lastOperatorDismissedNudgeByEmail: dismissed?.dismissedByEmail ?? null,
+        lastOperatorDismissedNudgeByDisplayName:
+          dismissed?.dismissedByDisplayName ?? null,
       };
     });
 
@@ -119,6 +121,8 @@ router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, r
         lastNudgeAt: nudgesByAreaMachine.get(nudgeKey) ?? null,
         lastOperatorDismissedNudgeAt: dismissed?.dismissedAt ?? null,
         lastOperatorDismissedNudgeByEmail: dismissed?.dismissedByEmail ?? null,
+        lastOperatorDismissedNudgeByDisplayName:
+          dismissed?.dismissedByDisplayName ?? null,
       };
     })
     .sort((a, b) => b.overdueSinceMinutes - a.overdueSinceMinutes);

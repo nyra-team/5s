@@ -27,6 +27,12 @@ export const LoginResponse = zod.object({
   user: zod.object({
     id: zod.number(),
     email: zod.string(),
+    displayName: zod
+      .string()
+      .nullish()
+      .describe(
+        "Optional human-readable name. UI falls back to the email's local-part when null.",
+      ),
     role: zod.enum(["OPERATOR", "MANAGER"]),
   }),
 });
@@ -37,6 +43,12 @@ export const LoginResponse = zod.object({
 export const GetMeResponse = zod.object({
   id: zod.number(),
   email: zod.string(),
+  displayName: zod
+    .string()
+    .nullish()
+    .describe(
+      "Optional human-readable name. UI falls back to the email's local-part when null.",
+    ),
   role: zod.enum(["OPERATOR", "MANAGER"]),
 });
 
@@ -1958,6 +1970,12 @@ export const GetLiveShiftResponse = zod.object({
         .describe(
           "Email of the operator who performed the most recent operator-dismiss for this area in the current shift, paired with `lastOperatorDismissedNudgeAt`. Null if unknown or no such dismissal occurred.",
         ),
+      lastOperatorDismissedNudgeByDisplayName: zod
+        .string()
+        .nullish()
+        .describe(
+          "Optional human-readable name of the dismissing operator. UI prefers this over the email when present.",
+        ),
     }),
   ),
   overdueChecks: zod.array(
@@ -1979,6 +1997,12 @@ export const GetLiveShiftResponse = zod.object({
         .nullish()
         .describe(
           "Email of the operator who performed the most recent operator-dismiss for this area+machine in the current shift, paired with `lastOperatorDismissedNudgeAt`. Null if unknown or no such dismissal occurred.",
+        ),
+      lastOperatorDismissedNudgeByDisplayName: zod
+        .string()
+        .nullish()
+        .describe(
+          "Optional human-readable name of the dismissing operator. UI prefers this over the email when present.",
         ),
     }),
   ),
