@@ -58,6 +58,7 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import {
   Dialog,
   DialogContent,
@@ -984,6 +985,10 @@ export function AreaCard({
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
   const draftMetaCheckedRef = useRef(false);
   const draftMediaLoadedRef = useRef(false);
+  // Submission detail dialog opened from the post-submit "View details" toast
+  // action — lets the operator jump straight from the score toast to the full
+  // pillar breakdown without hunting for the just-uploaded card.
+  const [detailSubmissionId, setDetailSubmissionId] = useState<number | null>(null);
 
   // Auto-detected area state. The capture sheet runs identification in the
   // background once media is selected (skipped when there's only one assigned
@@ -1210,6 +1215,23 @@ export function AreaCard({
 
   const onSuccess = (msg: string, result?: Submission) => {
     const topSuggestion = result?.suggestionsJson?.[0];
+    // The toast headline only has room for one suggestion; expose a "View
+    // details" action so an operator who wants the full pillar breakdown can
+    // open the submission dialog without hunting for the new card. The action
+    // is a real button (focusable + keyboard-activatable) via Radix. We also
+    // attach it to the FALLBACK (couldn't-be-scored) toast so the operator
+    // can still inspect the saved capture.
+    const detailAction = result
+      ? (
+          <ToastAction
+            altText="View submission details"
+            onClick={() => setDetailSubmissionId(result.id)}
+            data-testid={`toast-action-view-details-${result.id}`}
+          >
+            View details
+          </ToastAction>
+        )
+      : undefined;
     // FALLBACK = the upload landed and the row was saved, but the VLM didn't
     // produce a real score. Surface that distinctly so the operator knows to
     // re-capture rather than thinking they got a real "0%" audit.
@@ -1219,6 +1241,7 @@ export function AreaCard({
         title: `${msg} — couldn't be scored`,
         description:
           "Saved your capture, but our scoring service couldn't grade it. Try re-uploading with brighter lighting and a steadier angle.",
+        action: detailAction,
       });
     } else if (result && topSuggestion) {
       const percent = Math.round(result.scoreTotal * 4);
@@ -1227,11 +1250,13 @@ export function AreaCard({
         title: `${msg} — ${percent}%`,
         description: topSuggestion,
         className: `${tone.bg} ${tone.text} border-transparent`,
+        action: detailAction,
       });
     } else {
       toast({
         title: msg,
         description: isVideo(media) ? "Walk-through scored across keyframes." : "Photo scored.",
+        action: detailAction,
       });
     }
     queryClient.invalidateQueries({ queryKey: getGetOperatorStatusQueryKey() });
@@ -1471,6 +1496,11 @@ export function AreaCard({
           ref={photoInputRef}
           onChange={handleFileSelect("reupload")}
         />
+
+        <RecentDetailDialog
+          submissionId={detailSubmissionId}
+          onClose={() => setDetailSubmissionId(null)}
+        />
       </>
     );
   }
@@ -1618,6 +1648,11 @@ export function AreaCard({
         className="hidden"
         ref={photoInputRef}
         onChange={handleFileSelect("create")}
+      />
+
+      <RecentDetailDialog
+        submissionId={detailSubmissionId}
+        onClose={() => setDetailSubmissionId(null)}
       />
     </>
   );
