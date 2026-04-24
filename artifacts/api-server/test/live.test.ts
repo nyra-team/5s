@@ -1,6 +1,6 @@
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { db, submissionsTable } from "@workspace/db";
+import { db, submissionsTable, escalationsTable } from "@workspace/db";
 import { TestWorld, api } from "./helpers.js";
 import { getCurrentShift, getISTShiftRange } from "../src/lib/scoring.js";
 
@@ -8,7 +8,11 @@ interface LiveResp {
   shift: string;
   pendingAreas: { areaId: number }[];
   lowScoring: { submissionId: number; areaId: number; scorePercent: number }[];
-  openEscalations: { id: number }[];
+  openEscalations: {
+    id: number;
+    repingCount: number;
+    lastRepingAt: string | null;
+  }[];
 }
 
 describe("GET /api/shift/live (IST shift filtering)", () => {
@@ -113,6 +117,59 @@ describe("GET /api/shift/live (IST shift filtering)", () => {
     const ours = r.body.lowScoring.find((l) => l.submissionId === inShiftLow.id);
     assert.ok(ours);
     assert.equal(ours.scorePercent, 40);
+  });
+
+  test("openEscalations surfaces repingCount and lastRepingAt for the live page badge", async () => {
+    // Mirrors the inbox's "Reminded Nx · 12m ago" badge: managers triaging
+    // from the live snapshot need the same signal so they don't double-poke
+    // a team that the re-ping scheduler already auto-reminded.
+    const manager = await world.createUser("MANAGER");
+    const operator = await world.createUser("OPERATOR");
+    const area = await world.createArea("Reping");
+
+    const { shift } = getCurrentShift();
+    const [sub] = await db
+      .insert(submissionsTable)
+      .values({
+        areaId: area.id,
+        userId: operator.id,
+        shift,
+        scoreTotal: 10,
+        scoreJson: { sort: 2, set: 2, shine: 2, standardize: 2, sustain: 2 },
+        suggestionsJson: [],
+        imageUrl: "/uploads/test.jpg",
+        mediaType: "image",
+      })
+      .returning();
+
+    const lastRepingAt = new Date(Date.now() - 12 * 60_000);
+    const [esc] = await db
+      .insert(escalationsTable)
+      .values({
+        submissionId: sub.id,
+        areaId: area.id,
+        operatorId: operator.id,
+        scoreTotal: 10,
+        scorePercent: 40,
+        failingPillarsJson: ["sort"],
+        recommendedActionsJson: ["wipe down"],
+        status: "OPEN",
+        repingCount: 2,
+        lastRepingAt,
+      })
+      .returning();
+
+    const r = await api<LiveResp>(manager.token, "GET", "/api/shift/live");
+    assert.equal(r.status, 200);
+    const ours = r.body.openEscalations.find((e) => e.id === esc.id);
+    assert.ok(ours, "seeded open escalation must appear in openEscalations");
+    assert.equal(ours.repingCount, 2);
+    assert.ok(ours.lastRepingAt, "lastRepingAt must be present when set");
+    assert.equal(
+      new Date(ours.lastRepingAt).getTime(),
+      lastRepingAt.getTime(),
+      "lastRepingAt must round-trip through JSON serialization",
+    );
   });
 
   test("rejects non-managers", async () => {

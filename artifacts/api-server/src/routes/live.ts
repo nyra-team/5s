@@ -187,6 +187,8 @@ router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, r
       createdAt: escalationsTable.createdAt,
       ackedAt: escalationsTable.ackedAt,
       resolvedAt: escalationsTable.resolvedAt,
+      repingCount: escalationsTable.repingCount,
+      lastRepingAt: escalationsTable.lastRepingAt,
     })
     .from(escalationsTable)
     .innerJoin(areasTable, eq(escalationsTable.areaId, areasTable.id))
@@ -210,6 +212,11 @@ router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, r
     createdAt: r.createdAt,
     ackedAt: r.ackedAt,
     resolvedAt: r.resolvedAt,
+    // Mirror the inbox's "Reminded Nx · 12m ago" badge on the live page so a
+    // manager triaging from here can see at a glance which escalations the
+    // re-ping scheduler has already auto-poked.
+    repingCount: r.repingCount ?? 0,
+    lastRepingAt: r.lastRepingAt,
   }));
 
   res.json({

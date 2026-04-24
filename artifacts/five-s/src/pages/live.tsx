@@ -13,10 +13,11 @@ import {
   type CreateNudgeBodyShift,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Bell, BellOff, CheckCircle2, Clock, Eye, Inbox, MapPin, Sparkles } from "lucide-react";
+import { Activity, AlertTriangle, Bell, BellOff, BellRing, CheckCircle2, Clock, Eye, Inbox, MapPin, Sparkles } from "lucide-react";
 import { formatDistanceToNowStrict } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Link } from "wouter";
 import { useShiftConfig } from "@/lib/shift-config";
 
@@ -189,6 +190,38 @@ function LowScoringRow({ item }: { item: LiveShiftLowScoring }) {
   );
 }
 
+function RepingBadge({
+  count,
+  lastRepingAt,
+}: {
+  count: number;
+  lastRepingAt?: string | Date | null;
+}) {
+  if (!count || count <= 0) return null;
+  const last = lastRepingAt ? new Date(lastRepingAt) : null;
+  const ago =
+    last && !Number.isNaN(last.getTime())
+      ? formatDistanceToNowStrict(last, { addSuffix: true })
+      : null;
+  const label = `Reminded ${count}x${ago ? ` · ${ago}` : ""}`;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 dark:bg-violet-500/20 dark:text-violet-200 cursor-help"
+          data-testid={`badge-reping-${count}`}
+        >
+          <BellRing className="w-3 h-3" />
+          {label}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-[240px] text-center">
+        Managers are auto-reminded a limited number of times per escalation, then pings stop so the inbox doesn't get spammy.
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function OpenEscalationRow({ item }: { item: Escalation }) {
   const ack = useAcknowledgeEscalation();
   const resolve = useResolveEscalation();
@@ -209,6 +242,7 @@ function OpenEscalationRow({ item }: { item: Escalation }) {
           <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300 shrink-0">
             {item.scorePercent}%
           </span>
+          <RepingBadge count={item.repingCount} lastRepingAt={item.lastRepingAt} />
         </div>
         <p className="text-[12px] text-muted-foreground mt-0.5 break-words">
           {item.operatorEmail} · {timeAgo(item.createdAt)}
