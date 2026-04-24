@@ -2,12 +2,19 @@
  * Wrapper entry point for the integration suite. We do NOT load tests in this
  * process; instead we:
  *
- *   1. Mint a brand-new Postgres database for THIS test run.
- *   2. Apply the current `@workspace/db` schema to it (drizzle push).
+ *   1. Make sure a cached "template" Postgres database exists with the current
+ *      `@workspace/db` schema applied. We hash the drizzle schema source and
+ *      only re-run `drizzle-kit push` when the hash has drifted from what's
+ *      stamped in the template DB. On a warm cache this step is a single
+ *      cheap `SELECT` against an existing database.
+ *   2. Mint a brand-new Postgres database for THIS test run by cloning the
+ *      template via `CREATE DATABASE ... TEMPLATE`. Cloning is essentially
+ *      an `O(template-size)` file copy inside Postgres and on a tiny test
+ *      schema completes in well under a second.
  *   3. Spawn the actual `tsx --test` process with `DATABASE_URL` pointing at
  *      that fresh database.
- *   4. Wait for it to finish, then drop the database (and forward the exit
- *      code).
+ *   4. Wait for it to finish, then drop the per-run database (NOT the
+ *      template) and forward the exit code.
  *
  * Why a wrapper process rather than top-level-await in the test entry?
  *
@@ -42,7 +49,8 @@
  */
 import pg from "pg";
 import { execSync, spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -58,49 +66,215 @@ const baseDbName =
   decodeURIComponent(parsed.pathname.replace(/^\//, "")) || "postgres";
 const suffix = randomBytes(4).toString("hex");
 const testDbName = `${baseDbName}_test_${suffix}`;
+const templateDbName = `${baseDbName}_test_template`;
+
+// Stable advisory-lock id derived from the template name. Postgres advisory
+// locks are session-scoped, so any crash automatically releases it. We use a
+// 32-bit signed integer so it serializes cleanly via the pg driver.
+const TEMPLATE_LOCK_ID = (() => {
+  const digest = createHash("sha256")
+    .update(`api-server-test-template:${templateDbName}`)
+    .digest();
+  return digest.readInt32BE(0);
+})();
 
 function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
-function buildTestUrl(): string {
+function buildUrl(dbName: string): string {
   const u = new URL(adminUrl!);
-  u.pathname = `/${encodeURIComponent(testDbName)}`;
+  u.pathname = `/${encodeURIComponent(dbName)}`;
   return u.toString();
 }
 
-async function createTestDatabase(): Promise<void> {
+const dbPkgDir = (() => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(here, "../../../lib/db");
+})();
+
+/**
+ * Hash everything that can change what `pnpm push-force` produces:
+ *   - every `.ts` file under the drizzle schema directory (recursively, so
+ *     nested schema folders added later are still picked up),
+ *   - the drizzle config (which points at them),
+ *   - the prepare-push script that runs first.
+ *
+ * Anything outside this set won't invalidate the cached template.
+ */
+function collectSchemaFiles(dir: string, prefix: string): Array<{
+  label: string;
+  abs: string;
+}> {
+  const out: Array<{ label: string; abs: string }> = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    const abs = path.join(dir, entry.name);
+    const label = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      out.push(...collectSchemaFiles(abs, label));
+    } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+      out.push({ label, abs });
+    }
+  }
+  return out;
+}
+
+function computeSchemaHash(): string {
+  const inputs: Array<{ label: string; abs: string }> = [];
+
+  const schemaDir = path.join(dbPkgDir, "src/schema");
+  inputs.push(...collectSchemaFiles(schemaDir, "schema"));
+  inputs.push({
+    label: "drizzle.config.ts",
+    abs: path.join(dbPkgDir, "drizzle.config.ts"),
+  });
+  inputs.push({
+    label: "scripts/prepare-push.mjs",
+    abs: path.join(dbPkgDir, "scripts/prepare-push.mjs"),
+  });
+
+  const hash = createHash("sha256");
+  for (const { label, abs } of inputs) {
+    hash.update(label);
+    hash.update("\0");
+    hash.update(fs.readFileSync(abs));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+async function withAdmin<T>(
+  fn: (client: pg.Client) => Promise<T>,
+): Promise<T> {
   const client = new pg.Client({ connectionString: adminUrl });
   await client.connect();
   try {
-    await client.query(`CREATE DATABASE ${quoteIdent(testDbName)}`);
+    return await fn(client);
   } finally {
     await client.end();
   }
+}
+
+async function readTemplateHash(): Promise<string | null> {
+  const client = new pg.Client({ connectionString: buildUrl(templateDbName) });
+  await client.connect();
+  try {
+    // First check whether the metadata table exists at all. A template that
+    // predates this caching layer (or one that crashed mid-rebuild before
+    // we got to write the stamp) won't have it yet — that's the only
+    // expected "no hash" case. Any other failure should bubble up so we
+    // don't silently force a rebuild on top of a real DB problem.
+    const present = await client.query<{ exists: boolean }>(
+      `SELECT to_regclass('public._test_schema_meta') IS NOT NULL AS exists`,
+    );
+    if (!present.rows[0]?.exists) return null;
+
+    const r = await client.query<{ hash: string }>(
+      `SELECT hash FROM _test_schema_meta LIMIT 1`,
+    );
+    return r.rows[0]?.hash ?? null;
+  } finally {
+    await client.end();
+  }
+}
+
+async function writeTemplateHash(hash: string): Promise<void> {
+  const client = new pg.Client({ connectionString: buildUrl(templateDbName) });
+  await client.connect();
+  try {
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS _test_schema_meta (hash text PRIMARY KEY)`,
+    );
+    await client.query(`DELETE FROM _test_schema_meta`);
+    await client.query(`INSERT INTO _test_schema_meta (hash) VALUES ($1)`, [
+      hash,
+    ]);
+  } finally {
+    await client.end();
+  }
+}
+
+function pushSchema(targetUrl: string): void {
+  execSync("pnpm push-force", {
+    cwd: dbPkgDir,
+    env: { ...process.env, DATABASE_URL: targetUrl },
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+}
+
+/**
+ * Make sure the template database exists and matches `schemaHash`. Refresh it
+ * (drop + recreate + push) only if the hash has drifted or the DB is missing.
+ *
+ * The whole check-and-maybe-refresh runs while holding a Postgres advisory
+ * lock so two concurrent test runs can't both decide to rebuild the template.
+ */
+async function ensureTemplate(schemaHash: string): Promise<void> {
+  await withAdmin(async (admin) => {
+    await admin.query("SELECT pg_advisory_lock($1)", [TEMPLATE_LOCK_ID]);
+    try {
+      const exists = await admin.query<{ exists: boolean }>(
+        "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists",
+        [templateDbName],
+      );
+      if (exists.rows[0]?.exists) {
+        const stored = await readTemplateHash();
+        if (stored === schemaHash) {
+          return;
+        }
+        // Stale (or never stamped). Force-disconnect anything still attached
+        // and drop so we can rebuild from scratch.
+        await admin.query(
+          "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+          [templateDbName],
+        );
+        await admin.query(
+          `DROP DATABASE IF EXISTS ${quoteIdent(templateDbName)}`,
+        );
+      }
+
+      await admin.query(`CREATE DATABASE ${quoteIdent(templateDbName)}`);
+      pushSchema(buildUrl(templateDbName));
+      await writeTemplateHash(schemaHash);
+    } finally {
+      await admin.query("SELECT pg_advisory_unlock($1)", [TEMPLATE_LOCK_ID]);
+    }
+  });
+}
+
+async function createTestDatabase(): Promise<void> {
+  // Hold the template lock briefly during the clone so it can't race with a
+  // concurrent run that's mid-refresh of the template (Postgres refuses to
+  // CREATE DATABASE ... TEMPLATE when other sessions are connected to the
+  // template, and refuses to drop the template if anyone is cloning from it).
+  await withAdmin(async (admin) => {
+    await admin.query("SELECT pg_advisory_lock($1)", [TEMPLATE_LOCK_ID]);
+    try {
+      await admin.query(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+        [templateDbName],
+      );
+      await admin.query(
+        `CREATE DATABASE ${quoteIdent(testDbName)} TEMPLATE ${quoteIdent(
+          templateDbName,
+        )}`,
+      );
+    } finally {
+      await admin.query("SELECT pg_advisory_unlock($1)", [TEMPLATE_LOCK_ID]);
+    }
+  });
 }
 
 async function dropTestDatabase(): Promise<void> {
-  const client = new pg.Client({ connectionString: adminUrl });
-  await client.connect();
-  try {
+  await withAdmin(async (admin) => {
     // Force-disconnect anything still attached so the DROP doesn't block.
-    await client.query(
+    await admin.query(
       "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
       [testDbName],
     );
-    await client.query(`DROP DATABASE IF EXISTS ${quoteIdent(testDbName)}`);
-  } finally {
-    await client.end();
-  }
-}
-
-function pushSchema(testUrl: string): void {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const dbPkg = path.resolve(here, "../../../lib/db");
-  execSync("pnpm push-force", {
-    cwd: dbPkg,
-    env: { ...process.env, DATABASE_URL: testUrl },
-    stdio: ["ignore", "inherit", "inherit"],
+    await admin.query(`DROP DATABASE IF EXISTS ${quoteIdent(testDbName)}`);
   });
 }
 
@@ -127,11 +301,12 @@ function runTests(testUrl: string): Promise<number> {
   });
 }
 
+const schemaHash = computeSchemaHash();
+await ensureTemplate(schemaHash);
 await createTestDatabase();
-const testUrl = buildTestUrl();
+const testUrl = buildUrl(testDbName);
 let exitCode = 1;
 try {
-  pushSchema(testUrl);
   exitCode = await runTests(testUrl);
 } finally {
   await dropTestDatabase().catch((err) => {
