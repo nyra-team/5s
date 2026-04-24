@@ -13,10 +13,11 @@
  *      `SWEEP_THRESHOLD_MS` is dropped even if some session is still
  *      attached (e.g. a forgotten `psql` shell on a stale db).
  *   2. Make sure a cached "template" Postgres database exists with the current
- *      `@workspace/db` schema applied. We hash the drizzle schema source and
- *      only re-run `drizzle-kit push` when the hash has drifted from what's
- *      stamped in the template DB. On a warm cache this step is a single
- *      cheap `SELECT` against an existing database.
+ *      `@workspace/db` schema applied. We hash the drizzle schema source plus
+ *      the generated `migrations/` directory and only re-run
+ *      `pnpm --filter @workspace/db migrate` when the hash has drifted from
+ *      what's stamped in the template DB. On a warm cache this step is a
+ *      single cheap `SELECT` against an existing database.
  *   3. Mint a brand-new Postgres database for THIS test run by cloning the
  *      template via `CREATE DATABASE ... TEMPLATE`. Cloning is essentially
  *      an `O(template-size)` file copy inside Postgres and on a tiny test
@@ -137,27 +138,31 @@ const dbPkgDir = (() => {
 })();
 
 /**
- * Hash everything that can change what `pnpm push-force` produces:
+ * Hash everything that can change what `pnpm --filter @workspace/db migrate`
+ * produces against an empty database:
  *   - every `.ts` file under the drizzle schema directory (recursively, so
  *     nested schema folders added later are still picked up),
  *   - the drizzle config (which points at them),
- *   - the prepare-push script that runs first.
+ *   - every file under the generated `migrations/` directory (the SQL
+ *     files plus their journal/snapshot metadata).
  *
  * Anything outside this set won't invalidate the cached template.
  */
-function collectSchemaFiles(dir: string, prefix: string): Array<{
-  label: string;
-  abs: string;
-}> {
+function collectFilesRecursive(
+  dir: string,
+  prefix: string,
+  filter: (name: string) => boolean,
+): Array<{ label: string; abs: string }> {
   const out: Array<{ label: string; abs: string }> = [];
+  if (!fs.existsSync(dir)) return out;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
     a.name.localeCompare(b.name),
   )) {
     const abs = path.join(dir, entry.name);
     const label = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
-      out.push(...collectSchemaFiles(abs, label));
-    } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+      out.push(...collectFilesRecursive(abs, label, filter));
+    } else if (entry.isFile() && filter(entry.name)) {
       out.push({ label, abs });
     }
   }
@@ -168,15 +173,18 @@ function computeSchemaHash(): string {
   const inputs: Array<{ label: string; abs: string }> = [];
 
   const schemaDir = path.join(dbPkgDir, "src/schema");
-  inputs.push(...collectSchemaFiles(schemaDir, "schema"));
+  inputs.push(
+    ...collectFilesRecursive(schemaDir, "schema", (n) => n.endsWith(".ts")),
+  );
   inputs.push({
     label: "drizzle.config.ts",
     abs: path.join(dbPkgDir, "drizzle.config.ts"),
   });
-  inputs.push({
-    label: "scripts/prepare-push.mjs",
-    abs: path.join(dbPkgDir, "scripts/prepare-push.mjs"),
-  });
+
+  const migrationsDir = path.join(dbPkgDir, "migrations");
+  inputs.push(
+    ...collectFilesRecursive(migrationsDir, "migrations", () => true),
+  );
 
   const hash = createHash("sha256");
   for (const { label, abs } of inputs) {
@@ -357,8 +365,8 @@ async function writeTemplateHash(hash: string): Promise<void> {
   }
 }
 
-function pushSchema(targetUrl: string): void {
-  execSync("pnpm push-force", {
+function applyMigrations(targetUrl: string): void {
+  execSync("pnpm migrate", {
     cwd: dbPkgDir,
     env: { ...process.env, DATABASE_URL: targetUrl },
     stdio: ["ignore", "inherit", "inherit"],
@@ -397,7 +405,7 @@ async function ensureTemplate(schemaHash: string): Promise<void> {
       }
 
       await admin.query(`CREATE DATABASE ${quoteIdent(templateDbName)}`);
-      pushSchema(buildUrl(templateDbName));
+      applyMigrations(buildUrl(templateDbName));
       await writeTemplateHash(schemaHash);
     } finally {
       await admin.query("SELECT pg_advisory_unlock($1)", [TEMPLATE_LOCK_ID]);

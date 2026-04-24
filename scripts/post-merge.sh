@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 pnpm install --frozen-lockfile
-pnpm --filter db push
+pnpm --filter db migrate
 
 # Backfill area_profiles.trained_at for any TRAINED rows that pre-date the
 # column. We use the timestamp of the 5th submission (TRAINING_THRESHOLD) as

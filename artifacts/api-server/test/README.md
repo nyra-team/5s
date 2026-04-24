@@ -32,10 +32,11 @@ pool the api-server uses.
 2. Makes sure a cached **template database** named
    `<basename>_test_template` exists with the current schema applied. We
    hash the drizzle schema source (everything under `lib/db/src/schema/`,
-   plus `drizzle.config.ts` and `scripts/prepare-push.mjs`) and compare it
-   against a stamp stored inside the template DB itself. The expensive
-   `pnpm --filter @workspace/db push-force` only runs when the stamp is
-   missing or stale; on a warm cache this step is a single `SELECT`.
+   plus `drizzle.config.ts` and the generated `lib/db/migrations/`
+   directory) and compare it against a stamp stored inside the template
+   DB itself. The expensive `pnpm --filter @workspace/db migrate` only
+   runs when the stamp is missing or stale; on a warm cache this step is
+   a single `SELECT`.
 3. Issues `CREATE DATABASE <basename>_test_<hex> TEMPLATE
    <basename>_test_template` to mint a fresh, private database for this
    run by cloning the template. Postgres clones a small schema in well

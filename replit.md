@@ -25,7 +25,7 @@ A full-stack web application for manufacturing environments to enforce 5S compli
 ### Technical Implementations
 - **Monorepo**: Uses pnpm workspaces.
 - **Backend**: Express 5 for API, authentication, and database interactions.
-- **Database**: PostgreSQL with Drizzle ORM.
+- **Database**: PostgreSQL with Drizzle ORM. Schema changes are tracked as versioned SQL migrations under `lib/db/migrations/` — run `pnpm --filter @workspace/db generate` after editing any schema file in `lib/db/src/schema/` to produce the next migration, and `pnpm --filter @workspace/db migrate` to apply pending migrations idempotently. The migrate runner stamps the baseline as already-applied on databases that pre-date the migrations workflow, so existing dev/prod databases come up to baseline without data loss. The `migrate` step is wired into `scripts/post-merge.sh` and the api-server test setup, so deploys and integration tests both apply pending migrations before running.
 - **Authentication**: JWT-based with email/password and bcryptjs for user roles (OPERATOR, MANAGER).
 - **Validation**: Zod for schema validation.
 - **API Codegen**: Orval generates API hooks and Zod schemas from an OpenAPI specification.
