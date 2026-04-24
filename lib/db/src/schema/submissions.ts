@@ -22,6 +22,7 @@ export const submissionsTable = pgTable("submissions", {
   aiPillarsJson: jsonb("ai_pillars_json"),
   aiRecommendationsJson: jsonb("ai_recommendations_json"),
   aiIssuesJson: jsonb("ai_issues_json"),
+  aiReasoningJson: jsonb("ai_reasoning_json"),
   modelVersion: text("model_version"),
   scoringMode: text("scoring_mode"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

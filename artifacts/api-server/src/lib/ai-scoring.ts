@@ -32,6 +32,14 @@ interface VLMPillarScores {
   sustain: number;
 }
 
+export interface VLMPillarReasoning {
+  sort: string;
+  set: string;
+  shine: string;
+  standardize: string;
+  sustain: string;
+}
+
 export interface VLMProfileExtract {
   items: string[];
   machines: string[];
@@ -44,6 +52,7 @@ export interface AIScoringResult {
   embeddingHash: string;
   aiTotalScore: number;
   aiPillarsJson: VLMPillarScores;
+  aiReasoningJson: VLMPillarReasoning | null;
   aiRecommendationsJson: VLMRecommendation[];
   aiIssuesJson: VLMIssue[];
   failingPillars: string[];
@@ -276,6 +285,7 @@ function emptyResult(reason: string): AIScoringResult {
     embeddingHash: "",
     aiTotalScore: 0,
     aiPillarsJson: { sort: 0, set: 0, shine: 0, standardize: 0, sustain: 0 },
+    aiReasoningJson: null,
     aiRecommendationsJson: [{ action: AI_UNAVAILABLE_FALLBACK_ACTION, why: reason, location: "general" }],
     aiIssuesJson: [{ issue: "AI scoring unavailable", evidence: reason, location: "general" }],
     failingPillars: [],
@@ -427,6 +437,19 @@ Do not include any prose outside the JSON object.`,
     sustain: clamp05(ps.sustain),
   };
 
+  // Per-pillar reasoning is required by validateVlmJson, so by the time we get
+  // here every key is a non-empty string. Trim and cap to a sane length so a
+  // verbose model response can't blow out the JSONB column or the operator UI.
+  const REASONING_MAX = 600;
+  const r = parsed.reasoning || {};
+  const reasoning: VLMPillarReasoning = {
+    sort: String(r.sort ?? "").trim().slice(0, REASONING_MAX),
+    set: String(r.set ?? "").trim().slice(0, REASONING_MAX),
+    shine: String(r.shine ?? "").trim().slice(0, REASONING_MAX),
+    standardize: String(r.standardize ?? "").trim().slice(0, REASONING_MAX),
+    sustain: String(r.sustain ?? "").trim().slice(0, REASONING_MAX),
+  };
+
   const issues: VLMIssue[] = Array.isArray(parsed.issues)
     ? parsed.issues.slice(0, 8).map((i: any) => ({
         issue: String(i.issue ?? ""),
@@ -466,6 +489,7 @@ Do not include any prose outside the JSON object.`,
     embeddingHash: "",
     aiTotalScore: total,
     aiPillarsJson: pillars,
+    aiReasoningJson: reasoning,
     aiRecommendationsJson: recs,
     aiIssuesJson: issues,
     failingPillars: failing,

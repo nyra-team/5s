@@ -54,6 +54,7 @@ const submissionSelect = {
   aiPillarsJson: submissionsTable.aiPillarsJson,
   aiRecommendationsJson: submissionsTable.aiRecommendationsJson,
   aiIssuesJson: submissionsTable.aiIssuesJson,
+  aiReasoningJson: submissionsTable.aiReasoningJson,
   scoringMode: submissionsTable.scoringMode,
   modelVersion: submissionsTable.modelVersion,
   embeddingHash: submissionsTable.embeddingHash,
@@ -304,6 +305,7 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
       aiPillarsJson: scoring.aiPillarsJson,
       aiRecommendationsJson: scoring.aiRecommendationsJson,
       aiIssuesJson: scoring.aiIssuesJson,
+      aiReasoningJson: scoring.aiReasoningJson,
       modelVersion: scoring.modelVersion,
       scoringMode: scoring.scoringMode,
     })
@@ -407,6 +409,7 @@ router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req
       aiPillarsJson: scoring.aiPillarsJson,
       aiRecommendationsJson: scoring.aiRecommendationsJson,
       aiIssuesJson: scoring.aiIssuesJson,
+      aiReasoningJson: scoring.aiReasoningJson,
       modelVersion: scoring.modelVersion,
       scoringMode: scoring.scoringMode,
     })

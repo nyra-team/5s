@@ -55,6 +55,7 @@ vi.mock("@/lib/capture-drafts", () => ({
   peekCaptureDraftMeta: vi.fn(async () => null),
   saveCaptureDraft: vi.fn(async () => undefined),
   deleteCaptureDraft: vi.fn(async () => undefined),
+  peekCaptureDraftMeta: vi.fn(async () => null),
   purgeStaleCaptureDrafts: vi.fn(async () => undefined),
   peekCaptureDraftMeta: vi.fn(async () => null),
 }));

@@ -199,6 +199,17 @@ export type SubmissionAiPillarsJson = {
   sustain?: number;
 } | null;
 
+/**
+ * Per-pillar reasoning text from the AI explaining why each pillar received its score.
+ */
+export type SubmissionAiReasoningJson = {
+  sort?: string;
+  set?: string;
+  shine?: string;
+  standardize?: string;
+  sustain?: string;
+} | null;
+
 export type AIRecommendationSeverity =
   | (typeof AIRecommendationSeverity)[keyof typeof AIRecommendationSeverity]
   | null;
@@ -255,6 +266,8 @@ export interface Submission {
   aiPillarsJson?: SubmissionAiPillarsJson;
   aiRecommendationsJson?: AIRecommendation[] | null;
   aiIssuesJson?: AIIssue[] | null;
+  /** Per-pillar reasoning text from the AI explaining why each pillar received its score. */
+  aiReasoningJson?: SubmissionAiReasoningJson;
   scoringMode?: string | null;
   modelVersion?: string | null;
   embeddingHash?: string | null;

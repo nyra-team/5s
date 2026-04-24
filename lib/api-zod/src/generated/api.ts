@@ -249,6 +249,18 @@ export const ListSubmissionsResponseItem = zod.object({
       }),
     )
     .nullish(),
+  aiReasoningJson: zod
+    .object({
+      sort: zod.string().optional(),
+      set: zod.string().optional(),
+      shine: zod.string().optional(),
+      standardize: zod.string().optional(),
+      sustain: zod.string().optional(),
+    })
+    .nullish()
+    .describe(
+      "Per-pillar reasoning text from the AI explaining why each pillar received its score.",
+    ),
   scoringMode: zod.string().nullish(),
   modelVersion: zod.string().nullish(),
   embeddingHash: zod.string().nullish(),
@@ -343,6 +355,18 @@ export const GetSubmissionResponse = zod.object({
       }),
     )
     .nullish(),
+  aiReasoningJson: zod
+    .object({
+      sort: zod.string().optional(),
+      set: zod.string().optional(),
+      shine: zod.string().optional(),
+      standardize: zod.string().optional(),
+      sustain: zod.string().optional(),
+    })
+    .nullish()
+    .describe(
+      "Per-pillar reasoning text from the AI explaining why each pillar received its score.",
+    ),
   scoringMode: zod.string().nullish(),
   modelVersion: zod.string().nullish(),
   embeddingHash: zod.string().nullish(),
@@ -423,6 +447,18 @@ export const ReuploadSubmissionResponse = zod.object({
       }),
     )
     .nullish(),
+  aiReasoningJson: zod
+    .object({
+      sort: zod.string().optional(),
+      set: zod.string().optional(),
+      shine: zod.string().optional(),
+      standardize: zod.string().optional(),
+      sustain: zod.string().optional(),
+    })
+    .nullish()
+    .describe(
+      "Per-pillar reasoning text from the AI explaining why each pillar received its score.",
+    ),
   scoringMode: zod.string().nullish(),
   modelVersion: zod.string().nullish(),
   embeddingHash: zod.string().nullish(),
@@ -596,6 +632,18 @@ export const GetOperatorStatusResponseItem = zod.object({
           }),
         )
         .nullish(),
+      aiReasoningJson: zod
+        .object({
+          sort: zod.string().optional(),
+          set: zod.string().optional(),
+          shine: zod.string().optional(),
+          standardize: zod.string().optional(),
+          sustain: zod.string().optional(),
+        })
+        .nullish()
+        .describe(
+          "Per-pillar reasoning text from the AI explaining why each pillar received its score.",
+        ),
       scoringMode: zod.string().nullish(),
       modelVersion: zod.string().nullish(),
       embeddingHash: zod.string().nullish(),

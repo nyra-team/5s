@@ -809,6 +809,38 @@ function RecentDetailDialog({
                 {Math.round(data.scoreTotal * 4)}%
               </span>
             </div>
+            {data.scoreJson && (
+              <div className="space-y-2">
+                <p className="eyebrow flex items-center gap-1.5">
+                  <Sparkles className="w-3 h-3" /> Why each pillar got the score it did
+                </p>
+                <ul className="space-y-2" data-testid="recent-pillar-reasoning">
+                  {Object.entries(data.scoreJson as Record<string, number>).map(([key, value]) => {
+                    const reason = (data.aiReasoningJson as Record<string, string> | null | undefined)?.[key];
+                    return (
+                      <li key={key} className="bg-secondary/60 p-3 rounded-xl">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="capitalize text-[12.5px] font-semibold text-foreground/80">{key}</span>
+                          <span className="text-[12.5px] font-semibold tabular-nums">{value}/5</span>
+                        </div>
+                        {reason ? (
+                          <p
+                            className="text-[12.5px] leading-snug text-muted-foreground mt-1"
+                            data-testid={`recent-pillar-reasoning-${key}`}
+                          >
+                            {reason}
+                          </p>
+                        ) : (
+                          <p className="text-[12px] italic text-muted-foreground/70 mt-1">
+                            No reasoning recorded.
+                          </p>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
             {data.suggestionsJson && data.suggestionsJson.length > 0 && (
               <div className="space-y-1.5">
                 <p className="eyebrow flex items-center gap-1.5">

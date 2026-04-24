@@ -1079,6 +1079,16 @@ components:
           nullable: true
           items:
             $ref: "#/components/schemas/AIIssue"
+        aiReasoningJson:
+          type: object
+          nullable: true
+          description: Per-pillar reasoning text from the AI explaining why each pillar received its score.
+          properties:
+            sort: { type: string }
+            set: { type: string }
+            shine: { type: string }
+            standardize: { type: string }
+            sustain: { type: string }
         scoringMode:
           type: string
           nullable: true

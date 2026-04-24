@@ -8,6 +8,7 @@
 import type { AIIssueType } from "./aIIssueType";
 import type { AIRecommendationType } from "./aIRecommendationType";
 import type { SubmissionTypeAiPillarsJson } from "./submissionTypeAiPillarsJson";
+import type { SubmissionTypeAiReasoningJson } from "./submissionTypeAiReasoningJson";
 import type { SubmissionTypeMediaType } from "./submissionTypeMediaType";
 import type { SubmissionTypeScoreJson } from "./submissionTypeScoreJson";
 import type { SubmissionTypeShift } from "./submissionTypeShift";
@@ -31,6 +32,8 @@ export interface SubmissionType {
   aiPillarsJson?: SubmissionTypeAiPillarsJson;
   aiRecommendationsJson?: AIRecommendationType[] | null;
   aiIssuesJson?: AIIssueType[] | null;
+  /** Per-pillar reasoning text from the AI explaining why each pillar received its score. */
+  aiReasoningJson?: SubmissionTypeAiReasoningJson;
   scoringMode?: string | null;
   modelVersion?: string | null;
   embeddingHash?: string | null;

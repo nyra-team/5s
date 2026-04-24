@@ -75,6 +75,7 @@ export * from "./reuploadSubmissionTypeShift";
 export * from "./scoreSummaryType";
 export * from "./submissionType";
 export * from "./submissionTypeAiPillarsJson";
+export * from "./submissionTypeAiReasoningJson";
 export * from "./submissionTypeMediaType";
 export * from "./submissionTypeScoreJson";
 export * from "./submissionTypeShift";

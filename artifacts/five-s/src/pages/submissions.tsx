@@ -77,18 +77,28 @@ function MediaTypeBadge({ type }: { type: string | undefined }) {
   );
 }
 
-function PillarBar({ label, value, max = 5 }: { label: string; value: number; max?: number }) {
+function PillarBar({ label, value, max = 5, reasoning }: { label: string; value: number; max?: number; reasoning?: string }) {
   const pct = (value / max) * 100;
   const color = pct >= 80 ? "bg-emerald-500" : pct >= 60 ? "bg-amber-500" : "bg-rose-500";
   return (
-    <div className="flex justify-between items-center">
-      <span className="capitalize font-medium text-foreground/80 text-[13px]">{label}</span>
-      <div className="flex items-center gap-3">
-        <div className="w-28 h-1.5 bg-secondary rounded-full overflow-hidden">
-          <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+    <div className="space-y-1">
+      <div className="flex justify-between items-center">
+        <span className="capitalize font-medium text-foreground/80 text-[13px]">{label}</span>
+        <div className="flex items-center gap-3">
+          <div className="w-28 h-1.5 bg-secondary rounded-full overflow-hidden">
+            <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+          </div>
+          <span className="font-semibold w-8 text-right text-[13px] tabular-nums">{value}/{max}</span>
         </div>
-        <span className="font-semibold w-8 text-right text-[13px] tabular-nums">{value}/{max}</span>
       </div>
+      {reasoning && (
+        <p
+          className="text-[12px] leading-snug text-muted-foreground pl-0.5"
+          data-testid={`pillar-reasoning-${label}`}
+        >
+          {reasoning}
+        </p>
+      )}
     </div>
   );
 }
@@ -211,9 +221,19 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
 
           <section>
             <p className="eyebrow mb-3">Score breakdown</p>
-            <div className="space-y-2.5">
+            {sub.aiReasoningJson && (
+              <p className="text-[12px] text-muted-foreground mb-3 inline-flex items-center gap-1.5">
+                <Brain className="w-3 h-3 text-primary" /> Why each pillar got the score it did
+              </p>
+            )}
+            <div className="space-y-3.5">
               {Object.entries(sub.scoreJson || {}).map(([key, value]) => (
-                <PillarBar key={key} label={key} value={value as number} />
+                <PillarBar
+                  key={key}
+                  label={key}
+                  value={value as number}
+                  reasoning={(sub.aiReasoningJson as Record<string, string> | null | undefined)?.[key]}
+                />
               ))}
             </div>
           </section>
