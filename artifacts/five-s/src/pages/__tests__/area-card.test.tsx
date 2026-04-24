@@ -80,7 +80,7 @@ vi.mock("@/lib/capture-drafts", () => ({
 }));
 
 import { AreaCard } from "@/pages/operator";
-import type { AreaStatus, Nudge } from "@workspace/api-client-react";
+import type { AreaStatus, Nudge, Submission } from "@workspace/api-client-react";
 
 function withQueryClient(node: ReactNode) {
   const client = new QueryClient({
@@ -196,6 +196,132 @@ describe("operator <AreaCard> manager-nudge surfaces", () => {
     // Year is part of the absolute format — guards against a future swap to a
     // relative-only string that would re-introduce the staleness bug.
     expect(title).toMatch(/\d{4}/);
+  });
+
+  test("renders 'Observed issues' on the submitted card with severity tags from aiIssuesJson", () => {
+    // The completed AreaCard should now surface the AI's flagged issues (the
+    // *why*) underneath the existing "Action items" section (the *fix*), so
+    // operators see "leak observed near pump base" alongside "replace gasket".
+    // We trust the AI-attached severity when present; older payloads without
+    // it fall back to keyword inference (covered by the second issue below
+    // which has severity=null but text that triggers the high-severity
+    // heuristic).
+    const submitted: AreaStatus = {
+      ...baseStatus,
+      submitted: true,
+      submission: {
+        id: 7,
+        areaId: baseStatus.areaId,
+        areaName: baseStatus.areaName,
+        userId: 99,
+        shift: "A",
+        scoreTotal: 18,
+        scoreJson: { sort: 4, set: 4, shine: 3, standardize: 4, sustain: 3 },
+        suggestionsJson: ["Replace gasket on pump", "Re-label storage bins"],
+        imageUrl: "/uploads/foo.jpg",
+        mediaType: "image",
+        aiIssuesJson: [
+          {
+            issue: "Leak observed near pump base",
+            evidence: "Visible fluid pooling on the floor under the pump.",
+            location: "Pump bay",
+            pillar: "shine",
+            principle: "Cleanliness",
+            severity: "high",
+          },
+          {
+            // Severity omitted on purpose so the keyword-inference fallback
+            // takes over (the word "broken" triggers the medium pattern).
+            issue: "Storage bin label broken",
+            evidence: "Bin tag is illegible.",
+            location: "Aisle 2",
+          },
+        ],
+        createdAt: new Date().toISOString(),
+      } as Submission,
+    };
+
+    render(
+      withQueryClient(
+        <AreaCard
+          status={submitted}
+          selectedShift="A"
+          assignedAreas={[submitted]}
+          dueState="ok"
+          dueInfo={undefined}
+          recentForSubmission={undefined}
+          lastGood={null}
+          activeNudges={[]}
+          encouragementMinPercent={80}
+        />,
+      ),
+    );
+
+    // The section header is present and the issues block has the area-scoped
+    // testid we render on the wrapper div.
+    expect(
+      screen.getByTestId(`area-observed-issues-${baseStatus.areaId}`),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Observed issues")).toBeInTheDocument();
+
+    // Each issue text and its evidence renders.
+    expect(screen.getByText(/Leak observed near pump base/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Visible fluid pooling on the floor under the pump\./),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Storage bin label broken/)).toBeInTheDocument();
+
+    // Severity styling: the first row trusts the AI ("high"), the second
+    // falls back to inference (the keyword "broken" → "medium").
+    const firstRow = screen.getByTestId("issue-row-0");
+    expect(firstRow.getAttribute("data-severity")).toBe("high");
+    expect(firstRow.getAttribute("data-severity-source")).toBe("ai");
+    const secondRow = screen.getByTestId("issue-row-1");
+    expect(secondRow.getAttribute("data-severity")).toBe("medium");
+    expect(secondRow.getAttribute("data-severity-source")).toBe("inferred");
+  });
+
+  test("hides the 'Observed issues' section when aiIssuesJson is absent (older submissions)", () => {
+    const submitted: AreaStatus = {
+      ...baseStatus,
+      submitted: true,
+      submission: {
+        id: 8,
+        areaId: baseStatus.areaId,
+        areaName: baseStatus.areaName,
+        userId: 99,
+        shift: "A",
+        scoreTotal: 20,
+        scoreJson: { sort: 4, set: 4, shine: 4, standardize: 4, sustain: 4 },
+        suggestionsJson: ["Keep up the good work"],
+        imageUrl: "/uploads/foo.jpg",
+        mediaType: "image",
+        // aiIssuesJson intentionally omitted to simulate an older submission.
+        createdAt: new Date().toISOString(),
+      } as Submission,
+    };
+
+    render(
+      withQueryClient(
+        <AreaCard
+          status={submitted}
+          selectedShift="A"
+          assignedAreas={[submitted]}
+          dueState="ok"
+          dueInfo={undefined}
+          recentForSubmission={undefined}
+          lastGood={null}
+          activeNudges={[]}
+          encouragementMinPercent={80}
+        />,
+      ),
+    );
+
+    // No empty placeholder — the whole block disappears.
+    expect(
+      screen.queryByTestId(`area-observed-issues-${baseStatus.areaId}`),
+    ).toBeNull();
+    expect(screen.queryByText("Observed issues")).toBeNull();
   });
 
   test("shows a count badge on the pill when multiple nudges are open for the area", () => {

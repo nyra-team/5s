@@ -22,6 +22,7 @@ import {
   Nudge,
   AreaProfile,
   Submission,
+  AIIssue,
   getGetCurrentShiftQueryKey,
   getGetOperatorStatusQueryKey,
   getGetNextChecksQueryKey,
@@ -273,6 +274,68 @@ export function SuggestionRow({
         aria-label={`Severity: ${style.label}`}
         title={
           aiSeverity
+            ? `AI severity: ${style.label}`
+            : `Inferred severity: ${style.label}`
+        }
+      >
+        {style.label}
+      </span>
+    </li>
+  );
+}
+
+/**
+ * Render a single AI-flagged issue with the same severity colouring used by
+ * `SuggestionRow`. Issues explain *why* an item failed (e.g. "Leak observed
+ * near pump base") whereas suggestions describe the fix ("Replace gasket").
+ * We trust the AI-attached severity when present and fall back to keyword
+ * inference over `issue + evidence` for older payloads that pre-date the
+ * severity field.
+ */
+export function IssueRow({
+  issue,
+  index,
+}: {
+  issue: AIIssue;
+  index: number;
+}) {
+  const aiSev = normalizeAiSeverity(issue.severity ?? null);
+  const sev: SuggestionSeverity =
+    aiSev ?? inferSuggestionSeverity(`${issue.issue} ${issue.evidence ?? ""}`);
+  const style = severityStyles(sev);
+  const sourceAttr = aiSev ? "ai" : "inferred";
+  const meta: string[] = [];
+  if (issue.location) meta.push(issue.location);
+  if (issue.principle) meta.push(issue.principle);
+  return (
+    <li
+      className={`text-[13.5px] flex gap-2 items-start bg-secondary/60 p-3 pl-2.5 rounded-xl ${style.rail}`}
+      data-testid={`issue-row-${index}`}
+      data-severity={sev}
+      data-severity-source={sourceAttr}
+    >
+      <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${style.iconColor}`} aria-hidden="true" />
+      <div className="flex-1 min-w-0 space-y-1">
+        <p className="leading-snug text-foreground/90">{issue.issue}</p>
+        {issue.evidence && (
+          <p className="text-[12.5px] leading-snug text-muted-foreground">{issue.evidence}</p>
+        )}
+        {(meta.length > 0 || issue.pillar) && (
+          <div className="flex items-center gap-1.5 flex-wrap text-[11.5px] text-muted-foreground/80">
+            {meta.length > 0 && <span>{meta.join(" · ")}</span>}
+            {issue.pillar && (
+              <span className="capitalize px-1.5 py-0.5 rounded-md bg-background/60 font-medium text-foreground/70">
+                {issue.pillar}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+      <span
+        className={`shrink-0 px-1.5 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wide ${style.pillBg} ${style.pillText}`}
+        aria-label={`Severity: ${style.label}`}
+        title={
+          aiSev
             ? `AI severity: ${style.label}`
             : `Inferred severity: ${style.label}`
         }
@@ -982,6 +1045,22 @@ function RecentDetailDialog({
                 </ul>
               </div>
             )}
+            {/* "Observed issues" sits underneath "Action items" so the operator
+                sees what the AI flagged (e.g. "leak observed near pump base")
+                alongside the recommended fix. Hidden entirely for older
+                submissions whose payload predates aiIssuesJson. */}
+            {data.aiIssuesJson && data.aiIssuesJson.length > 0 && (
+              <div className="space-y-1.5" data-testid="recent-observed-issues">
+                <p className="eyebrow flex items-center gap-1.5">
+                  <AlertTriangle className="w-3 h-3" /> Observed issues
+                </p>
+                <ul className="space-y-2">
+                  {data.aiIssuesJson.map((issue, i) => (
+                    <IssueRow key={i} issue={issue} index={i} />
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
       </DialogContent>
@@ -1472,30 +1551,48 @@ export function AreaCard({
               </motion.span>
             )}
           </div>
-          <div className="px-5 pb-5 flex-1">
-            <p className="eyebrow flex items-center gap-1.5 mb-3">
-              <Info className="w-3 h-3" /> Action items
-            </p>
-            <ul className="space-y-2">
-              {sub.suggestionsJson?.map((s, i) => (
-                <SuggestionRow
-                  key={i}
-                  text={s}
-                  index={i}
-                  // Same indices as aiRecommendationsJson; falls back to
-                  // keyword inference for older submissions without the
-                  // recommendations payload.
-                  aiSeverity={normalizeAiSeverity(
-                    sub.aiRecommendationsJson?.[i]?.severity ?? null,
-                  )}
-                />
-              ))}
-              {(!sub.suggestionsJson || sub.suggestionsJson.length === 0) && (
-                <li className="text-[13.5px] text-muted-foreground italic bg-secondary/60 p-3 rounded-xl">
-                  No immediate action required.
-                </li>
-              )}
-            </ul>
+          <div className="px-5 pb-5 flex-1 space-y-4">
+            <div>
+              <p className="eyebrow flex items-center gap-1.5 mb-3">
+                <Info className="w-3 h-3" /> Action items
+              </p>
+              <ul className="space-y-2">
+                {sub.suggestionsJson?.map((s, i) => (
+                  <SuggestionRow
+                    key={i}
+                    text={s}
+                    index={i}
+                    // Same indices as aiRecommendationsJson; falls back to
+                    // keyword inference for older submissions without the
+                    // recommendations payload.
+                    aiSeverity={normalizeAiSeverity(
+                      sub.aiRecommendationsJson?.[i]?.severity ?? null,
+                    )}
+                  />
+                ))}
+                {(!sub.suggestionsJson || sub.suggestionsJson.length === 0) && (
+                  <li className="text-[13.5px] text-muted-foreground italic bg-secondary/60 p-3 rounded-xl">
+                    No immediate action required.
+                  </li>
+                )}
+              </ul>
+            </div>
+            {/* Observed issues — what the AI flagged as wrong, with severity.
+                Sits underneath "Action items" so the operator sees the *why*
+                behind each recommendation. Hidden entirely for older
+                submissions whose payload predates aiIssuesJson. */}
+            {sub.aiIssuesJson && sub.aiIssuesJson.length > 0 && (
+              <div data-testid={`area-observed-issues-${status.areaId}`}>
+                <p className="eyebrow flex items-center gap-1.5 mb-3">
+                  <AlertTriangle className="w-3 h-3" /> Observed issues
+                </p>
+                <ul className="space-y-2">
+                  {sub.aiIssuesJson.map((issue, i) => (
+                    <IssueRow key={i} issue={issue} index={i} />
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
           <div className="p-4 border-t border-border/70">
             <Button
