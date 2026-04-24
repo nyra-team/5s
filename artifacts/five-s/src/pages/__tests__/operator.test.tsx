@@ -55,6 +55,12 @@ const mockState = {
   nudges: [] as unknown[],
   nudgesByArea: [] as unknown[],
   submission: undefined as unknown,
+  // useGetOperatorThresholds() drives the resolved thresholds hook. Default
+  // is `undefined` so the hook falls back to the static defaults — matching
+  // the rest of the suite, which was written against the constants. Tests
+  // that need per-area "due soon" overrides set this to a partial payload
+  // (e.g. `{ areaOverrides: [{ areaId: 2, dueSoonThresholdMinutes: 30, ... }] }`).
+  operatorThresholds: undefined as unknown,
   // Default to the legacy IST 6/14/22 hours so existing tests that assert
   // "6 AM – 2 PM" labels keep passing without explicit setup. Individual
   // tests override this to verify the operator pills follow whatever
@@ -93,7 +99,10 @@ vi.mock("@workspace/api-client-react", () => {
     // useEffectiveOperatorThresholds() reads this. Returning `undefined` data
     // exercises the fallback-to-defaults path, which is the safest default
     // for the existing tests (they were written against the constants).
-    useGetOperatorThresholds: () => ({ data: undefined, isLoading: false }),
+    useGetOperatorThresholds: () => ({
+      data: mockState.operatorThresholds,
+      isLoading: false,
+    }),
     getGetOperatorThresholdsQueryKey: () => ["operator-thresholds"],
     // useShiftConfig() drives the shift pill labels (e.g. "6 AM – 2 PM").
     // Tests can override `mockState.shiftConfig` to assert that a non-IST
@@ -271,6 +280,7 @@ beforeEach(() => {
   mockState.profile = undefined;
   mockState.nudges = [];
   mockState.submission = undefined;
+  mockState.operatorThresholds = undefined;
   mockState.shiftConfig = {
     timeZone: "Asia/Kolkata",
     startHours: { A: 6, B: 14, C: 22 },
@@ -362,6 +372,120 @@ describe("OperatorHome — area sort order", () => {
     expect(screen.getByTestId("pill-duesoon-2")).toBeInTheDocument();
     expect(screen.queryByTestId("pill-overdue-1")).not.toBeInTheDocument();
     expect(screen.queryByTestId("pill-duesoon-1")).not.toBeInTheDocument();
+  });
+
+  it("uses each area's per-area dueSoon override when flagging 'due soon'", () => {
+    // Two areas, both due in 90 minutes. Area 1 keeps the global 60-minute
+    // lead → not flagged. Area 2 has a 120-minute per-area override →
+    // should flag as "due soon" and sort ahead of area 1.
+    mockState.statuses = [
+      makeStatus({ areaId: 1, areaName: "AA Global Lead" }),
+      makeStatus({ areaId: 2, areaName: "BB Tight Lead" }),
+    ];
+    const ninetyMinFromNow = new Date(Date.now() + 90 * 60 * 1000).toISOString();
+    mockState.nextChecks = [
+      makeNextCheck({ areaId: 1, nextDueAt: ninetyMinFromNow }),
+      makeNextCheck({ areaId: 2, nextDueAt: ninetyMinFromNow }),
+    ];
+    mockState.operatorThresholds = {
+      encouragementMinPercent: 80,
+      priorBestWindowDays: 7,
+      dueSoonThresholdMinutes: 60,
+      defaults: {
+        encouragementMinPercent: 80,
+        priorBestWindowDays: 7,
+        dueSoonThresholdMinutes: 60,
+      },
+      envOverrides: {
+        encouragementMinPercent: null,
+        priorBestWindowDays: null,
+        dueSoonThresholdMinutes: null,
+      },
+      dbOverrides: {
+        encouragementMinPercent: null,
+        priorBestWindowDays: null,
+        dueSoonThresholdMinutes: null,
+      },
+      updatedAt: null,
+      updatedByUserId: null,
+      updatedByUserEmail: null,
+      auditHistory: [],
+      areaOverrides: [
+        {
+          areaId: 2,
+          areaName: "BB Tight Lead",
+          encouragementMinPercent: null,
+          priorBestWindowDays: null,
+          dueSoonThresholdMinutes: 120,
+          updatedAt: null,
+          updatedByUserId: null,
+        },
+      ],
+    };
+
+    renderOperator();
+
+    // Area 2's tighter lead should flag it; area 1 stays out of the
+    // due-soon bucket.
+    expect(screen.getByTestId("pill-duesoon-2")).toBeInTheDocument();
+    expect(screen.queryByTestId("pill-duesoon-1")).not.toBeInTheDocument();
+
+    // Sort order: due-soon (area 2) should come before the still-OK area 1.
+    const headings = screen.getAllByRole("heading", { level: 3 });
+    const headingTexts = headings.map((h) => h.textContent?.trim());
+    expect(headingTexts).toEqual(["BB Tight Lead", "AA Global Lead"]);
+  });
+
+  it("falls back to the global dueSoon lead when the area has no override", () => {
+    // One area, due in 30 minutes, with a per-area override only on a
+    // *different* area. The global 60-minute lead should still flag this
+    // area as "due soon".
+    mockState.statuses = [makeStatus({ areaId: 5, areaName: "Bay 5" })];
+    mockState.nextChecks = [
+      makeNextCheck({
+        areaId: 5,
+        nextDueAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      }),
+    ];
+    mockState.operatorThresholds = {
+      encouragementMinPercent: 80,
+      priorBestWindowDays: 7,
+      dueSoonThresholdMinutes: 60,
+      defaults: {
+        encouragementMinPercent: 80,
+        priorBestWindowDays: 7,
+        dueSoonThresholdMinutes: 60,
+      },
+      envOverrides: {
+        encouragementMinPercent: null,
+        priorBestWindowDays: null,
+        dueSoonThresholdMinutes: null,
+      },
+      dbOverrides: {
+        encouragementMinPercent: null,
+        priorBestWindowDays: null,
+        dueSoonThresholdMinutes: null,
+      },
+      updatedAt: null,
+      updatedByUserId: null,
+      updatedByUserEmail: null,
+      auditHistory: [],
+      areaOverrides: [
+        {
+          areaId: 99,
+          areaName: "Other",
+          encouragementMinPercent: null,
+          priorBestWindowDays: null,
+          dueSoonThresholdMinutes: 5,
+          updatedAt: null,
+          updatedByUserId: null,
+        },
+      ],
+    };
+
+    renderOperator();
+
+    expect(screen.getByTestId("pill-duesoon-5")).toBeInTheDocument();
   });
 });
 

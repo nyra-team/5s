@@ -526,7 +526,14 @@ export default function OperatorHome() {
     const now = Date.now();
     const priority = (s: AreaStatus): number => {
       if (s.submitted) return 4;
-      const due = dueStateFor(areaDueMap.get(s.areaId), now, thresholds.dueSoonThresholdMs);
+      // Honour per-area "due soon" overrides — managers can tighten the lead
+      // for a fast-cycling line via the /operator-thresholds admin screen and
+      // we want that area to flag earlier than the rest of the plant.
+      const due = dueStateFor(
+        areaDueMap.get(s.areaId),
+        now,
+        thresholds.dueSoonThresholdMsForArea(s.areaId),
+      );
       if (due === "overdue") return 0;
       if (due === "due-soon") return 1;
       return 2;
@@ -539,7 +546,13 @@ export default function OperatorHome() {
     });
     // tick keeps sorting fresh as time passes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statuses, areaDueMap, tick, thresholds.dueSoonThresholdMs]);
+  }, [
+    statuses,
+    areaDueMap,
+    tick,
+    thresholds.dueSoonThresholdMs,
+    thresholds.dueSoonThresholdMsByAreaId,
+  ]);
 
   // Map submission.id -> RecentSubmission so AreaCard can read prior-week best
   // for the encouragement chip without a second fetch.
@@ -664,7 +677,11 @@ export default function OperatorHome() {
                   status={status}
                   selectedShift={activeShift}
                   assignedAreas={statuses ?? []}
-                  dueState={dueStateFor(areaDueMap.get(status.areaId), Date.now(), thresholds.dueSoonThresholdMs)}
+                  dueState={dueStateFor(
+                    areaDueMap.get(status.areaId),
+                    Date.now(),
+                    thresholds.dueSoonThresholdMsForArea(status.areaId),
+                  )}
                   dueInfo={areaDueMap.get(status.areaId)}
                   recentForSubmission={
                     status.submitted && status.submission
