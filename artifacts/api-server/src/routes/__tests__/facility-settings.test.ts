@@ -23,6 +23,8 @@ const SHIFT_ENV_KEYS = [
   "SHIFT_A_START_HOUR",
   "SHIFT_B_START_HOUR",
   "SHIFT_C_START_HOUR",
+  "ESCALATION_REPING_THRESHOLD_MINUTES",
+  "ESCALATION_REPING_MAX_COUNT",
 ] as const;
 
 let managerId: number;
@@ -102,19 +104,28 @@ describe("GET /facility-settings", () => {
       shiftAStartHour: 6,
       shiftBStartHour: 14,
       shiftCStartHour: 22,
+      repingThresholdMinutes: 15,
+      repingMaxRepings: 2,
     });
     expect(res.body.envOverrides).toEqual({
       timeZone: null,
       shiftAStartHour: null,
       shiftBStartHour: null,
       shiftCStartHour: null,
+      repingThresholdMinutes: null,
+      repingMaxRepings: null,
     });
     expect(res.body.dbOverrides).toEqual({
       timeZone: null,
       shiftAStartHour: null,
       shiftBStartHour: null,
       shiftCStartHour: null,
+      repingThresholdMinutes: null,
+      repingMaxRepings: null,
     });
+    // Effective cadence falls through to the shipped defaults too.
+    expect(res.body.repingThresholdMinutes).toBe(15);
+    expect(res.body.repingMaxRepings).toBe(2);
     expect(res.body.updatedAt).toBeNull();
     expect(res.body.updatedByUserId).toBeNull();
   });
@@ -131,6 +142,8 @@ describe("GET /facility-settings", () => {
     process.env.SHIFT_A_START_HOUR = "5";
     process.env.SHIFT_B_START_HOUR = "13";
     process.env.SHIFT_C_START_HOUR = "21";
+    process.env.ESCALATION_REPING_THRESHOLD_MINUTES = "20";
+    process.env.ESCALATION_REPING_MAX_COUNT = "4";
 
     const res = await request(app).get("/api/facility-settings");
     expect(res.status).toBe(200);
@@ -139,11 +152,15 @@ describe("GET /facility-settings", () => {
       shiftAStartHour: 5,
       shiftBStartHour: 13,
       shiftCStartHour: 21,
+      repingThresholdMinutes: 20,
+      repingMaxRepings: 4,
     });
     expect(res.body.timeZone).toBe("America/New_York");
     expect(res.body.shiftAStartHour).toBe(5);
     expect(res.body.shiftBStartHour).toBe(13);
     expect(res.body.shiftCStartHour).toBe(21);
+    expect(res.body.repingThresholdMinutes).toBe(20);
+    expect(res.body.repingMaxRepings).toBe(4);
   });
 
   it("env wins over a DB override for the same field", async () => {
@@ -203,6 +220,8 @@ describe("PUT /facility-settings", () => {
       shiftAStartHour: 7,
       shiftBStartHour: 15,
       shiftCStartHour: 23,
+      repingThresholdMinutes: null,
+      repingMaxRepings: null,
     });
     expect(put.body.updatedByUserId).toBe(managerId);
     expect(put.body.updatedAt).not.toBeNull();
@@ -294,6 +313,8 @@ describe("PUT /facility-settings", () => {
       shiftAStartHour: null,
       shiftBStartHour: null,
       shiftCStartHour: null,
+      repingThresholdMinutes: null,
+      repingMaxRepings: null,
     });
   });
 
@@ -309,6 +330,115 @@ describe("PUT /facility-settings", () => {
     const get = await request(app).get("/api/facility-settings");
     expect(get.body.dbOverrides.shiftAStartHour).toBeNull();
     expect(get.body.dbOverrides.shiftBStartHour).toBeNull();
+  });
+
+  it("persists re-ping cadence overrides and reflects them on GET", async () => {
+    const put = await request(app)
+      .put("/api/facility-settings")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ repingThresholdMinutes: 7, repingMaxRepings: 5 });
+    expect(put.status).toBe(200);
+    expect(put.body.dbOverrides.repingThresholdMinutes).toBe(7);
+    expect(put.body.dbOverrides.repingMaxRepings).toBe(5);
+    // Effective values reflect the override (no env pinned in this test).
+    expect(put.body.repingThresholdMinutes).toBe(7);
+    expect(put.body.repingMaxRepings).toBe(5);
+
+    const get = await request(app).get("/api/facility-settings");
+    expect(get.body.dbOverrides.repingThresholdMinutes).toBe(7);
+    expect(get.body.dbOverrides.repingMaxRepings).toBe(5);
+    expect(get.body.repingThresholdMinutes).toBe(7);
+    expect(get.body.repingMaxRepings).toBe(5);
+  });
+
+  it("treats null as 'clear that cadence override' (falls back to default)", async () => {
+    await request(app)
+      .put("/api/facility-settings")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ repingThresholdMinutes: 7, repingMaxRepings: 5 });
+
+    const cleared = await request(app)
+      .put("/api/facility-settings")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ repingThresholdMinutes: null, repingMaxRepings: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.dbOverrides.repingThresholdMinutes).toBeNull();
+    expect(cleared.body.dbOverrides.repingMaxRepings).toBeNull();
+    // Falls back to the shipped defaults.
+    expect(cleared.body.repingThresholdMinutes).toBe(15);
+    expect(cleared.body.repingMaxRepings).toBe(2);
+  });
+
+  it("accepts cadence cap of 0 (disables re-pings) — 0 is a valid value, not nullish", async () => {
+    const res = await request(app)
+      .put("/api/facility-settings")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ repingMaxRepings: 0 });
+    expect(res.status).toBe(200);
+    expect(res.body.dbOverrides.repingMaxRepings).toBe(0);
+    // Effective is 0, not the default 2 — `??` chain must distinguish 0
+    // from null.
+    expect(res.body.repingMaxRepings).toBe(0);
+  });
+
+  it("rejects out-of-range cadence values with 400 and does not write the row", async () => {
+    // Threshold range is 1..1440 minutes; cap is 0..20.
+    const tooBigThreshold = await request(app)
+      .put("/api/facility-settings")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ repingThresholdMinutes: 9999 });
+    expect(tooBigThreshold.status).toBe(400);
+    expect(tooBigThreshold.body.fields?.repingThresholdMinutes).toBeTruthy();
+
+    const zeroThreshold = await request(app)
+      .put("/api/facility-settings")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ repingThresholdMinutes: 0 });
+    expect(zeroThreshold.status).toBe(400);
+    expect(zeroThreshold.body.fields?.repingThresholdMinutes).toBeTruthy();
+
+    const negativeCap = await request(app)
+      .put("/api/facility-settings")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ repingMaxRepings: -1 });
+    expect(negativeCap.status).toBe(400);
+    expect(negativeCap.body.fields?.repingMaxRepings).toBeTruthy();
+
+    const tooBigCap = await request(app)
+      .put("/api/facility-settings")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ repingMaxRepings: 50 });
+    expect(tooBigCap.status).toBe(400);
+    expect(tooBigCap.body.fields?.repingMaxRepings).toBeTruthy();
+
+    // None of those should have written a row.
+    const get = await request(app).get("/api/facility-settings");
+    expect(get.body.dbOverrides.repingThresholdMinutes).toBeNull();
+    expect(get.body.dbOverrides.repingMaxRepings).toBeNull();
+  });
+
+  it("env-pinned cadence wins over a DB cadence override on the next GET", async () => {
+    // Manager writes a DB override first.
+    await request(app)
+      .put("/api/facility-settings")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ repingThresholdMinutes: 7, repingMaxRepings: 5 });
+
+    // Then ops pin both via env.
+    process.env.ESCALATION_REPING_THRESHOLD_MINUTES = "30";
+    process.env.ESCALATION_REPING_MAX_COUNT = "1";
+
+    const res = await request(app).get("/api/facility-settings");
+    expect(res.status).toBe(200);
+    // dbOverrides keeps showing what the manager wrote (so the UI can
+    // render the "Locked by env" badge alongside the manager's value).
+    expect(res.body.dbOverrides.repingThresholdMinutes).toBe(7);
+    expect(res.body.dbOverrides.repingMaxRepings).toBe(5);
+    expect(res.body.envOverrides.repingThresholdMinutes).toBe(30);
+    expect(res.body.envOverrides.repingMaxRepings).toBe(1);
+    // Effective values are env's.
+    expect(res.body.repingThresholdMinutes).toBe(30);
+    expect(res.body.repingMaxRepings).toBe(1);
   });
 
   it("supports a sequence of updates without primary-key collisions", async () => {

@@ -16,6 +16,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Globe2,
+  BellRing,
 } from "lucide-react";
 
 type HourField = "shiftAStartHour" | "shiftBStartHour" | "shiftCStartHour";
@@ -43,11 +44,47 @@ const HOUR_META: Record<HourField, { label: string; help: string }> = {
   },
 };
 
+type RepingField = "repingThresholdMinutes" | "repingMaxRepings";
+
+const REPING_FIELDS: RepingField[] = [
+  "repingThresholdMinutes",
+  "repingMaxRepings",
+];
+
+interface RepingMeta {
+  label: string;
+  unit: string;
+  help: string;
+  min: number;
+  max: number;
+}
+
+const REPING_META: Record<RepingField, RepingMeta> = {
+  repingThresholdMinutes: {
+    label: "Re-ping after (minutes)",
+    unit: "min",
+    help:
+      "How long an unacknowledged escalation must sit before the scheduler nudges managers again. Picked up on the next sweep tick — no restart required.",
+    min: 1,
+    max: 1440,
+  },
+  repingMaxRepings: {
+    label: "Maximum re-pings per escalation",
+    unit: "",
+    help:
+      "How many reminder pings to send before going quiet. Set to 0 to disable re-pings entirely.",
+    min: 0,
+    max: 20,
+  },
+};
+
 interface DraftState {
   timeZone: string;
   shiftAStartHour: string;
   shiftBStartHour: string;
   shiftCStartHour: string;
+  repingThresholdMinutes: string;
+  repingMaxRepings: string;
 }
 
 function clean(s: string): string {
@@ -85,13 +122,22 @@ export default function FacilitySettingsPage() {
     shiftAStartHour: "",
     shiftBStartHour: "",
     shiftCStartHour: "",
+    repingThresholdMinutes: "",
+    repingMaxRepings: "",
   });
 
   // Re-sync draft only when the server-side override values actually CHANGE
   // — react-query returns a fresh `data` reference on every refetch, which
   // would otherwise wipe in-flight edits.
   const serverSnapshot = data
-    ? `${data.dbOverrides.timeZone}|${data.dbOverrides.shiftAStartHour}|${data.dbOverrides.shiftBStartHour}|${data.dbOverrides.shiftCStartHour}`
+    ? [
+        data.dbOverrides.timeZone,
+        data.dbOverrides.shiftAStartHour,
+        data.dbOverrides.shiftBStartHour,
+        data.dbOverrides.shiftCStartHour,
+        data.dbOverrides.repingThresholdMinutes,
+        data.dbOverrides.repingMaxRepings,
+      ].join("|")
     : "";
   useEffect(() => {
     if (!data) return;
@@ -100,6 +146,10 @@ export default function FacilitySettingsPage() {
       shiftAStartHour: rowFromHourOverride(data.dbOverrides.shiftAStartHour),
       shiftBStartHour: rowFromHourOverride(data.dbOverrides.shiftBStartHour),
       shiftCStartHour: rowFromHourOverride(data.dbOverrides.shiftCStartHour),
+      repingThresholdMinutes: rowFromHourOverride(
+        data.dbOverrides.repingThresholdMinutes,
+      ),
+      repingMaxRepings: rowFromHourOverride(data.dbOverrides.repingMaxRepings),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverSnapshot]);
@@ -110,12 +160,16 @@ export default function FacilitySettingsPage() {
       shiftAStartHour: string | null;
       shiftBStartHour: string | null;
       shiftCStartHour: string | null;
+      repingThresholdMinutes: string | null;
+      repingMaxRepings: string | null;
       ordering: string | null;
     } = {
       timeZone: null,
       shiftAStartHour: null,
       shiftBStartHour: null,
       shiftCStartHour: null,
+      repingThresholdMinutes: null,
+      repingMaxRepings: null,
       ordering: null,
     };
 
@@ -132,6 +186,18 @@ export default function FacilitySettingsPage() {
         out[f] = "Must be a whole number";
       } else if (n < 0 || n > 23) {
         out[f] = "Must be between 0 and 23";
+      }
+    }
+
+    for (const f of REPING_FIELDS) {
+      const raw = clean(draft[f]);
+      if (raw === "") continue;
+      const n = Number(raw);
+      const meta = REPING_META[f];
+      if (!Number.isFinite(n) || !Number.isInteger(n)) {
+        out[f] = "Must be a whole number";
+      } else if (n < meta.min || n > meta.max) {
+        out[f] = `Must be between ${meta.min} and ${meta.max}`;
       }
     }
 
@@ -171,6 +237,12 @@ export default function FacilitySettingsPage() {
       const nextValue = next === "" ? null : Number(next);
       if (current !== nextValue) return true;
     }
+    for (const f of REPING_FIELDS) {
+      const current = data.dbOverrides[f];
+      const next = clean(draft[f]);
+      const nextValue = next === "" ? null : Number(next);
+      if (current !== nextValue) return true;
+    }
     return false;
   }, [data, draft]);
 
@@ -179,6 +251,8 @@ export default function FacilitySettingsPage() {
     validation.shiftAStartHour != null ||
     validation.shiftBStartHour != null ||
     validation.shiftCStartHour != null ||
+    validation.repingThresholdMinutes != null ||
+    validation.repingMaxRepings != null ||
     validation.ordering != null;
 
   const onSave = async () => {
@@ -190,6 +264,12 @@ export default function FacilitySettingsPage() {
     if (data.dbOverrides.timeZone !== tzNext) body.timeZone = tzNext;
 
     for (const f of HOUR_FIELDS) {
+      const current = data.dbOverrides[f];
+      const raw = clean(draft[f]);
+      const next = raw === "" ? null : Number(raw);
+      if (current !== next) body[f] = next;
+    }
+    for (const f of REPING_FIELDS) {
       const current = data.dbOverrides[f];
       const raw = clean(draft[f]);
       const next = raw === "" ? null : Number(raw);
@@ -211,6 +291,10 @@ export default function FacilitySettingsPage() {
       shiftAStartHour: rowFromHourOverride(data.dbOverrides.shiftAStartHour),
       shiftBStartHour: rowFromHourOverride(data.dbOverrides.shiftBStartHour),
       shiftCStartHour: rowFromHourOverride(data.dbOverrides.shiftCStartHour),
+      repingThresholdMinutes: rowFromHourOverride(
+        data.dbOverrides.repingThresholdMinutes,
+      ),
+      repingMaxRepings: rowFromHourOverride(data.dbOverrides.repingMaxRepings),
     });
   };
 
@@ -436,6 +520,128 @@ export default function FacilitySettingsPage() {
           <AlertTriangle className="w-3.5 h-3.5" /> {validation.ordering}
         </p>
       )}
+
+      <header className="space-y-2 pt-4">
+        <p className="eyebrow inline-flex items-center gap-1.5">
+          <BellRing className="w-3 h-3" /> Escalation re-pings
+        </p>
+        <h2 className="text-[24px] font-semibold tracking-tight leading-tight">
+          Tune how often unacknowledged alerts re-nudge managers
+        </h2>
+        <p className="text-muted-foreground text-[15px]">
+          When an escalation sits OPEN past the threshold below, the
+          scheduler re-pings managers up to the configured cap. Changes
+          land on the next sweep tick — no API restart needed.
+        </p>
+      </header>
+
+      <section className="bg-card rounded-2xl shadow-soft hairline divide-y divide-border">
+        {REPING_FIELDS.map((f) => {
+          const meta = REPING_META[f];
+          const env = data.envOverrides[f];
+          const dbVal = data.dbOverrides[f];
+          const dflt = data.defaults[f];
+          const eff = data[f];
+          const err = validation[f];
+          const draftRaw = clean(draft[f]);
+          const lockedByEnv = env != null;
+          const fmt = (n: number) =>
+            meta.unit ? `${n} ${meta.unit}` : String(n);
+
+          return (
+            <div key={f} className="px-5 py-5">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-[15px] font-medium tracking-tight">
+                    {meta.label}
+                  </p>
+                  <p className="text-[12.5px] text-muted-foreground mt-0.5">
+                    {meta.help}
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Effective
+                  </p>
+                  <p
+                    className="text-[18px] font-semibold tabular-nums"
+                    data-testid={`effective-${f}`}
+                  >
+                    {eff}
+                    {meta.unit && (
+                      <span className="text-[12px] font-normal text-muted-foreground ml-1">
+                        {meta.unit}
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-end gap-3 flex-wrap">
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11.5px] text-muted-foreground">
+                    DB override (blank = clear)
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={meta.min}
+                    max={meta.max}
+                    step={1}
+                    disabled={lockedByEnv}
+                    value={draft[f]}
+                    placeholder={dbVal == null ? "—" : String(dbVal)}
+                    data-testid={`input-${f}`}
+                    onChange={(e) =>
+                      setDraft((d) => ({ ...d, [f]: e.target.value }))
+                    }
+                    className="bg-secondary text-foreground rounded-lg px-3 py-1.5 text-[14px] tabular-nums hairline focus:outline-none focus:ring-2 focus:ring-primary/40 w-32 disabled:opacity-50"
+                  />
+                </label>
+
+                {draftRaw !== "" && !lockedByEnv && (
+                  <button
+                    type="button"
+                    onClick={() => setDraft((d) => ({ ...d, [f]: "" }))}
+                    className="inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground hover:text-foreground"
+                    data-testid={`clear-${f}`}
+                  >
+                    <RotateCcw className="w-3 h-3" /> Clear
+                  </button>
+                )}
+              </div>
+
+              {err && (
+                <p
+                  className="mt-2 inline-flex items-center gap-1 text-[12px] text-rose-700 dark:text-rose-300"
+                  data-testid={`error-${f}`}
+                >
+                  <AlertTriangle className="w-3 h-3" /> {err}
+                </p>
+              )}
+
+              <div className="mt-3 flex flex-wrap gap-3 text-[11.5px]">
+                {lockedByEnv ? (
+                  <span
+                    className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300"
+                    title="An environment variable on the API is overriding both the DB value and the default."
+                  >
+                    <Lock className="w-3 h-3" /> Locked by env: {fmt(env)}
+                  </span>
+                ) : dbVal != null ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                    <Database className="w-3 h-3" /> DB override: {fmt(dbVal)}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-muted-foreground">
+                    <CheckCircle2 className="w-3 h-3" /> Using default ({fmt(dflt)})
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </section>
 
       <div className="flex items-center gap-3">
         <button

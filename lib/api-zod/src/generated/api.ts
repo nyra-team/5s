@@ -2512,6 +2512,11 @@ export const getFacilitySettingsResponseShiftBStartHourMax = 23;
 export const getFacilitySettingsResponseShiftCStartHourMin = 0;
 export const getFacilitySettingsResponseShiftCStartHourMax = 23;
 
+export const getFacilitySettingsResponseRepingThresholdMinutesMax = 1440;
+
+export const getFacilitySettingsResponseRepingMaxRepingsMin = 0;
+export const getFacilitySettingsResponseRepingMaxRepingsMax = 20;
+
 export const GetFacilitySettingsResponse = zod
   .object({
     timeZone: zod
@@ -2529,12 +2534,28 @@ export const GetFacilitySettingsResponse = zod
       .number()
       .min(getFacilitySettingsResponseShiftCStartHourMin)
       .max(getFacilitySettingsResponseShiftCStartHourMax),
+    repingThresholdMinutes: zod
+      .number()
+      .min(1)
+      .max(getFacilitySettingsResponseRepingThresholdMinutesMax)
+      .describe(
+        "Minutes an OPEN escalation must sit untouched before the\nscheduler re-pings managers. Picked up by the next sweep tick.\n",
+      ),
+    repingMaxRepings: zod
+      .number()
+      .min(getFacilitySettingsResponseRepingMaxRepingsMin)
+      .max(getFacilitySettingsResponseRepingMaxRepingsMax)
+      .describe(
+        "Maximum number of re-ping reminders sent per escalation. 0\ndisables re-pings entirely.\n",
+      ),
     defaults: zod
       .object({
         timeZone: zod.string(),
         shiftAStartHour: zod.number(),
         shiftBStartHour: zod.number(),
         shiftCStartHour: zod.number(),
+        repingThresholdMinutes: zod.number(),
+        repingMaxRepings: zod.number(),
       })
       .describe("Static fallback values shipped with the build."),
     envOverrides: zod.object({
@@ -2542,12 +2563,16 @@ export const GetFacilitySettingsResponse = zod
       shiftAStartHour: zod.number().nullish(),
       shiftBStartHour: zod.number().nullish(),
       shiftCStartHour: zod.number().nullish(),
+      repingThresholdMinutes: zod.number().nullish(),
+      repingMaxRepings: zod.number().nullish(),
     }),
     dbOverrides: zod.object({
       timeZone: zod.string().nullish(),
       shiftAStartHour: zod.number().nullish(),
       shiftBStartHour: zod.number().nullish(),
       shiftCStartHour: zod.number().nullish(),
+      repingThresholdMinutes: zod.number().nullish(),
+      repingMaxRepings: zod.number().nullish(),
     }),
     updatedAt: zod.coerce
       .date()
@@ -2559,7 +2584,7 @@ export const GetFacilitySettingsResponse = zod
       .describe("Manager who last touched the DB override row."),
   })
   .describe(
-    "Effective facility shift schedule (env > DB > default), plus the\nper-layer overrides so the manager UI can show provenance.\n",
+    "Effective facility shift schedule and re-ping cadence (env > DB >\ndefault), plus the per-layer overrides so the manager UI can show\nprovenance.\n",
   );
 
 /**
@@ -2573,6 +2598,11 @@ export const updateFacilitySettingsBodyShiftBStartHourMax = 23;
 
 export const updateFacilitySettingsBodyShiftCStartHourMin = 0;
 export const updateFacilitySettingsBodyShiftCStartHourMax = 23;
+
+export const updateFacilitySettingsBodyRepingThresholdMinutesMax = 1440;
+
+export const updateFacilitySettingsBodyRepingMaxRepingsMin = 0;
+export const updateFacilitySettingsBodyRepingMaxRepingsMax = 20;
 
 export const UpdateFacilitySettingsBody = zod
   .object({
@@ -2595,6 +2625,16 @@ export const UpdateFacilitySettingsBody = zod
       .min(updateFacilitySettingsBodyShiftCStartHourMin)
       .max(updateFacilitySettingsBodyShiftCStartHourMax)
       .nullish(),
+    repingThresholdMinutes: zod
+      .number()
+      .min(1)
+      .max(updateFacilitySettingsBodyRepingThresholdMinutesMax)
+      .nullish(),
+    repingMaxRepings: zod
+      .number()
+      .min(updateFacilitySettingsBodyRepingMaxRepingsMin)
+      .max(updateFacilitySettingsBodyRepingMaxRepingsMax)
+      .nullish(),
   })
   .describe(
     "Patch for the DB-backed facility settings row. Per-field semantics:\nomitted = leave existing value, null = clear the override\n(fall back to env\/default), value = set the override.\n",
@@ -2608,6 +2648,11 @@ export const updateFacilitySettingsResponseShiftBStartHourMax = 23;
 
 export const updateFacilitySettingsResponseShiftCStartHourMin = 0;
 export const updateFacilitySettingsResponseShiftCStartHourMax = 23;
+
+export const updateFacilitySettingsResponseRepingThresholdMinutesMax = 1440;
+
+export const updateFacilitySettingsResponseRepingMaxRepingsMin = 0;
+export const updateFacilitySettingsResponseRepingMaxRepingsMax = 20;
 
 export const UpdateFacilitySettingsResponse = zod
   .object({
@@ -2626,12 +2671,28 @@ export const UpdateFacilitySettingsResponse = zod
       .number()
       .min(updateFacilitySettingsResponseShiftCStartHourMin)
       .max(updateFacilitySettingsResponseShiftCStartHourMax),
+    repingThresholdMinutes: zod
+      .number()
+      .min(1)
+      .max(updateFacilitySettingsResponseRepingThresholdMinutesMax)
+      .describe(
+        "Minutes an OPEN escalation must sit untouched before the\nscheduler re-pings managers. Picked up by the next sweep tick.\n",
+      ),
+    repingMaxRepings: zod
+      .number()
+      .min(updateFacilitySettingsResponseRepingMaxRepingsMin)
+      .max(updateFacilitySettingsResponseRepingMaxRepingsMax)
+      .describe(
+        "Maximum number of re-ping reminders sent per escalation. 0\ndisables re-pings entirely.\n",
+      ),
     defaults: zod
       .object({
         timeZone: zod.string(),
         shiftAStartHour: zod.number(),
         shiftBStartHour: zod.number(),
         shiftCStartHour: zod.number(),
+        repingThresholdMinutes: zod.number(),
+        repingMaxRepings: zod.number(),
       })
       .describe("Static fallback values shipped with the build."),
     envOverrides: zod.object({
@@ -2639,12 +2700,16 @@ export const UpdateFacilitySettingsResponse = zod
       shiftAStartHour: zod.number().nullish(),
       shiftBStartHour: zod.number().nullish(),
       shiftCStartHour: zod.number().nullish(),
+      repingThresholdMinutes: zod.number().nullish(),
+      repingMaxRepings: zod.number().nullish(),
     }),
     dbOverrides: zod.object({
       timeZone: zod.string().nullish(),
       shiftAStartHour: zod.number().nullish(),
       shiftBStartHour: zod.number().nullish(),
       shiftCStartHour: zod.number().nullish(),
+      repingThresholdMinutes: zod.number().nullish(),
+      repingMaxRepings: zod.number().nullish(),
     }),
     updatedAt: zod.coerce
       .date()
@@ -2656,7 +2721,7 @@ export const UpdateFacilitySettingsResponse = zod
       .describe("Manager who last touched the DB override row."),
   })
   .describe(
-    "Effective facility shift schedule (env > DB > default), plus the\nper-layer overrides so the manager UI can show provenance.\n",
+    "Effective facility shift schedule and re-ping cadence (env > DB >\ndefault), plus the per-layer overrides so the manager UI can show\nprovenance.\n",
   );
 
 /**

@@ -30,4 +30,14 @@ export interface UpdateFacilitySettingsBodyType {
    * @maximum 23
    */
   shiftCStartHour?: number | null;
+  /**
+   * @minimum 1
+   * @maximum 1440
+   */
+  repingThresholdMinutes?: number | null;
+  /**
+   * @minimum 0
+   * @maximum 20
+   */
+  repingMaxRepings?: number | null;
 }

@@ -25,6 +25,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 vi.mock("@workspace/api-client-react", () => {
+  const ListEscalationsSort = {
+    recent: "recent",
+    mostReminded: "mostReminded",
+  } as const;
   const noopMutation = () => ({
     mutate: vi.fn(),
     mutateAsync: vi.fn(async () => undefined),
@@ -42,6 +46,7 @@ vi.mock("@workspace/api-client-react", () => {
     refetch: vi.fn(),
   });
   return {
+    ListEscalationsSort,
     useListEscalations: noopQuery([
       {
         id: 1,

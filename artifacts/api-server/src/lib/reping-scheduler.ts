@@ -2,23 +2,35 @@ import { and, eq, lt, or, sql } from "drizzle-orm";
 import { db, escalationsTable, areasTable, usersTable } from "@workspace/db";
 import { logger } from "./logger.js";
 import { notifyEscalationReping } from "./notifications.js";
+import {
+  type EffectiveRepingCadence,
+  loadEffectiveRepingCadence,
+} from "./facility-settings.js";
 
-interface RepingConfig {
-  thresholdMinutes: number;
-  maxRepings: number;
+interface RepingConfig extends EffectiveRepingCadence {
+  /**
+   * The setInterval cadence remains env-only: changing how often the timer
+   * fires would require tearing down and re-arming the JS timer, which is
+   * out of scope for "managers tune aggressiveness". Threshold + cap take
+   * effect on the *next* sweep tick because they're re-loaded inside
+   * `runRepingSweep`.
+   */
   checkIntervalMs: number;
   stuckThresholdMs: number;
 }
 
-function readConfig(): RepingConfig {
-  const thresholdMinutes = parsePositiveInt(
-    process.env.ESCALATION_REPING_THRESHOLD_MINUTES,
-    15,
-  );
-  const maxRepings = parseNonNegativeInt(
-    process.env.ESCALATION_REPING_MAX_COUNT,
-    2,
-  );
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.floor(n);
+}
+
+function readBootConfig(): RepingConfig {
+  // Boot-time read sizes the JS timer + watchdog and is logged once at
+  // startup. The sweep itself re-resolves threshold + cap on every tick
+  // via `loadEffectiveRepingCadence`, so the threshold/cap fields here
+  // are unused placeholders.
   const checkIntervalMs = parsePositiveInt(
     process.env.ESCALATION_REPING_CHECK_INTERVAL_MS,
     60_000,
@@ -30,21 +42,12 @@ function readConfig(): RepingConfig {
     process.env.ESCALATION_REPING_STUCK_THRESHOLD_MS,
     checkIntervalMs * 5,
   );
-  return { thresholdMinutes, maxRepings, checkIntervalMs, stuckThresholdMs };
-}
-
-function parsePositiveInt(raw: string | undefined, fallback: number): number {
-  if (!raw) return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return fallback;
-  return Math.floor(n);
-}
-
-function parseNonNegativeInt(raw: string | undefined, fallback: number): number {
-  if (!raw) return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return fallback;
-  return Math.floor(n);
+  return {
+    thresholdMinutes: 0,
+    maxRepings: 0,
+    checkIntervalMs,
+    stuckThresholdMs,
+  };
 }
 
 /**
@@ -53,7 +56,7 @@ function parseNonNegativeInt(raw: string | undefined, fallback: number): number 
  * configured threshold. Returns rows joined with area name + operator email so
  * we can build the notification payload without an extra query.
  */
-async function findRepingCandidates(config: RepingConfig, now: Date) {
+async function findRepingCandidates(config: EffectiveRepingCadence, now: Date) {
   const cutoff = new Date(now.getTime() - config.thresholdMinutes * 60_000);
 
   return db
@@ -88,12 +91,22 @@ async function findRepingCandidates(config: RepingConfig, now: Date) {
 }
 
 export async function runRepingSweep(now: Date = new Date()): Promise<number> {
-  const config = readConfig();
-  if (config.maxRepings === 0) return 0;
+  // Re-read the cadence on every tick so manager edits to the
+  // `facility_settings` row (threshold + cap) take effect within one sweep
+  // — no process restart required. The lookup is a single small select on
+  // a singleton table; the env layer is a couple of `process.env` reads.
+  let cadence: EffectiveRepingCadence;
+  try {
+    cadence = await loadEffectiveRepingCadence();
+  } catch (err) {
+    logger.error({ err }, "reping: failed to load cadence (skipping tick)");
+    return 0;
+  }
+  if (cadence.maxRepings === 0) return 0;
 
   let rows: Awaited<ReturnType<typeof findRepingCandidates>>;
   try {
-    rows = await findRepingCandidates(config, now);
+    rows = await findRepingCandidates(cadence, now);
   } catch (err) {
     logger.error({ err }, "reping: failed to query candidates");
     return 0;
@@ -147,7 +160,7 @@ export async function runRepingSweep(now: Date = new Date()): Promise<number> {
       {
         ageMinutes,
         attempt: nextAttempt,
-        maxAttempts: config.maxRepings,
+        maxAttempts: cadence.maxRepings,
       },
     ).catch((err) =>
       logger.error({ err, escalationId: row.id }, "reping: notify failed"),
@@ -155,7 +168,7 @@ export async function runRepingSweep(now: Date = new Date()): Promise<number> {
 
     dispatched += 1;
     logger.info(
-      { escalationId: row.id, ageMinutes, attempt: nextAttempt, maxAttempts: config.maxRepings },
+      { escalationId: row.id, ageMinutes, attempt: nextAttempt, maxAttempts: cadence.maxRepings },
       "reping: re-notified managers",
     );
   }
@@ -246,7 +259,7 @@ export async function runMonitoredRepingSweep(opts?: {
    */
   runner?: (now?: Date) => Promise<number>;
 }): Promise<number> {
-  const config = readConfig();
+  const config = readBootConfig();
   const stuckThresholdMs =
     opts?.stuckThresholdMs ?? config.stuckThresholdMs;
   const runner = opts?.runner ?? runRepingSweep;
@@ -327,23 +340,21 @@ export function startRepingScheduler(opts?: {
   runner?: (now?: Date) => Promise<number>;
 }): () => void {
   if (timer) return stopRepingScheduler;
-  const config = readConfig();
-  if (config.maxRepings === 0) {
-    logger.info("reping: scheduler disabled (ESCALATION_REPING_MAX_COUNT=0)");
-    return () => {};
-  }
-
+  const config = readBootConfig();
+  // Note: we no longer short-circuit at boot when the cap is 0 — the cap
+  // is now reloaded inside `runRepingSweep`, so a manager later raising it
+  // from 0 to e.g. 2 must be able to take effect without a restart. The
+  // sweep itself returns early on a cap of 0, so the timer is essentially
+  // a no-op until that point.
   health = createInitialHealth();
   health.startedAt = new Date();
 
   logger.info(
     {
-      thresholdMinutes: config.thresholdMinutes,
-      maxRepings: config.maxRepings,
       checkIntervalMs: config.checkIntervalMs,
       stuckThresholdMs: config.stuckThresholdMs,
     },
-    "reping: scheduler started",
+    "reping: scheduler started (threshold + cap loaded per-tick from facility_settings)",
   );
 
   let running = false;

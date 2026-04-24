@@ -9,8 +9,9 @@ import type { FacilitySettingsSourcesType } from "./facilitySettingsSourcesType"
 import type { FacilitySettingsTypeDefaults } from "./facilitySettingsTypeDefaults";
 
 /**
- * Effective facility shift schedule (env > DB > default), plus the
-per-layer overrides so the manager UI can show provenance.
+ * Effective facility shift schedule and re-ping cadence (env > DB >
+default), plus the per-layer overrides so the manager UI can show
+provenance.
 
  */
 export interface FacilitySettingsType {
@@ -31,6 +32,22 @@ export interface FacilitySettingsType {
    * @maximum 23
    */
   shiftCStartHour: number;
+  /**
+   * Minutes an OPEN escalation must sit untouched before the
+scheduler re-pings managers. Picked up by the next sweep tick.
+
+   * @minimum 1
+   * @maximum 1440
+   */
+  repingThresholdMinutes: number;
+  /**
+   * Maximum number of re-ping reminders sent per escalation. 0
+disables re-pings entirely.
+
+   * @minimum 0
+   * @maximum 20
+   */
+  repingMaxRepings: number;
   /** Static fallback values shipped with the build. */
   defaults: FacilitySettingsTypeDefaults;
   envOverrides: FacilitySettingsSourcesType;

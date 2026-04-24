@@ -82,9 +82,21 @@ vi.mock("@workspace/api-client-react", () => {
     }),
     useGetDashboardAiCost: noopQuery(undefined),
     useGetAreaDetectionAgreement: noopQuery(undefined),
-    useGetDashboardOperatorCoverage: noopQuery({ operators: [] }),
+    useGetDashboardOperatorCoverage: noopQuery({
+      totalOperators: 0,
+      totalAreas: 0,
+      operators: [],
+    }),
     useGetBackfillReasoningStatus: noopQuery({ remaining: 0 }),
     useBackfillReasoning: () => ({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(async () => ({ remaining: 0 })),
+      isPending: false,
+      isSuccess: false,
+      isError: false,
+      reset: vi.fn(),
+    }),
+    useSendOperatorCoachingNudge: () => ({
       mutate: vi.fn(),
       mutateAsync: vi.fn(async () => undefined),
       isPending: false,

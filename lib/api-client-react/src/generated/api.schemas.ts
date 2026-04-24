@@ -194,6 +194,8 @@ export type FacilitySettingsDefaults = {
   shiftAStartHour: number;
   shiftBStartHour: number;
   shiftCStartHour: number;
+  repingThresholdMinutes: number;
+  repingMaxRepings: number;
 };
 
 export interface FacilitySettingsSources {
@@ -201,11 +203,14 @@ export interface FacilitySettingsSources {
   shiftAStartHour?: number | null;
   shiftBStartHour?: number | null;
   shiftCStartHour?: number | null;
+  repingThresholdMinutes?: number | null;
+  repingMaxRepings?: number | null;
 }
 
 /**
- * Effective facility shift schedule (env > DB > default), plus the
-per-layer overrides so the manager UI can show provenance.
+ * Effective facility shift schedule and re-ping cadence (env > DB >
+default), plus the per-layer overrides so the manager UI can show
+provenance.
 
  */
 export interface FacilitySettings {
@@ -226,6 +231,22 @@ export interface FacilitySettings {
    * @maximum 23
    */
   shiftCStartHour: number;
+  /**
+   * Minutes an OPEN escalation must sit untouched before the
+scheduler re-pings managers. Picked up by the next sweep tick.
+
+   * @minimum 1
+   * @maximum 1440
+   */
+  repingThresholdMinutes: number;
+  /**
+   * Maximum number of re-ping reminders sent per escalation. 0
+disables re-pings entirely.
+
+   * @minimum 0
+   * @maximum 20
+   */
+  repingMaxRepings: number;
   /** Static fallback values shipped with the build. */
   defaults: FacilitySettingsDefaults;
   envOverrides: FacilitySettingsSources;
@@ -260,6 +281,16 @@ export interface UpdateFacilitySettingsBody {
    * @maximum 23
    */
   shiftCStartHour?: number | null;
+  /**
+   * @minimum 1
+   * @maximum 1440
+   */
+  repingThresholdMinutes?: number | null;
+  /**
+   * @minimum 0
+   * @maximum 20
+   */
+  repingMaxRepings?: number | null;
 }
 
 /**

@@ -14,4 +14,6 @@ export type FacilitySettingsTypeDefaults = {
   shiftAStartHour: number;
   shiftBStartHour: number;
   shiftCStartHour: number;
+  repingThresholdMinutes: number;
+  repingMaxRepings: number;
 };

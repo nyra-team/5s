@@ -11,4 +11,6 @@ export interface FacilitySettingsSourcesType {
   shiftAStartHour?: number | null;
   shiftBStartHour?: number | null;
   shiftCStartHour?: number | null;
+  repingThresholdMinutes?: number | null;
+  repingMaxRepings?: number | null;
 }

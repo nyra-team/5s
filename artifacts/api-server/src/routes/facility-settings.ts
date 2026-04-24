@@ -4,9 +4,11 @@ import { db, facilitySettingsTable } from "@workspace/db";
 import { authMiddleware, requireRole } from "../lib/auth";
 import { getShiftConfig } from "../lib/scoring";
 import {
+  DEFAULT_REPING_CADENCE,
   FACILITY_SETTINGS_VALIDATORS,
   getDbFacilitySettings,
   getEnvFacilitySettings,
+  loadEffectiveRepingCadence,
   loadEffectiveShiftConfig,
 } from "../lib/facility-settings.js";
 
@@ -17,50 +19,63 @@ interface FacilitySettingsPayload {
   shiftAStartHour: number;
   shiftBStartHour: number;
   shiftCStartHour: number;
+  repingThresholdMinutes: number;
+  repingMaxRepings: number;
   defaults: {
     timeZone: string;
     shiftAStartHour: number;
     shiftBStartHour: number;
     shiftCStartHour: number;
+    repingThresholdMinutes: number;
+    repingMaxRepings: number;
   };
   envOverrides: {
     timeZone: string | null;
     shiftAStartHour: number | null;
     shiftBStartHour: number | null;
     shiftCStartHour: number | null;
+    repingThresholdMinutes: number | null;
+    repingMaxRepings: number | null;
   };
   dbOverrides: {
     timeZone: string | null;
     shiftAStartHour: number | null;
     shiftBStartHour: number | null;
     shiftCStartHour: number | null;
+    repingThresholdMinutes: number | null;
+    repingMaxRepings: number | null;
   };
   updatedAt: string | null;
   updatedByUserId: number | null;
 }
 
 async function buildPayload(): Promise<FacilitySettingsPayload> {
-  const [effective, env, dbRow] = await Promise.all([
+  const [effective, env, dbRow, cadence] = await Promise.all([
     loadEffectiveShiftConfig(),
     Promise.resolve(getEnvFacilitySettings()),
     getDbFacilitySettings(),
+    loadEffectiveRepingCadence(),
   ]);
   // Defaults expose what would land if every override layer were cleared.
   // We get them from the bootstrap config evaluated with no env vars set,
   // which is too cumbersome to recompute — instead lift them straight off
   // the in-process bootstrap defaults via getShiftConfig() with env wiped
   // is also brittle. Cheapest correct option: hardcode the same defaults
-  // that DEFAULT_SHIFT_CONFIG uses (06/14/22 Asia/Kolkata).
+  // that DEFAULT_SHIFT_CONFIG / DEFAULT_REPING_CADENCE use.
   return {
     timeZone: effective.timeZone,
     shiftAStartHour: effective.startHours.A,
     shiftBStartHour: effective.startHours.B,
     shiftCStartHour: effective.startHours.C,
+    repingThresholdMinutes: cadence.thresholdMinutes,
+    repingMaxRepings: cadence.maxRepings,
     defaults: {
       timeZone: "Asia/Kolkata",
       shiftAStartHour: 6,
       shiftBStartHour: 14,
       shiftCStartHour: 22,
+      repingThresholdMinutes: DEFAULT_REPING_CADENCE.thresholdMinutes,
+      repingMaxRepings: DEFAULT_REPING_CADENCE.maxRepings,
     },
     envOverrides: env,
     dbOverrides: {
@@ -68,6 +83,8 @@ async function buildPayload(): Promise<FacilitySettingsPayload> {
       shiftAStartHour: dbRow.shiftAStartHour,
       shiftBStartHour: dbRow.shiftBStartHour,
       shiftCStartHour: dbRow.shiftCStartHour,
+      repingThresholdMinutes: dbRow.repingThresholdMinutes,
+      repingMaxRepings: dbRow.repingMaxRepings,
     },
     updatedAt: dbRow.updatedAt ? dbRow.updatedAt.toISOString() : null,
     updatedByUserId: dbRow.updatedByUserId,
@@ -131,6 +148,34 @@ router.put(
         patch[field] = v;
       } else {
         errors[field] = "Must be a whole number between 0 and 23";
+      }
+    }
+
+    // Re-ping cadence fields are validated independently of the shift
+    // hours: a half-broken cadence patch (bad threshold but valid cap) is
+    // rejected as a unit so we never store a partial change, but a valid
+    // cadence patch alongside an invalid hour ordering still rejects only
+    // because of the ordering check below.
+    if ("repingThresholdMinutes" in body) {
+      const v = body.repingThresholdMinutes;
+      if (v === null) {
+        patch.repingThresholdMinutes = null;
+      } else if (FACILITY_SETTINGS_VALIDATORS.repingThresholdMinutes(v)) {
+        patch.repingThresholdMinutes = v;
+      } else {
+        errors.repingThresholdMinutes =
+          "Must be a whole number of minutes between 1 and 1440";
+      }
+    }
+    if ("repingMaxRepings" in body) {
+      const v = body.repingMaxRepings;
+      if (v === null) {
+        patch.repingMaxRepings = null;
+      } else if (FACILITY_SETTINGS_VALIDATORS.repingMaxRepings(v)) {
+        patch.repingMaxRepings = v;
+      } else {
+        errors.repingMaxRepings =
+          "Must be a whole number between 0 and 20 (0 disables re-pings)";
       }
     }
 
@@ -204,6 +249,10 @@ router.put(
           shiftAStartHour: (patch.shiftAStartHour as number | null | undefined) ?? null,
           shiftBStartHour: (patch.shiftBStartHour as number | null | undefined) ?? null,
           shiftCStartHour: (patch.shiftCStartHour as number | null | undefined) ?? null,
+          repingThresholdMinutes:
+            (patch.repingThresholdMinutes as number | null | undefined) ?? null,
+          repingMaxRepings:
+            (patch.repingMaxRepings as number | null | undefined) ?? null,
           updatedByUserId: userId,
           updatedAt: new Date(),
         })

@@ -1743,8 +1743,9 @@ components:
     FacilitySettings:
       type: object
       description: |
-        Effective facility shift schedule (env > DB > default), plus the
-        per-layer overrides so the manager UI can show provenance.
+        Effective facility shift schedule and re-ping cadence (env > DB >
+        default), plus the per-layer overrides so the manager UI can show
+        provenance.
       properties:
         timeZone:
           type: string
@@ -1761,6 +1762,20 @@ components:
           type: integer
           minimum: 0
           maximum: 23
+        repingThresholdMinutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+          description: |
+            Minutes an OPEN escalation must sit untouched before the
+            scheduler re-pings managers. Picked up by the next sweep tick.
+        repingMaxRepings:
+          type: integer
+          minimum: 0
+          maximum: 20
+          description: |
+            Maximum number of re-ping reminders sent per escalation. 0
+            disables re-pings entirely.
         defaults:
           type: object
           description: Static fallback values shipped with the build.
@@ -1773,11 +1788,17 @@ components:
               type: integer
             shiftCStartHour:
               type: integer
+            repingThresholdMinutes:
+              type: integer
+            repingMaxRepings:
+              type: integer
           required:
             - timeZone
             - shiftAStartHour
             - shiftBStartHour
             - shiftCStartHour
+            - repingThresholdMinutes
+            - repingMaxRepings
         envOverrides:
           $ref: "#/components/schemas/FacilitySettingsSources"
         dbOverrides:
@@ -1796,6 +1817,8 @@ components:
         - shiftAStartHour
         - shiftBStartHour
         - shiftCStartHour
+        - repingThresholdMinutes
+        - repingMaxRepings
         - defaults
         - envOverrides
         - dbOverrides
@@ -1813,6 +1836,12 @@ components:
           type: integer
           nullable: true
         shiftCStartHour:
+          type: integer
+          nullable: true
+        repingThresholdMinutes:
+          type: integer
+          nullable: true
+        repingMaxRepings:
           type: integer
           nullable: true
 
@@ -1842,6 +1871,16 @@ components:
           nullable: true
           minimum: 0
           maximum: 23
+        repingThresholdMinutes:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 1440
+        repingMaxRepings:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 20
 
     OperatorThresholds:
       type: object

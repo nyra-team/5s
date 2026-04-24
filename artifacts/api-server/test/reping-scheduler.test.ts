@@ -1,6 +1,11 @@
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { db, escalationsTable, submissionsTable } from "@workspace/db";
+import {
+  db,
+  escalationsTable,
+  facilitySettingsTable,
+  submissionsTable,
+} from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { TestWorld, type TestArea, type TestUser } from "./helpers.js";
 import {
@@ -16,6 +21,7 @@ import {
   startRepingScheduler,
   stopRepingScheduler,
 } from "../src/lib/reping-scheduler.js";
+import { resolveRepingCadence } from "../src/lib/facility-settings.js";
 import { api } from "./helpers.js";
 
 interface Recorded {
@@ -263,6 +269,163 @@ describe("runRepingSweep", () => {
     assert.equal(recorder.calls.length, 1);
   });
 
+  test("reads threshold/cap from facility_settings at sweep time when env is unset", async () => {
+    // Clear env so the DB layer wins this test.
+    delete process.env.ESCALATION_REPING_THRESHOLD_MINUTES;
+    delete process.env.ESCALATION_REPING_MAX_COUNT;
+
+    const operator = await world.createUser("OPERATOR");
+    const manager = await world.createUser("MANAGER");
+    const area = await world.createArea();
+
+    // Seed an escalation that's 10 min old. With the shipped DEFAULT
+    // threshold of 15 min it would NOT fire; once we drop the DB-side
+    // threshold to 5 min mid-test, the same escalation must fire on the
+    // very next sweep — proving the scheduler reads cadence per-tick
+    // rather than caching at boot.
+    const id = await seedEscalation({
+      area,
+      operator,
+      ageMinutes: 10,
+      status: "OPEN",
+    });
+
+    // Pre-condition: with no env and no DB row, the default 15-min
+    // threshold means a 10-min-old row is too young.
+    const before = await runRepingSweep();
+    await Promise.resolve();
+    assert.equal(before, 0, "sweep should skip a 10-min-old row at the 15-min default");
+    assert.equal((await readRow(id)).repingCount, 0);
+
+    // Manager tunes the cadence at runtime: threshold drops to 5 min,
+    // cap stays at the 2-attempt default.
+    await db
+      .insert(facilitySettingsTable)
+      .values({
+        id: 1,
+        repingThresholdMinutes: 5,
+        repingMaxRepings: 1,
+        updatedByUserId: manager.id,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: facilitySettingsTable.id,
+        set: {
+          repingThresholdMinutes: 5,
+          repingMaxRepings: 1,
+          updatedByUserId: manager.id,
+          updatedAt: new Date(),
+        },
+      });
+
+    // The very next sweep should pick up the new threshold without any
+    // restart and dispatch reminder #1.
+    const fired = await runRepingSweep();
+    await Promise.resolve();
+    assert.equal(fired, 1, "next sweep must see the DB threshold and dispatch");
+    assert.equal((await readRow(id)).repingCount, 1);
+
+    // Cap is now 1 (down from the env-pinned 2 in beforeEach), so a
+    // second tick — with the row's lastRepingAt back-dated past the new
+    // 5-min threshold — must still be suppressed. We simulate "enough
+    // time passed" by passing an explicit `now` 6 minutes in the future.
+    const t1 = new Date(Date.now() + 6 * 60_000);
+    const second = await runRepingSweep(t1);
+    await Promise.resolve();
+    assert.equal(second, 0, "DB-side cap of 1 must suppress a second nudge");
+    assert.equal((await readRow(id)).repingCount, 1);
+
+    // Cleanup: drop the row so other tests' beforeEach env defaults are
+    // the only knob in play. (TestWorld doesn't own the singleton row.)
+    await db.delete(facilitySettingsTable).where(eq(facilitySettingsTable.id, 1));
+  });
+
+  test("env override beats a DB-side cadence on the next sweep tick", async () => {
+    const operator = await world.createUser("OPERATOR");
+    const manager = await world.createUser("MANAGER");
+    const area = await world.createArea();
+
+    // DB row asks for a generous 60-min threshold. Env (already pinned to
+    // 15 min in beforeEach) must win, so a 20-min-old row still fires.
+    await db
+      .insert(facilitySettingsTable)
+      .values({
+        id: 1,
+        repingThresholdMinutes: 60,
+        repingMaxRepings: 0,
+        updatedByUserId: manager.id,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: facilitySettingsTable.id,
+        set: {
+          repingThresholdMinutes: 60,
+          repingMaxRepings: 0,
+          updatedByUserId: manager.id,
+          updatedAt: new Date(),
+        },
+      });
+
+    const id = await seedEscalation({
+      area,
+      operator,
+      ageMinutes: 20,
+      status: "OPEN",
+    });
+
+    const fired = await runRepingSweep();
+    await Promise.resolve();
+    assert.equal(fired, 1, "env-pinned 15-min threshold must override the DB's 60");
+    assert.equal((await readRow(id)).repingCount, 1);
+
+    await db.delete(facilitySettingsTable).where(eq(facilitySettingsTable.id, 1));
+  });
+
+  test("resolveRepingCadence: env > db > default", () => {
+    const D = { thresholdMinutes: 15, maxRepings: 2 };
+    // All null → default
+    assert.deepEqual(
+      resolveRepingCadence({
+        env: { repingThresholdMinutes: null, repingMaxRepings: null },
+        dbRow: { repingThresholdMinutes: null, repingMaxRepings: null },
+      }),
+      D,
+    );
+    // DB only
+    assert.deepEqual(
+      resolveRepingCadence({
+        env: { repingThresholdMinutes: null, repingMaxRepings: null },
+        dbRow: { repingThresholdMinutes: 7, repingMaxRepings: 4 },
+      }),
+      { thresholdMinutes: 7, maxRepings: 4 },
+    );
+    // Env wins over DB
+    assert.deepEqual(
+      resolveRepingCadence({
+        env: { repingThresholdMinutes: 30, repingMaxRepings: 1 },
+        dbRow: { repingThresholdMinutes: 7, repingMaxRepings: 4 },
+      }),
+      { thresholdMinutes: 30, maxRepings: 1 },
+    );
+    // Independent fall-through: DB sets only one field, default fills the
+    // other.
+    assert.deepEqual(
+      resolveRepingCadence({
+        env: { repingThresholdMinutes: null, repingMaxRepings: null },
+        dbRow: { repingThresholdMinutes: 9, repingMaxRepings: null },
+      }),
+      { thresholdMinutes: 9, maxRepings: 2 },
+    );
+    // Cap=0 from DB is honored (0 is a valid "disable" value, not nullish).
+    assert.deepEqual(
+      resolveRepingCadence({
+        env: { repingThresholdMinutes: null, repingMaxRepings: null },
+        dbRow: { repingThresholdMinutes: null, repingMaxRepings: 0 },
+      }),
+      { thresholdMinutes: 15, maxRepings: 0 },
+    );
+  });
+
   test("guarded UPDATE prevents double-sends when two sweeps race", async () => {
     const operator = await world.createUser("OPERATOR");
     const area = await world.createArea();
@@ -361,7 +524,7 @@ describe("runMonitoredRepingSweep — health + watchdog", () => {
     // Drive the real interval loop with a deliberately slow injected runner
     // so we can observe overlap accounting end-to-end without involving the
     // real database. We have to override the env BEFORE startRepingScheduler
-    // is called because readConfig() snapshots it at that moment.
+    // is called because readBootConfig() snapshots it at that moment.
     const ORIGINAL_INTERVAL = process.env.ESCALATION_REPING_CHECK_INTERVAL_MS;
     const ORIGINAL_STUCK = process.env.ESCALATION_REPING_STUCK_THRESHOLD_MS;
     process.env.ESCALATION_REPING_CHECK_INTERVAL_MS = "20";
