@@ -286,7 +286,7 @@ Output ONLY valid JSON in this exact shape:
 }
 `.trim();
 
-function getRubric(environmentType: EnvironmentType | undefined): string {
+export function getRubric(environmentType: EnvironmentType | undefined): string {
   const env = environmentType ?? "factory";
   const base =
     env === "warehouse" ? WAREHOUSE_RUBRIC :
@@ -296,7 +296,7 @@ function getRubric(environmentType: EnvironmentType | undefined): string {
   return `${base}\n\n${COMMON_INSTRUCTIONS}`;
 }
 
-function getEnvironmentLabel(environmentType: EnvironmentType | undefined): string {
+export function getEnvironmentLabel(environmentType: EnvironmentType | undefined): string {
   const env = environmentType ?? "factory";
   if (env === "warehouse") return "warehouse / distribution centre";
   if (env === "home") return "domestic / home space";
