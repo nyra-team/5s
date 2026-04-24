@@ -1,4 +1,5 @@
-# Runtime upload directory: multer writes operator submission media here.
-# Files are only meaningful in the running container; never commit them.
+# Operator-uploaded media. The server writes these at runtime (real
+# submissions, e2e tests, manual QA) so they shouldn't be tracked in
+# version control. The folder itself is created on demand by multer.
 uploads/*
 !uploads/.gitkeep
