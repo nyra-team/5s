@@ -44,5 +44,7 @@ export interface SubmissionType {
   embeddingHash?: string | null;
   /** ID of the most-recent OPEN or ACKNOWLEDGED escalation tied to this submission, or null if none. Lets the manager UI offer single-key resolve from the audit log. */
   openEscalationId?: number | null;
+  /** True when the upload was a video that the keyframe extractor couldn't read (e.g. malformed file, ffmpeg wall-clock timeout) so the AI never got to score it. Lets the operator UI show a friendly "we couldn't analyze this video — re-record a shorter clip or upload a still photo" banner instead of a generic FALLBACK message. Always false for image submissions and for videos that produced keyframes. */
+  videoUnreadable?: boolean;
   createdAt: Date;
 }

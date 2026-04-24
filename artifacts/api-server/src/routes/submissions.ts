@@ -73,6 +73,37 @@ const submissionSelect = {
 };
 
 /**
+ * Derived flag exposed on every submission response so the operator UI can
+ * tell the difference between "we scored your video" and "ffmpeg gave up
+ * before we could read it" (the new wall-clock-timeout fast path for
+ * malformed or extremely long uploads). Without this, both cases look like
+ * a regular FALLBACK and the operator can't tell whether to re-record vs.
+ * just retry.
+ *
+ * True iff:
+ *   - the upload was a video, AND
+ *   - no keyframes were ever extracted (null/empty list), AND
+ *   - the scoring pipeline fell back (scoringMode === "FALLBACK").
+ *
+ * Image submissions are never videoUnreadable; their FALLBACK comes from
+ * VLM-side errors (different remediation: retry, brighter lighting). And a
+ * video that produced keyframes but failed in the VLM is also excluded —
+ * that's a model/network problem, not an unreadable upload.
+ */
+export function computeVideoUnreadable(row: {
+  mediaType: string | null;
+  keyframesJson: unknown;
+  scoringMode: string | null;
+}): boolean {
+  if (row.mediaType !== "video") return false;
+  if (row.scoringMode !== "FALLBACK") return false;
+  const kf = row.keyframesJson;
+  if (kf == null) return true;
+  if (Array.isArray(kf) && kf.length === 0) return true;
+  return false;
+}
+
+/**
  * Returns the area ids the given operator is allowed to act on:
  *   - `null`  → the assignments table is completely empty site-wide; this
  *               is the backward-compatible "see everything" mode for fresh
@@ -178,7 +209,11 @@ router.get("/submissions", authMiddleware, async (req, res): Promise<void> => {
     }
   }
 
-  res.json(rows.map((r) => ({ ...r, openEscalationId: openEscByMap.get(r.id) ?? null })));
+  res.json(rows.map((r) => ({
+    ...r,
+    openEscalationId: openEscByMap.get(r.id) ?? null,
+    videoUnreadable: computeVideoUnreadable(r),
+  })));
 });
 
 const uploadFields = upload.fields([
@@ -560,6 +595,7 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
     ...submission,
     areaName: area.name,
     userEmail: user?.email ?? "",
+    videoUnreadable: computeVideoUnreadable(submission),
   });
 });
 
@@ -682,6 +718,7 @@ router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req
     ...updated,
     areaName: area?.name ?? "",
     userEmail: user?.email ?? "",
+    videoUnreadable: computeVideoUnreadable(updated),
   });
 });
 
@@ -697,7 +734,7 @@ router.get("/submissions/:id", authMiddleware, async (req, res): Promise<void> =
     .where(eq(submissionsTable.id, params.data.id));
 
   if (!row) { res.status(404).json({ error: "Submission not found" }); return; }
-  res.json(row);
+  res.json({ ...row, videoUnreadable: computeVideoUnreadable(row) });
 });
 
 router.get("/shift/current", authMiddleware, async (_req, res): Promise<void> => {
@@ -882,7 +919,10 @@ router.get("/operator/status", authMiddleware, async (req, res): Promise<void> =
       // to the static environmentType default otherwise.
       walkthroughHintsOverride: area.walkthroughHintsOverrideJson ?? null,
       submitted: !!sub,
-      ...(sub ? { submission: sub } : {}),
+      // Mirror the same `videoUnreadable` derivation we use on the other
+      // submission-shaped endpoints so consumers of /operator/status see a
+      // consistent contract and can drive the same banner UX.
+      ...(sub ? { submission: { ...sub, videoUnreadable: computeVideoUnreadable(sub) } } : {}),
     };
   });
 

@@ -1183,18 +1183,43 @@ function RecentDetailDialog({
             </div>
             {isFallback ? (
               <>
-                <div
-                  className="rounded-xl border border-rose-200 dark:border-rose-500/30 bg-rose-50/70 dark:bg-rose-500/10 p-4 space-y-2"
-                  data-testid="recent-detail-fallback-banner"
-                >
-                  <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300">
-                    <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden="true" />
-                    <p className="font-semibold text-[14px]">Couldn't be scored</p>
+                {/* `videoUnreadable` is a stricter sub-case of FALLBACK: ffmpeg
+                    couldn't pull any keyframes out of the upload (malformed
+                    file, wall-clock timeout, etc). Re-uploading the same clip
+                    with brighter lighting won't help, so we swap in a softer,
+                    amber banner whose remediation hint actually applies
+                    (re-record shorter or upload a still photo). The re-upload
+                    button below is shared — it works for both paths. */}
+                {data.videoUnreadable ? (
+                  <div
+                    className="rounded-xl border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40 p-4 flex gap-2.5"
+                    role="status"
+                    data-testid="video-unreadable-banner"
+                  >
+                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+                    <div className="space-y-1">
+                      <p className="text-[14px] font-semibold text-amber-900 dark:text-amber-100">
+                        We couldn't analyze this video
+                      </p>
+                      <p className="text-[12.5px] leading-snug text-amber-900/80 dark:text-amber-100/80">
+                        Your upload reached us, but our scoring service couldn't read it. Try re-recording a shorter walk-through (about 30&nbsp;seconds) or uploading a still photo of the area instead.
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-[12.5px] leading-snug text-rose-800/80 dark:text-rose-200/80">
-                    We saved your capture, but our scoring service couldn't grade it. The 0% on this row isn't a real audit result — re-upload with brighter lighting and a steadier angle and we'll try again.
-                  </p>
-                </div>
+                ) : (
+                  <div
+                    className="rounded-xl border border-rose-200 dark:border-rose-500/30 bg-rose-50/70 dark:bg-rose-500/10 p-4 space-y-2"
+                    data-testid="recent-detail-fallback-banner"
+                  >
+                    <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300">
+                      <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                      <p className="font-semibold text-[14px]">Couldn't be scored</p>
+                    </div>
+                    <p className="text-[12.5px] leading-snug text-rose-800/80 dark:text-rose-200/80">
+                      We saved your capture, but our scoring service couldn't grade it. The 0% on this row isn't a real audit result — re-upload with brighter lighting and a steadier angle and we'll try again.
+                    </p>
+                  </div>
+                )}
                 <Button
                   type="button"
                   className="w-full h-11 rounded-xl"
@@ -1605,7 +1630,22 @@ export function AreaCard({
     // FALLBACK = the upload landed and the row was saved, but the VLM didn't
     // produce a real score. Surface that distinctly so the operator knows to
     // re-capture rather than thinking they got a real "0%" audit.
-    if (result?.scoringMode === "FALLBACK") {
+    //
+    // `videoUnreadable` is a stricter sub-case of FALLBACK: the keyframe
+    // extractor couldn't read the video at all (malformed file, ffmpeg
+    // wall-clock timeout). Re-uploading the same clip with "brighter
+    // lighting" won't help — the operator needs to re-record a shorter
+    // clip or fall back to a still photo, so we send a different
+    // remediation hint. Checked first so the more specific message wins.
+    if (result?.videoUnreadable) {
+      toastHandle = toast({
+        variant: "destructive",
+        title: `${msg} — couldn't read this video`,
+        description:
+          "Saved your upload, but we couldn't read the video to score it. Try a shorter walk-through (around 30 seconds) or upload a still photo instead.",
+        action: detailAction,
+      });
+    } else if (result?.scoringMode === "FALLBACK") {
       toastHandle = toast({
         variant: "destructive",
         title: `${msg} — couldn't be scored`,
