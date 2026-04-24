@@ -1,0 +1,4 @@
+# Runtime upload directory: multer writes operator submission media here.
+# Files are only meaningful in the running container; never commit them.
+uploads/*
+!uploads/.gitkeep
