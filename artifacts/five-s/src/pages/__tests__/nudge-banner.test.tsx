@@ -87,6 +87,10 @@ vi.mock("@workspace/api-client-react", () => {
       isLoading: false,
     }),
     getGetShiftConfigQueryKey: () => ["shift-config"],
+    // OperatorHome calls useFacilitySettingsChangeListener which polls
+    // useGetFacilitySettings; stub it so the operator page mounts.
+    useGetFacilitySettings: () => ({ data: undefined, isLoading: false }),
+    getGetFacilitySettingsQueryKey: () => ["facility-settings"],
     useCreateSubmission: () => ({ mutate: vi.fn(), isPending: false }),
     useReuploadSubmission: () => ({ mutate: vi.fn(), isPending: false }),
     useIdentifySubmissionArea: () => ({

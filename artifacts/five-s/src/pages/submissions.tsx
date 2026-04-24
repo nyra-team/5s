@@ -292,7 +292,7 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
             </div>
           )}
 
-          <section>
+          <section data-testid="submission-score-section">
             <p className="eyebrow mb-3">Score breakdown</p>
             {sub.aiReasoningJson && (
               <p className="text-[12px] text-muted-foreground mb-3 inline-flex items-center gap-1.5">
@@ -312,7 +312,7 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
           </section>
 
           {hasAI && Array.isArray(sub.aiIssuesJson) && sub.aiIssuesJson.length > 0 && (
-            <section>
+            <section data-testid="submission-ai-issues-section">
               <p className="eyebrow mb-3 flex items-center gap-1.5"><AlertTriangle className="w-3 h-3 text-rose-500" /> Issues detected</p>
               <ul className="space-y-2">
                 {sub.aiIssuesJson.map((issue: any, i: number) => (
@@ -339,7 +339,7 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
           {/* Mobile-only keyframe strip rendered after AI Issues so the score
               and findings are reachable without scrolling past the frames. */}
           {keyframes.length > 0 && (
-            <section className="md:hidden">
+            <section className="md:hidden" data-testid="submission-keyframes-mobile">
               <p className="eyebrow flex items-center gap-1.5 mb-2"><Video className="w-3 h-3" /> Sampled keyframes ({keyframes.length})</p>
               <div className="grid grid-cols-3 gap-2">
                 {keyframes.map((k, i) => (

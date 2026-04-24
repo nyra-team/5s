@@ -103,7 +103,10 @@ export default function Dashboard() {
         <p className="text-muted-foreground text-[15px]">Live compliance metrics across all shifts</p>
       </header>
 
-      <section className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-5">
+      <section
+        className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-5"
+        data-testid="hero-stats-grid"
+      >
         <HeroStat
           label="Today's Compliance"
           value={`${compliancePercent}%`}
