@@ -64,7 +64,8 @@ if (typeof window !== "undefined" && !window.URL.createObjectURL) {
 // jsdom doesn't implement the pointer capture APIs that Radix primitives
 // (Toast, Select, Slider, etc.) call on pointer events. Without these stubs
 // any Radix component that wires pointer handlers throws unhandled
-// "target.hasPointerCapture is not a function" errors during interaction.
+// "target.hasPointerCapture is not a function" errors during interaction —
+// notably the manager-label Slider drag flow exercised by task #131's tests.
 if (typeof window !== "undefined") {
   const proto = window.HTMLElement.prototype as unknown as {
     hasPointerCapture?: (id: number) => boolean;

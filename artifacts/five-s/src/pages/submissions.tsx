@@ -25,6 +25,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import * as SliderPrimitive from "@radix-ui/react-slider";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -105,7 +106,7 @@ function PillarBar({ label, value, max = 5, reasoning }: { label: string; value:
   );
 }
 
-function LabelForm({
+export function LabelForm({
   submissionId,
   existingLabel,
   autoFocus,
@@ -156,7 +157,30 @@ function LabelForm({
             <div key={key} className="space-y-1">
               <div className="flex items-center gap-3">
                 <span className="capitalize text-[12.5px] font-medium w-20 text-right text-amber-900 dark:text-amber-200">{key}</span>
-                <input type="range" min={0} max={5} value={val} onChange={(e) => setPillars((p) => ({ ...p, [key]: parseInt(e.target.value) }))} className="flex-1 h-1.5 accent-amber-600 dark:accent-amber-400" />
+                {/* Radix Slider sets pointer capture on the thumb during drag,
+                    so the pointer can move outside this Dialog without firing
+                    onPointerDownOutside / onFocusOutside on the dismissable
+                    layer. The native <input type="range"> didn't, which let
+                    a vigorous drag dismiss the manager-label dialog mid-edit
+                    (task #131). */}
+                <SliderPrimitive.Root
+                  min={0}
+                  max={5}
+                  step={1}
+                  value={[val]}
+                  onValueChange={(v) => setPillars((p) => ({ ...p, [key]: v[0] }))}
+                  className="relative flex flex-1 touch-none select-none items-center h-5"
+                  data-testid={`label-pillar-slider-${key}`}
+                  aria-label={`${key} score`}
+                >
+                  <SliderPrimitive.Track className="relative h-1.5 w-full grow overflow-hidden rounded-full bg-amber-200/70 dark:bg-amber-500/25">
+                    <SliderPrimitive.Range className="absolute h-full bg-amber-600 dark:bg-amber-400" />
+                  </SliderPrimitive.Track>
+                  <SliderPrimitive.Thumb
+                    className="block h-4 w-4 rounded-full border border-amber-600 dark:border-amber-400 bg-background shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    aria-label={`${key} score`}
+                  />
+                </SliderPrimitive.Root>
                 <span className="text-[12.5px] font-semibold w-4 tabular-nums">{val}</span>
               </div>
               {reason && (
