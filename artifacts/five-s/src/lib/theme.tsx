@@ -59,6 +59,71 @@ export function getNightShiftWindow(): NightShiftWindow {
   return { startHour, endHour, timeZone };
 }
 
+export interface ShiftLabel {
+  value: "A" | "B" | "C";
+  label: string;
+  time: string;
+}
+
+const FALLBACK_SHIFT_LABELS: ShiftLabel[] = [
+  { value: "A", label: "Shift A", time: "6 AM – 2 PM" },
+  { value: "B", label: "Shift B", time: "2 PM – 10 PM" },
+  { value: "C", label: "Shift C", time: "10 PM – 6 AM" },
+];
+
+function formatHour12(hour24: number): string {
+  const h = ((Math.trunc(hour24) % 24) + 24) % 24;
+  if (h === 0) return "12 AM";
+  if (h === 12) return "12 PM";
+  if (h < 12) return `${h} AM`;
+  return `${h - 12} PM`;
+}
+
+function nightWindowDurationHours(window: NightShiftWindow): number {
+  const { startHour, endHour } = window;
+  if (startHour === endHour) return 0;
+  return startHour < endHour ? endHour - startHour : 24 - startHour + endHour;
+}
+
+/**
+ * Build the three shift labels (A/B/C) from the per-facility night-shift
+ * window so the times shown in the operator switcher stay in sync with the
+ * configuration the rest of the app uses. Hours are interpreted in the
+ * configured timezone (the same way `isWithinNightWindow` does).
+ *
+ * Falls back to the legacy "6 AM – 2 PM / 2 PM – 10 PM / 10 PM – 6 AM"
+ * labels when the configured night window isn't a clean 8-hour block we
+ * can tile into three equal shifts.
+ */
+export function getShiftLabels(
+  window: NightShiftWindow = getNightShiftWindow(),
+): ShiftLabel[] {
+  if (nightWindowDurationHours(window) !== 8) return FALLBACK_SHIFT_LABELS;
+  const cStart = window.startHour;
+  const cEnd = window.endHour;
+  const aStart = cEnd;
+  const aEnd = (cEnd + 8) % 24;
+  const bStart = aEnd;
+  const bEnd = (aEnd + 8) % 24;
+  return [
+    {
+      value: "A",
+      label: "Shift A",
+      time: `${formatHour12(aStart)} – ${formatHour12(aEnd)}`,
+    },
+    {
+      value: "B",
+      label: "Shift B",
+      time: `${formatHour12(bStart)} – ${formatHour12(bEnd)}`,
+    },
+    {
+      value: "C",
+      label: "Shift C",
+      time: `${formatHour12(cStart)} – ${formatHour12(cEnd)}`,
+    },
+  ];
+}
+
 function getHourInTimeZone(now: Date, timeZone: string): number {
   try {
     const fmt = new Intl.DateTimeFormat("en-US", {

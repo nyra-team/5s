@@ -72,12 +72,9 @@ import {
   deleteCaptureDraft,
   purgeStaleCaptureDrafts,
 } from "@/lib/capture-drafts";
+import { getShiftLabels } from "@/lib/theme";
 
-const SHIFT_OPTIONS = [
-  { value: "A" as const, label: "Shift A", time: "6 AM – 2 PM" },
-  { value: "B" as const, label: "Shift B", time: "2 PM – 10 PM" },
-  { value: "C" as const, label: "Shift C", time: "10 PM – 6 AM" },
-];
+const SHIFT_OPTIONS = getShiftLabels();
 
 const RECENT_STRIP_PREF_KEY = "operator.recentStrip.collapsed";
 const DUE_SOON_THRESHOLD_MS = 60 * 60 * 1000; // 1h
