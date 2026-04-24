@@ -155,10 +155,10 @@ export default function NotificationsPage() {
         <p className="eyebrow inline-flex items-center gap-1.5">
           <Bell className="w-3 h-3" /> Notifications
         </p>
-        <h1 className="text-[34px] font-semibold tracking-tight leading-tight">
+        <h1 className="text-[26px] sm:text-[34px] font-semibold tracking-tight leading-tight">
           Escalation alerts
         </h1>
-        <p className="text-muted-foreground text-[15px]">
+        <p className="text-muted-foreground text-[14px] sm:text-[15px]">
           Get notified the moment a failed audit (below 60%) is auto-escalated, so
           you can respond across shifts without keeping the app open.
         </p>
@@ -197,12 +197,12 @@ export default function NotificationsPage() {
       </div>
 
       <section className="bg-card rounded-2xl shadow-soft hairline">
-        <div className="px-5 py-4 flex items-start gap-4">
+        <div className="px-4 sm:px-5 py-4 flex items-start gap-3 sm:gap-4">
           <div className="mt-1 w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-foreground/80 shrink-0">
             <MoonStar className="w-4 h-4" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[15px] font-medium tracking-tight">Quiet hours</p>
                 <p className="text-[12.5px] text-muted-foreground">
@@ -210,7 +210,9 @@ export default function NotificationsPage() {
                   posted if at least one other subscriber is active.
                 </p>
               </div>
-              <Switch checked={quietOn} onChange={onQuietToggle} testid="toggle-quiet-hours" />
+              <div className="shrink-0 pt-0.5">
+                <Switch checked={quietOn} onChange={onQuietToggle} testid="toggle-quiet-hours" />
+              </div>
             </div>
 
             {quietOn && (
@@ -295,7 +297,7 @@ function ChannelRow({
   testid: string;
 }) {
   return (
-    <div className="px-5 py-4 flex items-start gap-4">
+    <div className="px-4 sm:px-5 py-4 flex items-start gap-3 sm:gap-4">
       <div className="mt-1 w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-foreground/80 shrink-0">
         {icon}
       </div>

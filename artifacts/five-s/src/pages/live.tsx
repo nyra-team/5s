@@ -99,7 +99,7 @@ function DismissedWithoutSubmitChip({
 
 function PendingAreaCard({ item, shift }: { item: LiveShiftPendingArea; shift: CreateNudgeBodyShift }) {
   return (
-    <div className="bg-card rounded-2xl shadow-soft p-4 flex items-center justify-between gap-3" data-testid={`card-pending-${item.areaId}`}>
+    <div className="bg-card rounded-2xl shadow-soft p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3" data-testid={`card-pending-${item.areaId}`}>
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -116,7 +116,9 @@ function PendingAreaCard({ item, shift }: { item: LiveShiftPendingArea; shift: C
           />
         )}
       </div>
-      <NudgeButton areaId={item.areaId} shift={shift} lastNudgeAt={item.lastNudgeAt} />
+      <div className="sm:shrink-0 self-start sm:self-auto">
+        <NudgeButton areaId={item.areaId} shift={shift} lastNudgeAt={item.lastNudgeAt} />
+      </div>
     </div>
   );
 }
@@ -127,7 +129,7 @@ function OverdueCard({ item, shift }: { item: LiveShiftOverdueCheck; shift: Crea
   const overdueText = hours > 0 ? `${hours}h ${minutes}m overdue` : `${minutes}m overdue`;
 
   return (
-    <div className="bg-card rounded-2xl shadow-soft p-4 flex items-center justify-between gap-3" data-testid={`card-overdue-${item.areaId}-${item.machine ?? "area"}`}>
+    <div className="bg-card rounded-2xl shadow-soft p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3" data-testid={`card-overdue-${item.areaId}-${item.machine ?? "area"}`}>
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
@@ -147,7 +149,9 @@ function OverdueCard({ item, shift }: { item: LiveShiftOverdueCheck; shift: Crea
           />
         )}
       </div>
-      <NudgeButton areaId={item.areaId} machine={item.machine ?? undefined} shift={shift} lastNudgeAt={item.lastNudgeAt} />
+      <div className="sm:shrink-0 self-start sm:self-auto">
+        <NudgeButton areaId={item.areaId} machine={item.machine ?? undefined} shift={shift} lastNudgeAt={item.lastNudgeAt} />
+      </div>
     </div>
   );
 }
@@ -196,25 +200,25 @@ function OpenEscalationRow({ item }: { item: Escalation }) {
   };
 
   return (
-    <div className="bg-card rounded-2xl shadow-soft p-4 flex items-center justify-between gap-3" data-testid={`card-live-escalation-${item.id}`}>
+    <div className="bg-card rounded-2xl shadow-soft p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3" data-testid={`card-live-escalation-${item.id}`}>
       <div className="min-w-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <AlertTriangle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-          <p className="font-medium text-[14px] truncate">{item.areaName}</p>
-          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300">
+          <p className="font-medium text-[14px] truncate min-w-0">{item.areaName}</p>
+          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300 shrink-0">
             {item.scorePercent}%
           </span>
         </div>
-        <p className="text-[12px] text-muted-foreground mt-0.5">
+        <p className="text-[12px] text-muted-foreground mt-0.5 break-words">
           {item.operatorEmail} · {timeAgo(item.createdAt)}
           {item.failingPillars.length > 0 && ` · failing ${item.failingPillars.join(", ")}`}
         </p>
       </div>
-      <div className="flex gap-1.5">
+      <div className="flex gap-1.5 sm:shrink-0">
         <Button
           size="sm"
           variant="outline"
-          className="rounded-full h-10 px-4"
+          className="rounded-full h-10 px-4 flex-1 sm:flex-none"
           disabled={ack.isPending}
           onClick={() => ack.mutate({ id: item.id }, { onSuccess: () => { toast({ title: "Acknowledged" }); invalidate(); } })}
           data-testid={`button-live-ack-${item.id}`}
@@ -223,7 +227,7 @@ function OpenEscalationRow({ item }: { item: Escalation }) {
         </Button>
         <Button
           size="sm"
-          className="rounded-full h-10 px-4"
+          className="rounded-full h-10 px-4 flex-1 sm:flex-none"
           disabled={resolve.isPending}
           onClick={() => resolve.mutate({ id: item.id }, { onSuccess: () => { toast({ title: "Resolved" }); invalidate(); } })}
           data-testid={`button-live-resolve-${item.id}`}
@@ -261,8 +265,8 @@ export default function LiveShiftPage() {
         <p className="eyebrow inline-flex items-center gap-1.5">
           <Activity className="w-3 h-3" /> Now
         </p>
-        <h1 className="text-[34px] font-semibold tracking-tight leading-tight">Live shift {shift}</h1>
-        <p className="text-muted-foreground text-[15px]">
+        <h1 className="text-[26px] sm:text-[34px] font-semibold tracking-tight leading-tight">Live shift {shift}</h1>
+        <p className="text-muted-foreground text-[14px] sm:text-[15px] break-words">
           {formatDayTime(startsAt)} – {formatClockTime(endsAt)} {tzLabel} · {totalThings === 0 ? "all clear" : `${totalThings} thing${totalThings === 1 ? "" : "s"} need attention`}
         </p>
       </header>

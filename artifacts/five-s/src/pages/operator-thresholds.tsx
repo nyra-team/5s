@@ -115,10 +115,10 @@ export default function OperatorThresholdsPage() {
         <p className="eyebrow inline-flex items-center gap-1.5">
           <Sliders className="w-3 h-3" /> Operator thresholds
         </p>
-        <h1 className="text-[34px] font-semibold tracking-tight leading-tight">
+        <h1 className="text-[26px] sm:text-[34px] font-semibold tracking-tight leading-tight">
           Tune operator thresholds
         </h1>
-        <p className="text-muted-foreground text-[15px]">
+        <p className="text-muted-foreground text-[14px] sm:text-[15px]">
           Adjust the cutoffs that drive the operator UI without a redeploy.
           Set a global default and, when needed, fine-tune a single area
           (e.g. a fast-cycling line that needs a tighter "due soon" lead).
@@ -536,8 +536,8 @@ function FieldRow(props: {
     footer,
   } = props;
   return (
-    <div className="px-5 py-5">
-      <div className="flex items-start justify-between gap-4">
+    <div className="px-4 sm:px-5 py-5">
+      <div className="flex items-start justify-between gap-3 sm:gap-4">
         <div className="min-w-0">
           <p className="text-[15px] font-medium tracking-tight">{meta.label}</p>
           <p className="text-[12.5px] text-muted-foreground mt-0.5">{meta.help}</p>
@@ -556,7 +556,7 @@ function FieldRow(props: {
       </div>
 
       <div className="mt-4 flex items-end gap-3 flex-wrap">
-        <label className="flex flex-col gap-1">
+        <label className="flex flex-col gap-1 min-w-0 flex-1 sm:flex-none">
           <span className="text-[11.5px] text-muted-foreground">
             {dbLabel ?? `DB override (${meta.unit}, blank = clear)`}
           </span>
@@ -571,7 +571,7 @@ function FieldRow(props: {
             placeholder={dbPlaceholder}
             data-testid={`input-${f}`}
             onChange={(e) => onChange(e.target.value)}
-            className="bg-secondary text-foreground rounded-lg px-3 py-2 h-10 text-[14px] tabular-nums hairline focus:outline-none focus:ring-2 focus:ring-primary/40 w-44 disabled:opacity-50"
+            className="bg-secondary text-foreground rounded-lg px-3 py-2 h-10 text-[14px] tabular-nums hairline focus:outline-none focus:ring-2 focus:ring-primary/40 w-full sm:w-44 disabled:opacity-50"
           />
         </label>
 
@@ -754,7 +754,7 @@ function AuditHistory({
   }
   return (
     <div
-      className="bg-card rounded-2xl shadow-soft hairline px-5 py-4"
+      className="bg-card rounded-2xl shadow-soft hairline px-4 sm:px-5 py-4"
       data-testid="thresholds-audit-history"
     >
       <p className="eyebrow inline-flex items-center gap-1.5">
