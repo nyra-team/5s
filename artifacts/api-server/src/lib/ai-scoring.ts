@@ -117,12 +117,31 @@ function clamp05(n: any): number {
   return Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
 }
 
+/**
+ * Suggestion text written to `submissionsJson` when the VLM pipeline fails and
+ * we have no real recommendations to surface. Exported so other modules can
+ * recognise this no-op fallback and avoid showing it in places where only
+ * actionable items belong (e.g. the operator's recent-audit action chips).
+ */
+export const AI_UNAVAILABLE_FALLBACK_ACTION =
+  "Manual inspection required — AI scoring unavailable";
+
+/**
+ * Returns true when the suggestion is a known no-op fallback that the system
+ * generates on its own (rather than a real, actionable recommendation). Used
+ * to filter the inline action chips on the operator's recent-audits strip
+ * without affecting the full detail dialog.
+ */
+export function isNoOpFallbackSuggestion(s: string): boolean {
+  return s.trim() === AI_UNAVAILABLE_FALLBACK_ACTION;
+}
+
 function emptyResult(reason: string): AIScoringResult {
   return {
     embeddingHash: "",
     aiTotalScore: 0,
     aiPillarsJson: { sort: 0, set: 0, shine: 0, standardize: 0, sustain: 0 },
-    aiRecommendationsJson: [{ action: "Manual inspection required — AI scoring unavailable", why: reason, location: "general" }],
+    aiRecommendationsJson: [{ action: AI_UNAVAILABLE_FALLBACK_ACTION, why: reason, location: "general" }],
     aiIssuesJson: [{ issue: "AI scoring unavailable", evidence: reason, location: "general" }],
     failingPillars: [],
     modelVersion: "error",

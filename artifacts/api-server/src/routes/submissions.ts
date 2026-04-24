@@ -13,7 +13,12 @@ import { GetSubmissionParams, ListSubmissionsQueryParams } from "@workspace/api-
 import { authMiddleware } from "../lib/auth";
 import { upload } from "../lib/upload";
 import { getCurrentShift, getISTShiftRange } from "../lib/scoring";
-import { scoreSubmission, type ScoringOutput } from "../lib/ai-scoring.js";
+import {
+  scoreSubmission,
+  type ScoringOutput,
+  AI_UNAVAILABLE_FALLBACK_ACTION,
+  isNoOpFallbackSuggestion,
+} from "../lib/ai-scoring.js";
 import { isVideoFile } from "../lib/keyframes.js";
 import { ingestProfileExtract, getOrCreateProfile, TRAINING_THRESHOLD } from "../lib/learning";
 import { recordCheck } from "../lib/schedule";
@@ -271,7 +276,7 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
   const finalScoreJson = scoring.aiPillarsJson;
   const finalSuggestions = scoring.aiRecommendationsJson?.length
     ? scoring.aiRecommendationsJson.map((r) => r.action)
-    : ["Manual inspection required — AI scoring unavailable"];
+    : [AI_UNAVAILABLE_FALLBACK_ACTION];
 
   const [submission] = await db
     .insert(submissionsTable)
@@ -376,7 +381,7 @@ router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req
   const finalScoreJson = scoring.aiPillarsJson;
   const finalSuggestions = scoring.aiRecommendationsJson?.length
     ? scoring.aiRecommendationsJson.map((r) => r.action)
-    : ["Manual inspection required — AI scoring unavailable"];
+    : [AI_UNAVAILABLE_FALLBACK_ACTION];
 
   const [updated] = await db
     .update(submissionsTable)
@@ -512,6 +517,13 @@ router.get("/operator/recent", authMiddleware, async (req, res): Promise<void> =
     // Surface the first ≤2 action labels inline on the recent-audits strip so
     // the operator can prioritize re-captures without opening the detail
     // dialog. suggestionsJson is jsonb-typed and may legitimately be empty.
+    //
+    // We deliberately skip known no-op fallbacks (e.g. the
+    // "AI scoring unavailable" message that gets written when scoring fails)
+    // because they aren't actionable for the operator and would otherwise
+    // crowd out a real re-capture decision. The full detail dialog still
+    // shows every suggestion, including the fallback, so scoring status is
+    // not lost — just hidden from the inline chips.
     const rawSuggestions = Array.isArray(row.suggestionsJson)
       ? (row.suggestionsJson as unknown[])
       : [];
@@ -520,6 +532,7 @@ router.get("/operator/recent", authMiddleware, async (req, res): Promise<void> =
       if (typeof s !== "string") continue;
       const trimmed = s.trim();
       if (!trimmed) continue;
+      if (isNoOpFallbackSuggestion(trimmed)) continue;
       topActions.push(trimmed);
       if (topActions.length === 2) break;
     }

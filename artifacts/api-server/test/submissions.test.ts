@@ -2,6 +2,7 @@ import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { db, submissionsTable } from "@workspace/db";
 import { TestWorld, api } from "./helpers.js";
+import { AI_UNAVAILABLE_FALLBACK_ACTION } from "../src/lib/ai-scoring.js";
 
 interface SubmissionRow {
   id: number;
@@ -13,6 +14,7 @@ async function insertSub(opts: {
   userId: number;
   scoreTotal: number;
   machineTag?: string | null;
+  suggestionsJson?: string[];
 }) {
   const [s] = await db
     .insert(submissionsTable)
@@ -22,7 +24,7 @@ async function insertSub(opts: {
       shift: "A",
       scoreTotal: opts.scoreTotal,
       scoreJson: { sort: 0, set: 0, shine: 0, standardize: 0, sustain: 0 },
-      suggestionsJson: [],
+      suggestionsJson: opts.suggestionsJson ?? [],
       imageUrl: "/uploads/test.jpg",
       mediaType: "image",
       machineTag: opts.machineTag ?? null,
@@ -149,5 +151,66 @@ describe("GET /api/submissions (q + score-range filters)", () => {
     assert.ok(ids.includes(mid.id));
     assert.ok(!ids.includes(low.id));
     assert.ok(!ids.includes(high.id));
+  });
+});
+
+interface RecentRow {
+  id: number;
+  topActions: string[];
+}
+
+describe("GET /api/operator/recent (topActions filtering)", () => {
+  let world: TestWorld;
+  beforeEach(() => { world = new TestWorld(); });
+  afterEach(async () => { await world.cleanup(); });
+
+  test("hides the AI-unavailable fallback from inline action chips", async () => {
+    const operator = await world.createUser("OPERATOR");
+    const area = await world.createArea("fallbackzone");
+
+    // The scoring pipeline writes exactly this single string when the VLM
+    // call fails. Operators should see no chips for this row — the chip
+    // slot is reserved for actionable re-capture decisions.
+    const sub = await insertSub({
+      areaId: area.id,
+      userId: operator.id,
+      scoreTotal: 10,
+      suggestionsJson: [AI_UNAVAILABLE_FALLBACK_ACTION],
+    });
+
+    const r = await api<RecentRow[]>(operator.token, "GET", "/api/operator/recent");
+    assert.equal(r.status, 200);
+    const row = r.body.find((x) => x.id === sub.id);
+    assert.ok(row, "submission should appear in the recent strip");
+    assert.deepEqual(row!.topActions, [], "fallback must not surface as a chip");
+  });
+
+  test("keeps real suggestions and only filters out the fallback", async () => {
+    const operator = await world.createUser("OPERATOR");
+    const area = await world.createArea("mixedzone");
+
+    // Mix the fallback alongside real, actionable suggestions. Only the
+    // fallback should be removed; the real items still populate up to two
+    // chips in their original order.
+    const sub = await insertSub({
+      areaId: area.id,
+      userId: operator.id,
+      scoreTotal: 12,
+      suggestionsJson: [
+        AI_UNAVAILABLE_FALLBACK_ACTION,
+        "Wipe down conveyor belt",
+        "Re-label chemical bottles",
+        "Restock PPE station",
+      ],
+    });
+
+    const r = await api<RecentRow[]>(operator.token, "GET", "/api/operator/recent");
+    assert.equal(r.status, 200);
+    const row = r.body.find((x) => x.id === sub.id);
+    assert.ok(row, "submission should appear in the recent strip");
+    assert.deepEqual(row!.topActions, [
+      "Wipe down conveyor belt",
+      "Re-label chemical bottles",
+    ]);
   });
 });
