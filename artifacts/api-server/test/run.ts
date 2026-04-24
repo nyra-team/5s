@@ -27,6 +27,7 @@ import "./recover-pending-notifications.test.js";
 import "./live-recovery-race.test.js";
 import "./preferences.test.js";
 import "./ai-reliability.test.js";
+import "./metrics-retention.test.js";
 import "./dashboard-area-detection-agreement.test.js";
 
 after(async () => {

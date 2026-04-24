@@ -49,6 +49,7 @@ A full-stack web application for manufacturing environments to enforce 5S compli
 - **Manager Triage Flow**: Dedicated `/live` page for triaging pending areas, overdue checks, low-scoring submissions, and open escalations, with quick-labeling and keyboard shortcuts.
 - **Notification Grouping**: Batches multiple escalations within a configurable window to reduce notification fatigue.
 - **Escalation Re-pings**: A background scheduler re-notifies managers about unaddressed open escalations based on configurable thresholds.
+- **AI Metrics Retention**: A daily background sweep (`startMetricsRetentionScheduler` in `artifacts/api-server/src/lib/metrics-retention.ts`) deletes `ai_scoring_metrics` rows older than 30 days. The dashboard only reads the last 7 days from this table; the 30-day buffer keeps room for ad-hoc investigations while preventing unbounded growth. Tune the window by editing the `AI_SCORING_METRICS_RETENTION_DAYS` constant.
 - **AI Reliability Monitoring**: Dashboard panel and endpoint to surface VLM first-try retry rates.
 - **Area Auto-Detect Agreement**: Tracks agreement between operator-selected area and auto-detected area.
 

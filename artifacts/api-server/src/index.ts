@@ -7,6 +7,7 @@ import {
   recoverPendingEscalationNotifications,
 } from "./lib/notifications";
 import { startRepingScheduler } from "./lib/reping-scheduler";
+import { startMetricsRetentionScheduler } from "./lib/metrics-retention";
 
 const rawPort = process.env["PORT"];
 
@@ -88,6 +89,7 @@ recoverPendingEscalationNotifications().catch((err) =>
 );
 
 startRepingScheduler();
+startMetricsRetentionScheduler();
 
 // Graceful shutdown: flush any in-memory escalation digests so we don't drop
 // notifications that were waiting in the grouping window.
