@@ -438,12 +438,12 @@ async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
 
   // Deterministic params keep identical submissions producing identical scores.
   // `seed` is best-effort: the proxy may ignore it for models that don't
-  // support it, which is fine — temperature 0 alone gives strong determinism.
+  // support it. gpt-5 only accepts the default temperature (1), so we omit
+  // the parameter entirely rather than sending an unsupported value.
   const baseRequest = {
     model: "gpt-5",
     response_format: { type: "json_object" as const },
     max_completion_tokens: 2048,
-    temperature: 0,
     top_p: 1,
     seed: 5,
   };
