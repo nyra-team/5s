@@ -314,6 +314,9 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
   return (
     <DialogContent
       className="
+        left-0 top-0 sm:left-[50%] sm:top-[50%]
+        translate-x-0 translate-y-0 sm:translate-x-[-50%] sm:translate-y-[-50%]
+        [--dialog-rest-transform:translate(0,0)] sm:[--dialog-rest-transform:translate(-50%,-50%)]
         w-screen sm:w-full
         max-w-none sm:max-w-5xl
         h-[100dvh] sm:h-auto

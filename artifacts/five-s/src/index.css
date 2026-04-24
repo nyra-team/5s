@@ -237,15 +237,20 @@
   }
 }
 
-/* Spring-style dialog enter — Apple-like soft overshoot */
+/* Spring-style dialog enter — Apple-like soft overshoot.
+   The keyframes compose `--dialog-rest-transform` (the dialog's resting
+   position transform, defaulting to centered via translate(-50%, -50%))
+   with a small Y offset and scale, so non-centered dialogs (full-screen
+   sheets, side drawers, bottom sheets) can override that variable to
+   animate from their own resting position. */
 @keyframes dialog-spring-in {
-  0%   { opacity: 0; transform: translate(-50%, -46%) scale(0.94); }
-  60%  { opacity: 1; transform: translate(-50%, -50%) scale(1.012); }
-  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  0%   { opacity: 0; transform: var(--dialog-rest-transform, translate(-50%, -50%)) translateY(4%) scale(0.94); }
+  60%  { opacity: 1; transform: var(--dialog-rest-transform, translate(-50%, -50%)) scale(1.012); }
+  100% { opacity: 1; transform: var(--dialog-rest-transform, translate(-50%, -50%)) scale(1); }
 }
 @keyframes dialog-fade-out {
-  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  to   { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
+  from { opacity: 1; transform: var(--dialog-rest-transform, translate(-50%, -50%)) scale(1); }
+  to   { opacity: 0; transform: var(--dialog-rest-transform, translate(-50%, -50%)) translateY(2%) scale(0.97); }
 }
 .dialog-spring[data-state="open"] {
   animation: dialog-spring-in 360ms cubic-bezier(0.34, 1.4, 0.64, 1);
