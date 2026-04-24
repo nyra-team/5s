@@ -439,6 +439,29 @@ paths:
                 items:
                   $ref: "#/components/schemas/NextCheck"
 
+  /operator/recent:
+    get:
+      operationId: getOperatorRecent
+      tags: [submissions]
+      summary: Operator's most recent submissions across shifts (latest N within a 30-day context window)
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: Recent submissions for the current operator with prior-score context
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RecentSubmission"
+
   /escalations:
     get:
       operationId: listEscalations
@@ -1074,3 +1097,44 @@ components:
         - cadenceSeconds
         - overdue
         - reason
+
+    RecentSubmission:
+      type: object
+      description: A trimmed view of the operator's own submission with prior-score context for trend rendering.
+      properties:
+        id:
+          type: integer
+        areaId:
+          type: integer
+        areaName:
+          type: string
+        shift:
+          type: string
+          enum: [A, B, C]
+        scoreTotal:
+          type: integer
+        mediaType:
+          type: string
+          enum: [image, video]
+        machineTag:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        prevScoreTotal:
+          type: integer
+          nullable: true
+          description: The operator's own previous scoreTotal for this area (any time before this one), or null if none.
+        bestScoreInLastWeek:
+          type: integer
+          nullable: true
+          description: The operator's max scoreTotal for this area in the 7 days strictly preceding this submission's createdAt (excluding the submission itself). Null if there were no prior submissions in that window.
+      required:
+        - id
+        - areaId
+        - areaName
+        - shift
+        - scoreTotal
+        - mediaType
+        - createdAt

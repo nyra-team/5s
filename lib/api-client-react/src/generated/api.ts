@@ -30,6 +30,7 @@ import type {
   EscalationCount,
   GetDashboardComplianceParams,
   GetDashboardScoresParams,
+  GetOperatorRecentParams,
   GetOperatorStatusParams,
   HealthStatus,
   Label,
@@ -39,6 +40,7 @@ import type {
   LoginResponse,
   ModelStatus,
   NextCheck,
+  RecentSubmission,
   ReuploadSubmissionBody,
   ScoreSummary,
   Submission,
@@ -1752,6 +1754,103 @@ export function useGetNextChecks<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetNextChecksQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Operator's most recent submissions across shifts (latest N within a 30-day context window)
+ */
+export const getGetOperatorRecentUrl = (params?: GetOperatorRecentParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/operator/recent?${stringifiedParams}`
+    : `/api/operator/recent`;
+};
+
+export const getOperatorRecent = async (
+  params?: GetOperatorRecentParams,
+  options?: RequestInit,
+): Promise<RecentSubmission[]> => {
+  return customFetch<RecentSubmission[]>(getGetOperatorRecentUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOperatorRecentQueryKey = (
+  params?: GetOperatorRecentParams,
+) => {
+  return [`/api/operator/recent`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetOperatorRecentQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOperatorRecent>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetOperatorRecentParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOperatorRecent>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetOperatorRecentQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOperatorRecent>>
+  > = ({ signal }) => getOperatorRecent(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOperatorRecent>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOperatorRecentQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOperatorRecent>>
+>;
+export type GetOperatorRecentQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Operator's most recent submissions across shifts (latest N within a 30-day context window)
+ */
+
+export function useGetOperatorRecent<
+  TData = Awaited<ReturnType<typeof getOperatorRecent>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetOperatorRecentParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOperatorRecent>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOperatorRecentQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

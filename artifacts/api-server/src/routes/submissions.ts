@@ -351,6 +351,64 @@ router.get("/shift/current", authMiddleware, async (_req, res): Promise<void> =>
   res.json(getCurrentShift());
 });
 
+router.get("/operator/recent", authMiddleware, async (req, res): Promise<void> => {
+  const { userId } = (req as any).user;
+  const rawLimit = parseInt(String(req.query.limit ?? ""), 10);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 && rawLimit <= 50 ? rawLimit : 12;
+
+  // Pull a wide window so we can compute prevScoreTotal and bestScoreInLastWeek
+  // without an extra round-trip per area. The strip itself only renders `limit`.
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+  const rows = await db
+    .select({
+      id: submissionsTable.id,
+      areaId: submissionsTable.areaId,
+      areaName: areasTable.name,
+      shift: submissionsTable.shift,
+      scoreTotal: submissionsTable.scoreTotal,
+      mediaType: submissionsTable.mediaType,
+      machineTag: submissionsTable.machineTag,
+      createdAt: submissionsTable.createdAt,
+    })
+    .from(submissionsTable)
+    .innerJoin(areasTable, eq(submissionsTable.areaId, areasTable.id))
+    .where(
+      and(
+        eq(submissionsTable.userId, userId),
+        gte(submissionsTable.createdAt, since)
+      )
+    )
+    .orderBy(sql`${submissionsTable.createdAt} DESC`);
+
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+  // For each submission, find the operator's prior submission for the same area
+  // (any time before this one) and the operator's best score for the area in the
+  // 7 days strictly preceding this submission's timestamp (excluding the row
+  // itself). Anchoring to each row's own timestamp keeps the encouragement chip
+  // accurate for older cards too.
+  const result = rows.slice(0, limit).map((row) => {
+    const rowTime = new Date(row.createdAt).getTime();
+    const sameAreaPrior = rows.filter(
+      (r) => r.areaId === row.areaId && r.id !== row.id && new Date(r.createdAt).getTime() < rowTime
+    );
+    const prior = sameAreaPrior[0]; // rows are DESC, so first match is the most recent prior
+    const priorWeek = sameAreaPrior.filter((r) => new Date(r.createdAt).getTime() >= rowTime - WEEK_MS);
+    const best = priorWeek.length > 0
+      ? priorWeek.reduce((m, r) => (r.scoreTotal > m ? r.scoreTotal : m), -Infinity)
+      : null;
+    return {
+      ...row,
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
+      prevScoreTotal: prior ? prior.scoreTotal : null,
+      bestScoreInLastWeek: best === -Infinity || best === null ? null : best,
+    };
+  });
+
+  res.json(result);
+});
+
 router.get("/operator/status", authMiddleware, async (req, res): Promise<void> => {
   const { userId } = (req as any).user;
   const queryShift = req.query.shift as string | undefined;

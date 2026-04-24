@@ -286,6 +286,41 @@ export interface NextCheck {
   reason: string;
 }
 
+export type RecentSubmissionShift =
+  (typeof RecentSubmissionShift)[keyof typeof RecentSubmissionShift];
+
+export const RecentSubmissionShift = {
+  A: "A",
+  B: "B",
+  C: "C",
+} as const;
+
+export type RecentSubmissionMediaType =
+  (typeof RecentSubmissionMediaType)[keyof typeof RecentSubmissionMediaType];
+
+export const RecentSubmissionMediaType = {
+  image: "image",
+  video: "video",
+} as const;
+
+/**
+ * A trimmed view of the operator's own submission with prior-score context for trend rendering.
+ */
+export interface RecentSubmission {
+  id: number;
+  areaId: number;
+  areaName: string;
+  shift: RecentSubmissionShift;
+  scoreTotal: number;
+  mediaType: RecentSubmissionMediaType;
+  machineTag?: string | null;
+  createdAt: string;
+  /** The operator's own previous scoreTotal for this area (any time before this one), or null if none. */
+  prevScoreTotal?: number | null;
+  /** The operator's max scoreTotal for this area in the 7 days strictly preceding this submission's createdAt (excluding the submission itself). Null if there were no prior submissions in that window. */
+  bestScoreInLastWeek?: number | null;
+}
+
 export type ListSubmissionsParams = {
   shift?: ListSubmissionsShift;
   areaId?: number;
@@ -377,6 +412,14 @@ export const GetOperatorStatusShift = {
   B: "B",
   C: "C",
 } as const;
+
+export type GetOperatorRecentParams = {
+  /**
+   * @minimum 1
+   * @maximum 50
+   */
+  limit?: number;
+};
 
 export type ListEscalationsParams = {
   status?: ListEscalationsStatus;

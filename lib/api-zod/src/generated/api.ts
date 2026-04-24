@@ -515,6 +515,49 @@ export const GetNextChecksResponseItem = zod.object({
 export const GetNextChecksResponse = zod.array(GetNextChecksResponseItem);
 
 /**
+ * @summary Operator's most recent submissions across shifts (latest N within a 30-day context window)
+ */
+export const getOperatorRecentQueryLimitMax = 50;
+
+export const GetOperatorRecentQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(getOperatorRecentQueryLimitMax)
+    .optional(),
+});
+
+export const GetOperatorRecentResponseItem = zod
+  .object({
+    id: zod.number(),
+    areaId: zod.number(),
+    areaName: zod.string(),
+    shift: zod.enum(["A", "B", "C"]),
+    scoreTotal: zod.number(),
+    mediaType: zod.enum(["image", "video"]),
+    machineTag: zod.string().nullish(),
+    createdAt: zod.coerce.date(),
+    prevScoreTotal: zod
+      .number()
+      .nullish()
+      .describe(
+        "The operator's own previous scoreTotal for this area (any time before this one), or null if none.",
+      ),
+    bestScoreInLastWeek: zod
+      .number()
+      .nullish()
+      .describe(
+        "The operator's max scoreTotal for this area in the 7 days strictly preceding this submission's createdAt (excluding the submission itself). Null if there were no prior submissions in that window.",
+      ),
+  })
+  .describe(
+    "A trimmed view of the operator's own submission with prior-score context for trend rendering.",
+  );
+export const GetOperatorRecentResponse = zod.array(
+  GetOperatorRecentResponseItem,
+);
+
+/**
  * @summary List escalations (manager)
  */
 export const ListEscalationsQueryParams = zod.object({
