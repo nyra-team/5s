@@ -62,7 +62,7 @@ function NudgeButton({
     <Button
       size="sm"
       variant={recent ? "outline" : "secondary"}
-      className="rounded-full h-8 text-[12px]"
+      className="rounded-full h-10 text-[12px] px-4"
       onClick={onClick}
       disabled={createNudge.isPending}
       data-testid={`button-nudge-area-${areaId}${machine ? `-${machine}` : ""}`}
@@ -214,7 +214,7 @@ function OpenEscalationRow({ item }: { item: Escalation }) {
         <Button
           size="sm"
           variant="outline"
-          className="rounded-full h-8"
+          className="rounded-full h-10 px-4"
           disabled={ack.isPending}
           onClick={() => ack.mutate({ id: item.id }, { onSuccess: () => { toast({ title: "Acknowledged" }); invalidate(); } })}
           data-testid={`button-live-ack-${item.id}`}
@@ -223,7 +223,7 @@ function OpenEscalationRow({ item }: { item: Escalation }) {
         </Button>
         <Button
           size="sm"
-          className="rounded-full h-8"
+          className="rounded-full h-10 px-4"
           disabled={resolve.isPending}
           onClick={() => resolve.mutate({ id: item.id }, { onSuccess: () => { toast({ title: "Resolved" }); invalidate(); } })}
           data-testid={`button-live-resolve-${item.id}`}

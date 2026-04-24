@@ -563,7 +563,7 @@ function LearningTrendPanel() {
                   value={String(d)}
                   aria-label={`${d} days`}
                   data-testid={`trend-days-${d}`}
-                  className="h-7 px-2.5 text-[12px] data-[state=on]:bg-card data-[state=on]:shadow-soft"
+                  className="h-10 px-3.5 text-[12px] data-[state=on]:bg-card data-[state=on]:shadow-soft"
                 >
                   {d}d
                 </ToggleGroupItem>
@@ -592,7 +592,7 @@ function LearningTrendPanel() {
                   value={o.value}
                   aria-label={o.value === "ALL" ? "All shifts" : `Shift ${o.value}`}
                   data-testid={`trend-shift-${o.value}`}
-                  className="h-7 px-2.5 text-[12px] data-[state=on]:bg-card data-[state=on]:shadow-soft"
+                  className="h-10 px-3.5 text-[12px] data-[state=on]:bg-card data-[state=on]:shadow-soft"
                 >
                   {o.label}
                 </ToggleGroupItem>
@@ -804,7 +804,7 @@ function OperatorDismissPanel() {
                 value={String(d)}
                 aria-label={`${d} days`}
                 data-testid={`dismiss-days-${d}`}
-                className="h-7 px-2.5 text-[12px] data-[state=on]:bg-card data-[state=on]:shadow-soft"
+                className="h-10 px-3.5 text-[12px] data-[state=on]:bg-card data-[state=on]:shadow-soft"
               >
                 {d}d
               </ToggleGroupItem>

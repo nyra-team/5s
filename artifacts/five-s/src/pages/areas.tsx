@@ -584,7 +584,7 @@ function AreaAssignmentsSection({ areaId, areaName }: { areaId: number; areaName
           <Button
             size="sm"
             variant="ghost"
-            className="rounded-full text-muted-foreground h-8 px-3"
+            className="rounded-full text-muted-foreground h-10 px-4"
             onClick={() => setEditing(true)}
             data-testid={`button-edit-assignments-${areaId}`}
           >

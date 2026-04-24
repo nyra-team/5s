@@ -194,7 +194,15 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
   const keyframes = sub.keyframesJson ?? [];
 
   return (
-    <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto rounded-2xl p-0">
+    <DialogContent
+      className="
+        w-screen sm:w-full
+        max-w-none sm:max-w-5xl
+        h-[100dvh] sm:h-auto
+        max-h-[100dvh] sm:max-h-[92vh]
+        overflow-y-auto rounded-none sm:rounded-2xl p-0 border-0 sm:border
+      "
+    >
       <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
         {/* Left column: just the main image on mobile, plus keyframes/machine tag on
             desktop. On phones the keyframes & tag move into the right column below
@@ -737,7 +745,80 @@ export default function Submissions() {
         </div>
       </div>
 
-      <div className="bg-card rounded-2xl shadow-soft overflow-hidden">
+      {/* Mobile: stacked cards. The desktop table overflows a 375px viewport
+          even with overflow-x-auto, so below the small breakpoint we render a
+          tap-friendly card list with the same fields and row actions. */}
+      <div className="sm:hidden bg-card rounded-2xl shadow-soft overflow-hidden">
+        {isLoading ? (
+          <p className="px-5 py-12 text-center text-muted-foreground text-[13.5px]">Loading submissions…</p>
+        ) : submissions?.length === 0 ? (
+          <p className="px-5 py-12 text-center text-muted-foreground text-[13.5px]">No submissions found matching criteria.</p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {submissions?.map((sub, idx) => {
+              const thumb = sub.mediaType === "video" && sub.keyframesJson?.[0] ? sub.keyframesJson[0] : sub.imageUrl;
+              const isActive = activeIdx === idx;
+              return (
+                <li
+                  key={sub.id}
+                  className={`${isActive ? "bg-primary/5 ring-2 ring-inset ring-primary/60" : ""}`}
+                  data-testid={`card-submission-${sub.id}`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => { setActiveIdx(idx); setSelectedSubmissionId(sub.id); }}
+                    className="w-full text-left px-4 pt-4 pb-3 flex gap-3 items-start active:bg-primary/10 transition-colors"
+                  >
+                    <div className="w-16 h-16 rounded-lg bg-secondary overflow-hidden shrink-0">
+                      <img src={`/api${thumb}`} alt="" className="w-full h-full object-cover" />
+                    </div>
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-medium text-[14px] truncate">{sub.areaName}</p>
+                        <ScorePill percent={sub.scoreTotal * 4} />
+                      </div>
+                      <p className="text-[12.5px] text-muted-foreground">
+                        Shift {sub.shift} · <span className="tabular-nums">{format(new Date(sub.createdAt), "MMM d, HH:mm")}</span>
+                      </p>
+                      <p className="text-[12px] text-muted-foreground truncate">{sub.userEmail}</p>
+                      <div className="flex flex-wrap gap-1 pt-0.5">
+                        <MediaTypeBadge type={sub.mediaType} />
+                        <ScoringModeBadge mode={sub.scoringMode} />
+                      </div>
+                    </div>
+                  </button>
+                  {isManager && (
+                    <div className="flex gap-2 px-4 pb-4">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-full h-10 text-[12px] flex-1"
+                        disabled={quickApprove.isPending}
+                        onClick={(e) => { e.stopPropagation(); handleApprove(sub.id); }}
+                        data-testid={`button-approve-mobile-${sub.id}`}
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="rounded-full h-10 text-[12px] flex-1 bg-secondary/60"
+                        onClick={(e) => { e.stopPropagation(); openWithLabelForm(sub.id); }}
+                        data-testid={`button-needswork-mobile-${sub.id}`}
+                      >
+                        <Pencil className="w-3.5 h-3.5 mr-1" /> Needs work
+                      </Button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {/* Desktop: original table. Hidden below the small breakpoint. */}
+      <div className="hidden sm:block bg-card rounded-2xl shadow-soft overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-[13.5px]">
             <thead>
@@ -793,7 +874,7 @@ export default function Submissions() {
                             <Button
                               size="sm"
                               variant="outline"
-                              className="rounded-full h-8 text-[12px]"
+                              className="rounded-full h-10 text-[12px] px-3"
                               disabled={quickApprove.isPending}
                               onClick={(e) => { e.stopPropagation(); handleApprove(sub.id); }}
                               data-testid={`button-approve-${sub.id}`}
@@ -804,7 +885,7 @@ export default function Submissions() {
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="rounded-full h-8 text-[12px]"
+                              className="rounded-full h-10 text-[12px] px-3"
                               onClick={(e) => { e.stopPropagation(); openWithLabelForm(sub.id); }}
                               data-testid={`button-needswork-${sub.id}`}
                               title="Needs work (r)"

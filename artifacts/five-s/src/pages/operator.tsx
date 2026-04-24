@@ -1879,10 +1879,10 @@ function NudgeBanner({
           disabled={dismissMutation.isPending}
           aria-label="Dismiss nudge"
           title="Dismiss"
-          className="-mr-1 -my-1 p-1 rounded-md text-indigo-500/80 hover:text-indigo-700 hover:bg-indigo-100/70 dark:text-indigo-300/80 dark:hover:text-indigo-100 dark:hover:bg-indigo-500/20 transition-colors disabled:opacity-50"
+          className="-mr-2 -my-2 inline-flex items-center justify-center w-10 h-10 rounded-full text-indigo-500/80 hover:text-indigo-700 hover:bg-indigo-100/70 dark:text-indigo-300/80 dark:hover:text-indigo-100 dark:hover:bg-indigo-500/20 transition-colors disabled:opacity-50"
           data-testid={`button-dismiss-nudge-${primary.id}`}
         >
-          <X className="w-3.5 h-3.5" />
+          <X className="w-4 h-4" />
         </button>
       </div>
       {primary.message && (
@@ -1992,7 +1992,7 @@ function CaptureSheet({
                 <button
                   type="button"
                   onClick={onDiscardDraft}
-                  className="text-[12px] font-semibold underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-100 min-h-[28px] px-1"
+                  className="text-[12px] font-semibold underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-100 min-h-[40px] px-2 inline-flex items-center"
                   data-testid="button-discard-draft"
                 >
                   Discard
@@ -2257,7 +2257,7 @@ function AreaPicker({
       <DialogTrigger asChild>
         <button
           type="button"
-          className="text-[12px] font-semibold underline underline-offset-2 text-blue-800 dark:text-blue-200 hover:text-blue-950 dark:hover:text-blue-50 min-h-[28px]"
+          className="text-[12px] font-semibold underline underline-offset-2 text-blue-800 dark:text-blue-200 hover:text-blue-950 dark:hover:text-blue-50 min-h-[40px] px-2 inline-flex items-center"
           data-testid="button-change-area"
         >
           Change{chosenLabel ? ` (currently ${chosenLabel})` : ""}
