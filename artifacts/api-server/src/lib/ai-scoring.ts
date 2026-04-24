@@ -407,7 +407,7 @@ async function recordScoringMetric(
   }
 }
 
-async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
+export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
   const { framePaths, areaName, machineTag, learnedProfile, environmentType } = opts;
   const modelVersion = `gpt-5-${environmentType ?? "factory"}-v1`;
 
