@@ -20,6 +20,7 @@ import "./submissions.test.js";
 import "./submissions-upload.test.js";
 import "./reasoning.test.js";
 import "./backfill-reasoning.test.js";
+import "./backfill-reasoning-scheduler.test.js";
 import "./identify-area.test.js";
 import "./reping-scheduler.test.js";
 import "./sweep.test.js";

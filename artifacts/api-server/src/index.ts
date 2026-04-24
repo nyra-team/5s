@@ -9,6 +9,7 @@ import {
 import { startRepingScheduler } from "./lib/reping-scheduler";
 import { startMetricsRetentionScheduler } from "./lib/metrics-retention";
 import { startAiReliabilityMonitor } from "./lib/ai-reliability";
+import { startBackfillReasoningScheduler } from "./lib/backfill-reasoning-scheduler";
 
 const rawPort = process.env["PORT"];
 
@@ -92,6 +93,7 @@ recoverPendingEscalationNotifications().catch((err) =>
 startRepingScheduler();
 startMetricsRetentionScheduler();
 startAiReliabilityMonitor();
+startBackfillReasoningScheduler();
 
 // Graceful shutdown: flush any in-memory escalation digests so we don't drop
 // notifications that were waiting in the grouping window.
