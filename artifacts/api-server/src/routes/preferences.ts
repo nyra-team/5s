@@ -19,6 +19,19 @@ interface PreferencesShape {
 }
 
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+// Postgres `time` columns (and some legacy data) serialise as "HH:MM:SS".
+// The UI form picker only round-trips "HH:MM", so any drift breaks the
+// edit flow. Normalise both on read (so the client always gets HH:MM) and
+// on write (so HH:MM:SS submissions don't get silently dropped by the
+// strict regex above).
+function normalizeTimeOfDay(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const m = /^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/.exec(trimmed);
+  if (!m) return null;
+  return `${m[1]}:${m[2]}`;
+}
 
 async function loadPreferences(userId: number): Promise<PreferencesShape | null> {
   const [user] = await db
@@ -40,8 +53,8 @@ async function loadPreferences(userId: number): Promise<PreferencesShape | null>
     notifyEmailEnabled: user.notifyEmailEnabled,
     notifySlackEnabled: user.notifySlackEnabled,
     quietHoursEnabled: user.quietHoursEnabled,
-    quietHoursStart: user.quietHoursStart,
-    quietHoursEnd: user.quietHoursEnd,
+    quietHoursStart: normalizeTimeOfDay(user.quietHoursStart) ?? "22:00",
+    quietHoursEnd: normalizeTimeOfDay(user.quietHoursEnd) ?? "07:00",
     quietHoursWeekdayMask: user.quietHoursWeekdayMask,
     emailConfigured: status.emailConfigured,
     slackConfigured: status.slackConfigured,
@@ -74,11 +87,13 @@ router.put("/me/notification-preferences", authMiddleware, requireRole("MANAGER"
   if (typeof body.notifyEmailEnabled === "boolean") patch.notifyEmailEnabled = body.notifyEmailEnabled;
   if (typeof body.notifySlackEnabled === "boolean") patch.notifySlackEnabled = body.notifySlackEnabled;
   if (typeof body.quietHoursEnabled === "boolean") patch.quietHoursEnabled = body.quietHoursEnabled;
-  if (typeof body.quietHoursStart === "string" && HHMM_RE.test(body.quietHoursStart)) {
-    patch.quietHoursStart = body.quietHoursStart;
+  if (typeof body.quietHoursStart === "string") {
+    const start = normalizeTimeOfDay(body.quietHoursStart);
+    if (start) patch.quietHoursStart = start;
   }
-  if (typeof body.quietHoursEnd === "string" && HHMM_RE.test(body.quietHoursEnd)) {
-    patch.quietHoursEnd = body.quietHoursEnd;
+  if (typeof body.quietHoursEnd === "string") {
+    const end = normalizeTimeOfDay(body.quietHoursEnd);
+    if (end) patch.quietHoursEnd = end;
   }
   if (
     typeof body.quietHoursWeekdayMask === "number" &&

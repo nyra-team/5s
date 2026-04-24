@@ -94,6 +94,92 @@ function scoreTone(percent: number) {
   return { text: "text-rose-700 dark:text-rose-300", bg: "bg-rose-50 dark:bg-rose-500/15" };
 }
 
+// Lightweight, keyword-driven severity inference for AI suggestion strings.
+// The model returns plain text actions today (no per-suggestion severity
+// field in the API contract), so we infer one client-side using the same
+// vocabulary 5S/GMP audits use ("contamination", "spill", "leak" → high;
+// "label", "missing tag" → medium; everything else → low). This colours the
+// rail on each row so an operator can scan a long list and immediately see
+// which item to do first, without any backend change.
+type SuggestionSeverity = "high" | "medium" | "low";
+
+const HIGH_SEVERITY_PATTERNS: RegExp[] = [
+  /\b(contamination|contaminant|hazard|hazardous|unsafe|spill|leak|leakage|fire|smoke|sharp|exposed|broken glass|chemical|toxic|biohazard)\b/i,
+  /\b(immediately|urgent|critical|stop the line|do not use|lockout|tagout|loto)\b/i,
+  // Safety-critical "missing/no X" combinations — a 5S/GMP audit treats an
+  // absent guard, PPE, interlock, or earthing as a hard stop, not a medium
+  // housekeeping item. Match within a short window so we don't false-positive
+  // on unrelated sentences containing both words.
+  /\b(missing|no|without|absent|removed)\b[^.\n]{0,40}\b(guard|ppe|gowning|respirator|gloves?|goggles?|helmet|interlock|earthing|grounding|safety cover|machine cover)\b/i,
+];
+const MEDIUM_SEVERITY_PATTERNS: RegExp[] = [
+  /\b(missing|expired|broken|damaged|out of date|out-of-date|overdue|untagged|unlabel(?:l)?ed|wrong label|incorrect label|cracked|loose)\b/i,
+  /\b(label|tag|signage|sign|barrier|guard|ppe|gowning)\b/i,
+];
+
+function inferSuggestionSeverity(text: string): SuggestionSeverity {
+  if (!text) return "low";
+  for (const re of HIGH_SEVERITY_PATTERNS) if (re.test(text)) return "high";
+  for (const re of MEDIUM_SEVERITY_PATTERNS) if (re.test(text)) return "medium";
+  return "low";
+}
+
+function severityStyles(s: SuggestionSeverity): {
+  rail: string;
+  iconColor: string;
+  pillBg: string;
+  pillText: string;
+  label: string;
+} {
+  if (s === "high") {
+    return {
+      rail: "border-l-4 border-l-rose-500/80 dark:border-l-rose-400/70",
+      iconColor: "text-rose-600 dark:text-rose-300",
+      pillBg: "bg-rose-50 dark:bg-rose-500/15",
+      pillText: "text-rose-700 dark:text-rose-300",
+      label: "High",
+    };
+  }
+  if (s === "medium") {
+    return {
+      rail: "border-l-4 border-l-amber-500/80 dark:border-l-amber-400/70",
+      iconColor: "text-amber-600 dark:text-amber-300",
+      pillBg: "bg-amber-50 dark:bg-amber-500/15",
+      pillText: "text-amber-700 dark:text-amber-300",
+      label: "Medium",
+    };
+  }
+  return {
+    rail: "border-l-4 border-l-sky-500/70 dark:border-l-sky-400/60",
+    iconColor: "text-primary",
+    pillBg: "bg-secondary",
+    pillText: "text-foreground/70",
+    label: "Low",
+  };
+}
+
+function SuggestionRow({ text, index }: { text: string; index: number }) {
+  const sev = inferSuggestionSeverity(text);
+  const style = severityStyles(sev);
+  return (
+    <li
+      className={`text-[13.5px] flex gap-2 items-start bg-secondary/60 p-3 pl-2.5 rounded-xl ${style.rail}`}
+      data-testid={`suggestion-row-${index}`}
+      data-severity={sev}
+    >
+      <ArrowRight className={`w-4 h-4 shrink-0 mt-0.5 ${style.iconColor}`} aria-hidden="true" />
+      <span className="leading-snug text-foreground/90 flex-1 min-w-0">{text}</span>
+      <span
+        className={`shrink-0 px-1.5 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wide ${style.pillBg} ${style.pillText}`}
+        aria-label={`Severity: ${style.label}`}
+        title={`AI severity: ${style.label}`}
+      >
+        {style.label}
+      </span>
+    </li>
+  );
+}
+
 function dueStateFor(nc: NextCheck | undefined, now: number): DueState {
   if (!nc) return "ok";
   if (nc.overdue || new Date(nc.nextDueAt).getTime() <= now) return "overdue";
@@ -729,13 +815,7 @@ function RecentDetailDialog({
                 </p>
                 <ul className="space-y-2">
                   {data.suggestionsJson.map((s: string, i: number) => (
-                    <li
-                      key={i}
-                      className="text-[13.5px] flex gap-2 items-start bg-secondary/60 p-3 rounded-xl"
-                    >
-                      <ArrowRight className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                      <span className="leading-snug text-foreground/90">{s}</span>
-                    </li>
+                    <SuggestionRow key={i} text={s} index={i} />
                   ))}
                 </ul>
               </div>
@@ -1116,10 +1196,7 @@ export function AreaCard({
             </p>
             <ul className="space-y-2">
               {sub.suggestionsJson?.map((s, i) => (
-                <li key={i} className="text-[13.5px] flex gap-2 items-start bg-secondary/60 p-3 rounded-xl">
-                  <ArrowRight className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                  <span className="leading-snug text-foreground/90">{s}</span>
-                </li>
+                <SuggestionRow key={i} text={s} index={i} />
               ))}
               {(!sub.suggestionsJson || sub.suggestionsJson.length === 0) && (
                 <li className="text-[13.5px] text-muted-foreground italic bg-secondary/60 p-3 rounded-xl">

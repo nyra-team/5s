@@ -2,7 +2,7 @@ import { useGetDashboardCompliance, useGetDashboardScores, useGetDashboardSummar
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from "recharts";
 import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp } from "lucide-react";
 import { format, parseISO } from "date-fns";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
@@ -287,9 +287,44 @@ const SHIFT_OPTIONS: { value: TrendShiftFilter; label: string }[] = [
   { value: "C", label: "C" },
 ];
 
+// Remember the manager's last-used trend window/shift between visits so the
+// chart restores their preference instead of resetting to the default each time.
+const TREND_DAYS_KEY = "fivesh.dashboard.trendDays";
+const TREND_SHIFT_KEY = "fivesh.dashboard.trendShift";
+
+function readPersistedTrendDays(): TrendDays {
+  if (typeof window === "undefined") return 14;
+  try {
+    const raw = window.localStorage.getItem(TREND_DAYS_KEY);
+    if (!raw) return 14;
+    const n = Number(raw) as TrendDays;
+    return DAYS_OPTIONS.includes(n) ? n : 14;
+  } catch { return 14; }
+}
+
+function readPersistedTrendShift(): TrendShiftFilter {
+  if (typeof window === "undefined") return "ALL";
+  try {
+    const raw = window.localStorage.getItem(TREND_SHIFT_KEY);
+    if (!raw) return "ALL";
+    return SHIFT_OPTIONS.some((o) => o.value === raw)
+      ? (raw as TrendShiftFilter)
+      : "ALL";
+  } catch { return "ALL"; }
+}
+
 function LearningTrendPanel() {
-  const [days, setDays] = useState<TrendDays>(14);
-  const [shiftFilter, setShiftFilter] = useState<TrendShiftFilter>("ALL");
+  const [days, setDays] = useState<TrendDays>(readPersistedTrendDays);
+  const [shiftFilter, setShiftFilter] = useState<TrendShiftFilter>(readPersistedTrendShift);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try { window.localStorage.setItem(TREND_DAYS_KEY, String(days)); } catch { /* quota / private mode */ }
+  }, [days]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try { window.localStorage.setItem(TREND_SHIFT_KEY, shiftFilter); } catch { /* quota / private mode */ }
+  }, [shiftFilter]);
 
   const { data: trends, isLoading } = useGetDashboardTrends({
     days,

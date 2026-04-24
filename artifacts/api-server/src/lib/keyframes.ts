@@ -137,8 +137,22 @@ export async function compressForVLM(
 }
 
 /**
+ * Wall-clock budget for any single ffmpeg invocation. Broken or maliciously
+ * long uploads would otherwise stall an API worker indefinitely (each scoring
+ * call awaits ffmpeg synchronously). On timeout we SIGKILL and let the caller
+ * fall back to interval sampling or to a single-frame error result.
+ *
+ * Override via FFMPEG_TIMEOUT_MS (e.g. 30000) for slow CI hosts.
+ */
+const FFMPEG_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.FFMPEG_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 60_000;
+})();
+
+/**
  * Run ffmpeg with the given filter graph. Returns the list of frame files
- * produced (sorted). Throws on non-zero exit so callers can fall back.
+ * produced (sorted). Throws on non-zero exit OR on timeout (so callers can
+ * fall back to a different sampling strategy or to single-frame mode).
  */
 async function runFfmpeg(videoAbsPath: string, vfilter: string, maxFrames: number, idPrefix: string): Promise<string[]> {
   const pattern = path.join(UPLOAD_DIR, `${idPrefix}_%03d.jpg`);
@@ -154,9 +168,31 @@ async function runFfmpeg(videoAbsPath: string, vfilter: string, maxFrames: numbe
     ];
     const proc = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
+    let settled = false;
     proc.stderr.on("data", (b) => { stderr += b.toString(); });
-    proc.on("error", reject);
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      logger.warn(
+        { videoAbsPath, vfilter, timeoutMs: FFMPEG_TIMEOUT_MS },
+        "ffmpeg invocation exceeded timeout; killing",
+      );
+      try { proc.kill("SIGKILL"); } catch { /* best-effort */ }
+      reject(new Error(`ffmpeg timed out after ${FFMPEG_TIMEOUT_MS}ms`));
+    }, FFMPEG_TIMEOUT_MS);
+    timer.unref?.();
+
+    proc.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
     proc.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       if (code === 0) resolve();
       else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-500)}`));
     });
@@ -187,33 +223,50 @@ export async function extractKeyframes(
   const fallbackInterval = opts.fallbackIntervalSec ?? 2;
   const id = crypto.randomUUID();
 
+  // Per-step timings let operators (and on-call) see exactly where a slow
+  // walk-through went: scene detection vs. fallback sample vs. dedup vs.
+  // VLM-prep compression. Exposed as a single structured log line at the end.
+  const t0 = Date.now();
+  const timings: Record<string, number> = {};
+  const tick = (label: string, since: number) => {
+    timings[label] = Date.now() - since;
+  };
+
   // 1. Scene-change selection. Pre-scale to keep ffmpeg cheap.
   const sceneFilter = `select='gt(scene\\,${sceneThreshold})',scale=720:-2`;
   let candidates: string[] = [];
+  const tScene = Date.now();
   try {
     candidates = await runFfmpeg(videoAbsPath, sceneFilter, maxFrames, `${id}_s`);
   } catch (err) {
     logger.warn({ err, videoAbsPath }, "scene-change ffmpeg pass failed");
   }
+  tick("sceneDetectMs", tScene);
 
   // 2. Fallback to fixed interval if scene detection found nothing.
   if (candidates.length === 0) {
     const intervalFilter = `fps=1/${fallbackInterval},scale=720:-2`;
+    const tFallback = Date.now();
     try {
       candidates = await runFfmpeg(videoAbsPath, intervalFilter, maxFrames, `${id}_i`);
     } catch (err) {
       logger.warn({ err, videoAbsPath }, "fallback interval ffmpeg pass failed");
     }
+    tick("fallbackSampleMs", tFallback);
   }
 
   if (candidates.length === 0) {
-    logger.warn({ videoAbsPath }, "Keyframe extraction produced no frames");
+    logger.warn(
+      { videoAbsPath, totalMs: Date.now() - t0, ...timings },
+      "Keyframe extraction produced no frames",
+    );
     return { frameUrls: [], frameAbsPaths: [] };
   }
 
   // 3. Perceptual-hash dedup — drop any frame within hammingThreshold bits of
   //    an already-kept frame. This catches duplicates that survive scene
   //    detection (e.g. flicker / slow pans) before the expensive VLM call.
+  const tDedup = Date.now();
   const kept: { name: string; hash: Buffer }[] = [];
   for (const name of candidates) {
     const abs = path.join(UPLOAD_DIR, name);
@@ -234,6 +287,7 @@ export async function extractKeyframes(
     kept.push({ name, hash });
     if (kept.length >= maxFrames) break;
   }
+  tick("dedupMs", tDedup);
 
   // Anything beyond the cap that we never inspected — clean up disk too.
   for (const name of candidates) {
@@ -245,9 +299,22 @@ export async function extractKeyframes(
   }
 
   // 4. Compress survivors for the VLM payload.
+  const tCompress = Date.now();
   const survivors = kept.map((k) => k.name);
   await Promise.all(
     survivors.map((name) => compressForVLM(path.join(UPLOAD_DIR, name)))
+  );
+  tick("compressMs", tCompress);
+
+  logger.info(
+    {
+      videoAbsPath,
+      candidates: candidates.length,
+      survivors: survivors.length,
+      totalMs: Date.now() - t0,
+      ...timings,
+    },
+    "keyframe extraction completed",
   );
 
   return {
