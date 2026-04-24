@@ -287,6 +287,71 @@ export const ListSubmissionsResponseItem = zod.object({
   imageUrl: zod.string(),
   mediaType: zod.enum(["image", "video"]),
   keyframesJson: zod.array(zod.string()).nullish(),
+  keyframeMetricsJson: zod
+    .union([
+      zod
+        .object({
+          candidatesProduced: zod
+            .number()
+            .describe(
+              "Total raw frames produced by ffmpeg across the scene-detect pass and (if needed) the fallback fixed-interval pass, before dedup runs.",
+            ),
+          candidatesKept: zod
+            .number()
+            .describe(
+              "Number of frames that survived dedup and were sent to the VLM.",
+            ),
+          droppedDuplicate: zod
+            .number()
+            .describe(
+              "Frames discarded by the perceptual-hash dedup pass as visually-identical to an already-kept frame.",
+            ),
+          droppedOverCap: zod
+            .number()
+            .describe(
+              "Remaining unique candidates discarded after `maxFrames` slots had already been filled.",
+            ),
+          usedFallback: zod
+            .boolean()
+            .describe(
+              "True iff scene detection found nothing and the fixed-interval fallback pass had to run.",
+            ),
+          totalMs: zod
+            .number()
+            .describe(
+              "Wall-clock time for the full keyframe pipeline (scene detect + optional fallback + dedup + compress), in milliseconds.",
+            ),
+          sceneDetectMs: zod
+            .number()
+            .describe(
+              "Time spent in the scene-change ffmpeg pass, in milliseconds.",
+            ),
+          fallbackSampleMs: zod
+            .number()
+            .nullish()
+            .describe(
+              "Time spent in the fixed-interval ffmpeg fallback pass, in milliseconds. Only present when scene detection produced nothing.",
+            ),
+          dedupMs: zod
+            .number()
+            .describe(
+              "Time spent computing perceptual hashes and picking unique survivors, in milliseconds.",
+            ),
+          compressMs: zod
+            .number()
+            .describe(
+              "Time spent downscaling and re-encoding survivors for the VLM payload, in milliseconds.",
+            ),
+        })
+        .describe(
+          "Per-step timings and frame counts produced by the keyframe pipeline for a single video submission. Mirrors the `KeyframeMetrics` interface in the AI scoring lib. Surfaced in the manager audit detail view so a manager can see how long ffmpeg vs. dedup vs. compression each took, and how many frames were dropped as duplicates vs. dropped to respect the candidate cap.",
+        ),
+      zod.null(),
+    ])
+    .optional()
+    .describe(
+      "Per-step ffmpeg\/dedup\/compress timings + counts captured during scoring of a video submission. Null for image submissions and for legacy rows recorded before this column existed. Surfaced in the manager audit detail view so a manager can judge whether a slow walk-through was caused by scene detection, dedup, compression, or VLM input prep.",
+    ),
   machineTag: zod.string().nullish(),
   failingPillarsJson: zod.array(zod.string()).nullish(),
   aiTotalScore: zod.number().nullish(),
@@ -457,6 +522,71 @@ export const GetSubmissionResponse = zod.object({
   imageUrl: zod.string(),
   mediaType: zod.enum(["image", "video"]),
   keyframesJson: zod.array(zod.string()).nullish(),
+  keyframeMetricsJson: zod
+    .union([
+      zod
+        .object({
+          candidatesProduced: zod
+            .number()
+            .describe(
+              "Total raw frames produced by ffmpeg across the scene-detect pass and (if needed) the fallback fixed-interval pass, before dedup runs.",
+            ),
+          candidatesKept: zod
+            .number()
+            .describe(
+              "Number of frames that survived dedup and were sent to the VLM.",
+            ),
+          droppedDuplicate: zod
+            .number()
+            .describe(
+              "Frames discarded by the perceptual-hash dedup pass as visually-identical to an already-kept frame.",
+            ),
+          droppedOverCap: zod
+            .number()
+            .describe(
+              "Remaining unique candidates discarded after `maxFrames` slots had already been filled.",
+            ),
+          usedFallback: zod
+            .boolean()
+            .describe(
+              "True iff scene detection found nothing and the fixed-interval fallback pass had to run.",
+            ),
+          totalMs: zod
+            .number()
+            .describe(
+              "Wall-clock time for the full keyframe pipeline (scene detect + optional fallback + dedup + compress), in milliseconds.",
+            ),
+          sceneDetectMs: zod
+            .number()
+            .describe(
+              "Time spent in the scene-change ffmpeg pass, in milliseconds.",
+            ),
+          fallbackSampleMs: zod
+            .number()
+            .nullish()
+            .describe(
+              "Time spent in the fixed-interval ffmpeg fallback pass, in milliseconds. Only present when scene detection produced nothing.",
+            ),
+          dedupMs: zod
+            .number()
+            .describe(
+              "Time spent computing perceptual hashes and picking unique survivors, in milliseconds.",
+            ),
+          compressMs: zod
+            .number()
+            .describe(
+              "Time spent downscaling and re-encoding survivors for the VLM payload, in milliseconds.",
+            ),
+        })
+        .describe(
+          "Per-step timings and frame counts produced by the keyframe pipeline for a single video submission. Mirrors the `KeyframeMetrics` interface in the AI scoring lib. Surfaced in the manager audit detail view so a manager can see how long ffmpeg vs. dedup vs. compression each took, and how many frames were dropped as duplicates vs. dropped to respect the candidate cap.",
+        ),
+      zod.null(),
+    ])
+    .optional()
+    .describe(
+      "Per-step ffmpeg\/dedup\/compress timings + counts captured during scoring of a video submission. Null for image submissions and for legacy rows recorded before this column existed. Surfaced in the manager audit detail view so a manager can judge whether a slow walk-through was caused by scene detection, dedup, compression, or VLM input prep.",
+    ),
   machineTag: zod.string().nullish(),
   failingPillarsJson: zod.array(zod.string()).nullish(),
   aiTotalScore: zod.number().nullish(),
@@ -555,6 +685,71 @@ export const ReuploadSubmissionResponse = zod.object({
   imageUrl: zod.string(),
   mediaType: zod.enum(["image", "video"]),
   keyframesJson: zod.array(zod.string()).nullish(),
+  keyframeMetricsJson: zod
+    .union([
+      zod
+        .object({
+          candidatesProduced: zod
+            .number()
+            .describe(
+              "Total raw frames produced by ffmpeg across the scene-detect pass and (if needed) the fallback fixed-interval pass, before dedup runs.",
+            ),
+          candidatesKept: zod
+            .number()
+            .describe(
+              "Number of frames that survived dedup and were sent to the VLM.",
+            ),
+          droppedDuplicate: zod
+            .number()
+            .describe(
+              "Frames discarded by the perceptual-hash dedup pass as visually-identical to an already-kept frame.",
+            ),
+          droppedOverCap: zod
+            .number()
+            .describe(
+              "Remaining unique candidates discarded after `maxFrames` slots had already been filled.",
+            ),
+          usedFallback: zod
+            .boolean()
+            .describe(
+              "True iff scene detection found nothing and the fixed-interval fallback pass had to run.",
+            ),
+          totalMs: zod
+            .number()
+            .describe(
+              "Wall-clock time for the full keyframe pipeline (scene detect + optional fallback + dedup + compress), in milliseconds.",
+            ),
+          sceneDetectMs: zod
+            .number()
+            .describe(
+              "Time spent in the scene-change ffmpeg pass, in milliseconds.",
+            ),
+          fallbackSampleMs: zod
+            .number()
+            .nullish()
+            .describe(
+              "Time spent in the fixed-interval ffmpeg fallback pass, in milliseconds. Only present when scene detection produced nothing.",
+            ),
+          dedupMs: zod
+            .number()
+            .describe(
+              "Time spent computing perceptual hashes and picking unique survivors, in milliseconds.",
+            ),
+          compressMs: zod
+            .number()
+            .describe(
+              "Time spent downscaling and re-encoding survivors for the VLM payload, in milliseconds.",
+            ),
+        })
+        .describe(
+          "Per-step timings and frame counts produced by the keyframe pipeline for a single video submission. Mirrors the `KeyframeMetrics` interface in the AI scoring lib. Surfaced in the manager audit detail view so a manager can see how long ffmpeg vs. dedup vs. compression each took, and how many frames were dropped as duplicates vs. dropped to respect the candidate cap.",
+        ),
+      zod.null(),
+    ])
+    .optional()
+    .describe(
+      "Per-step ffmpeg\/dedup\/compress timings + counts captured during scoring of a video submission. Null for image submissions and for legacy rows recorded before this column existed. Surfaced in the manager audit detail view so a manager can judge whether a slow walk-through was caused by scene detection, dedup, compression, or VLM input prep.",
+    ),
   machineTag: zod.string().nullish(),
   failingPillarsJson: zod.array(zod.string()).nullish(),
   aiTotalScore: zod.number().nullish(),
@@ -1182,6 +1377,71 @@ export const GetOperatorStatusResponseItem = zod.object({
       imageUrl: zod.string(),
       mediaType: zod.enum(["image", "video"]),
       keyframesJson: zod.array(zod.string()).nullish(),
+      keyframeMetricsJson: zod
+        .union([
+          zod
+            .object({
+              candidatesProduced: zod
+                .number()
+                .describe(
+                  "Total raw frames produced by ffmpeg across the scene-detect pass and (if needed) the fallback fixed-interval pass, before dedup runs.",
+                ),
+              candidatesKept: zod
+                .number()
+                .describe(
+                  "Number of frames that survived dedup and were sent to the VLM.",
+                ),
+              droppedDuplicate: zod
+                .number()
+                .describe(
+                  "Frames discarded by the perceptual-hash dedup pass as visually-identical to an already-kept frame.",
+                ),
+              droppedOverCap: zod
+                .number()
+                .describe(
+                  "Remaining unique candidates discarded after `maxFrames` slots had already been filled.",
+                ),
+              usedFallback: zod
+                .boolean()
+                .describe(
+                  "True iff scene detection found nothing and the fixed-interval fallback pass had to run.",
+                ),
+              totalMs: zod
+                .number()
+                .describe(
+                  "Wall-clock time for the full keyframe pipeline (scene detect + optional fallback + dedup + compress), in milliseconds.",
+                ),
+              sceneDetectMs: zod
+                .number()
+                .describe(
+                  "Time spent in the scene-change ffmpeg pass, in milliseconds.",
+                ),
+              fallbackSampleMs: zod
+                .number()
+                .nullish()
+                .describe(
+                  "Time spent in the fixed-interval ffmpeg fallback pass, in milliseconds. Only present when scene detection produced nothing.",
+                ),
+              dedupMs: zod
+                .number()
+                .describe(
+                  "Time spent computing perceptual hashes and picking unique survivors, in milliseconds.",
+                ),
+              compressMs: zod
+                .number()
+                .describe(
+                  "Time spent downscaling and re-encoding survivors for the VLM payload, in milliseconds.",
+                ),
+            })
+            .describe(
+              "Per-step timings and frame counts produced by the keyframe pipeline for a single video submission. Mirrors the `KeyframeMetrics` interface in the AI scoring lib. Surfaced in the manager audit detail view so a manager can see how long ffmpeg vs. dedup vs. compression each took, and how many frames were dropped as duplicates vs. dropped to respect the candidate cap.",
+            ),
+          zod.null(),
+        ])
+        .optional()
+        .describe(
+          "Per-step ffmpeg\/dedup\/compress timings + counts captured during scoring of a video submission. Null for image submissions and for legacy rows recorded before this column existed. Surfaced in the manager audit detail view so a manager can judge whether a slow walk-through was caused by scene detection, dedup, compression, or VLM input prep.",
+        ),
       machineTag: zod.string().nullish(),
       failingPillarsJson: zod.array(zod.string()).nullish(),
       aiTotalScore: zod.number().nullish(),

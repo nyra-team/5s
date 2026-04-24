@@ -71,6 +71,7 @@ export * from "./getOperatorStatusParams";
 export * from "./getOperatorStatusShift";
 export * from "./healthStatusType";
 export * from "./identifySubmissionAreaType";
+export * from "./keyframeMetricsType";
 export * from "./labelType";
 export * from "./labelTypePillarsJson";
 export * from "./listEscalationsParams";

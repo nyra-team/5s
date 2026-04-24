@@ -29,8 +29,9 @@ import * as SliderPrimitive from "@radix-ui/react-slider";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import {
-  CheckCircle2, ArrowRight, Brain, AlertTriangle, MapPin, Tag, Video, Image as ImageIcon, Sparkles, Search, Keyboard, Pencil,
+  CheckCircle2, ArrowRight, Brain, AlertTriangle, MapPin, Tag, Video, Image as ImageIcon, Sparkles, Search, Keyboard, Pencil, Clock,
 } from "lucide-react";
+import type { KeyframeMetrics } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
 
 const SHIFT_FILTER_OPTIONS = [
@@ -206,6 +207,93 @@ export function LabelForm({
   );
 }
 
+/** Format a millisecond duration as a compact, manager-friendly string.
+ *  Sub-second values stay in ms so the breakdown isn't all "0.0s"; longer
+ *  ones flip to seconds with a single decimal so a 4-step breakdown still
+ *  fits on a single line on phones. Exported so the metrics-block test
+ *  can lock the formatting rules without rendering the whole page. */
+export function formatAnalysisMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** A single labelled metric row inside the analysis-time block. Reused for
+ *  every step (scene detect, fallback, dedup, compress, total) so the
+ *  block stays visually consistent. */
+function MetricRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-[12.5px] text-muted-foreground">
+        {label}
+        {hint && <span className="ml-1 text-[11px] text-muted-foreground/70">({hint})</span>}
+      </span>
+      <span className="font-semibold text-[12.5px] tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+/** Manager-facing keyframe pipeline summary for a video submission. Renders
+ *  candidate counts (produced / kept / dropped as duplicates / dropped to
+ *  cap) AND a per-step time breakdown so a manager can tell whether a slow
+ *  walk-through is bottlenecked on scene detection, the fallback sample, the
+ *  dedup pass, or the VLM-prep compression — and decide whether to lower
+ *  `KEYFRAMES_MAX_CANDIDATES` for their facility. Renders nothing when the
+ *  submission has no metrics (image submissions, or legacy video rows
+ *  recorded before the metrics column existed). */
+export function KeyframeMetricsBlock({ metrics }: { metrics: KeyframeMetrics }) {
+  return (
+    <section
+      data-testid="keyframe-metrics-block"
+      className="rounded-xl p-4 bg-secondary/60 space-y-3"
+    >
+      <p className="eyebrow inline-flex items-center gap-1.5">
+        <Clock className="w-3 h-3" /> Last video analysis
+      </p>
+
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+        <MetricRow label="Candidates produced" value={String(metrics.candidatesProduced)} />
+        <MetricRow label="Frames kept" value={String(metrics.candidatesKept)} />
+        <MetricRow
+          label="Dropped as duplicates"
+          value={String(metrics.droppedDuplicate)}
+        />
+        <MetricRow
+          label="Dropped over cap"
+          value={String(metrics.droppedOverCap)}
+        />
+      </div>
+
+      <div className="border-t border-border/60 pt-3 space-y-1.5">
+        <MetricRow
+          label="Total analysis time"
+          value={formatAnalysisMs(metrics.totalMs)}
+        />
+        <MetricRow
+          label="Scene detection"
+          value={formatAnalysisMs(metrics.sceneDetectMs)}
+        />
+        {metrics.fallbackSampleMs != null && (
+          <MetricRow
+            label="Fallback sampling"
+            hint="scene detection found nothing"
+            value={formatAnalysisMs(metrics.fallbackSampleMs)}
+          />
+        )}
+        <MetricRow label="Deduplication" value={formatAnalysisMs(metrics.dedupMs)} />
+        <MetricRow label="Compression" value={formatAnalysisMs(metrics.compressMs)} />
+      </div>
+
+      {metrics.usedFallback && (
+        <p className="text-[11.5px] text-amber-700 dark:text-amber-300 leading-snug">
+          Scene detection found nothing — the fixed-interval fallback ran instead. A
+          steadier walk-through with more visual change usually avoids this.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: number; autoFocusLabelForm?: boolean }) {
   const { data: sub } = useGetSubmission(submissionId);
   const { data: labels } = useGetLabels(submissionId);
@@ -216,6 +304,12 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
   const scorePercent = sub.scoreTotal * 4;
   const isVideoSub = sub.mediaType === "video";
   const keyframes = sub.keyframesJson ?? [];
+  // Only show the analysis-time block for video submissions that actually
+  // carry keyframe metrics. Image submissions skip keyframe extraction
+  // entirely, and legacy video rows recorded before the metrics column
+  // existed are null too — both render as "no block" rather than zeros.
+  const keyframeMetrics: KeyframeMetrics | null =
+    isVideoSub && sub.keyframeMetricsJson ? sub.keyframeMetricsJson : null;
 
   return (
     <DialogContent
@@ -251,6 +345,16 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Desktop placement: under the keyframes grid in the left column so
+              the analysis breakdown sits next to the frames it describes. The
+              mobile copy lives in the right column (after AI Issues) so the
+              score remains the first thing on phones. */}
+          {keyframeMetrics && (
+            <div className="hidden md:block">
+              <KeyframeMetricsBlock metrics={keyframeMetrics} />
             </div>
           )}
 
@@ -350,6 +454,16 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
                 ))}
               </div>
             </section>
+          )}
+
+          {/* Mobile placement of the analysis-time block — kept right after the
+              mobile keyframe strip so the metrics line up with the frames they
+              describe even on phones. The desktop copy lives under the
+              left-column keyframes grid. */}
+          {keyframeMetrics && (
+            <div className="md:hidden">
+              <KeyframeMetricsBlock metrics={keyframeMetrics} />
+            </div>
           )}
 
           {hasAI && Array.isArray(sub.aiRecommendationsJson) && sub.aiRecommendationsJson.length > 0 && (

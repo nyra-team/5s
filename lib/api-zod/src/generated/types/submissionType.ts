@@ -7,6 +7,7 @@
  */
 import type { AIIssueType } from "./aIIssueType";
 import type { AIRecommendationType } from "./aIRecommendationType";
+import type { KeyframeMetricsType } from "./keyframeMetricsType";
 import type { SubmissionTypeAiPillarsJson } from "./submissionTypeAiPillarsJson";
 import type { SubmissionTypeAiReasoningJson } from "./submissionTypeAiReasoningJson";
 import type { SubmissionTypeMediaType } from "./submissionTypeMediaType";
@@ -28,6 +29,8 @@ export interface SubmissionType {
   imageUrl: string;
   mediaType: SubmissionTypeMediaType;
   keyframesJson?: string[] | null;
+  /** Per-step ffmpeg/dedup/compress timings + counts captured during scoring of a video submission. Null for image submissions and for legacy rows recorded before this column existed. Surfaced in the manager audit detail view so a manager can judge whether a slow walk-through was caused by scene detection, dedup, compression, or VLM input prep. */
+  keyframeMetricsJson?: KeyframeMetricsType | null;
   machineTag?: string | null;
   failingPillarsJson?: string[] | null;
   aiTotalScore?: number | null;

@@ -21,6 +21,17 @@ export const submissionsTable = pgTable("submissions", {
   imageUrl: text("image_url").notNull(),
   mediaType: text("media_type").notNull().default("image"),
   keyframesJson: jsonb("keyframes_json"),
+  /**
+   * Per-step ffmpeg/dedup/compress timings + counts captured during scoring,
+   * mirroring `KeyframeMetrics` from the AI scoring lib. Only populated for
+   * video submissions (image submissions skip keyframe extraction). Surfaced
+   * in the manager audit detail view so a manager can judge whether their
+   * walk-through is slow because of scene detection, dedup, or compression
+   * — and decide whether to lower `KEYFRAMES_MAX_CANDIDATES` for the site.
+   * Nullable for image submissions and for legacy rows recorded before this
+   * column existed.
+   */
+  keyframeMetricsJson: jsonb("keyframe_metrics_json"),
   machineTag: text("machine_tag"),
   failingPillarsJson: jsonb("failing_pillars_json"),
   embeddingHash: text("embedding_hash"),

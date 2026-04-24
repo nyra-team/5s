@@ -562,6 +562,32 @@ export type SubmissionAiReasoningJson = {
   sustain?: string;
 } | null;
 
+/**
+ * Per-step timings and frame counts produced by the keyframe pipeline for a single video submission. Mirrors the `KeyframeMetrics` interface in the AI scoring lib. Surfaced in the manager audit detail view so a manager can see how long ffmpeg vs. dedup vs. compression each took, and how many frames were dropped as duplicates vs. dropped to respect the candidate cap.
+ */
+export interface KeyframeMetrics {
+  /** Total raw frames produced by ffmpeg across the scene-detect pass and (if needed) the fallback fixed-interval pass, before dedup runs. */
+  candidatesProduced: number;
+  /** Number of frames that survived dedup and were sent to the VLM. */
+  candidatesKept: number;
+  /** Frames discarded by the perceptual-hash dedup pass as visually-identical to an already-kept frame. */
+  droppedDuplicate: number;
+  /** Remaining unique candidates discarded after `maxFrames` slots had already been filled. */
+  droppedOverCap: number;
+  /** True iff scene detection found nothing and the fixed-interval fallback pass had to run. */
+  usedFallback: boolean;
+  /** Wall-clock time for the full keyframe pipeline (scene detect + optional fallback + dedup + compress), in milliseconds. */
+  totalMs: number;
+  /** Time spent in the scene-change ffmpeg pass, in milliseconds. */
+  sceneDetectMs: number;
+  /** Time spent in the fixed-interval ffmpeg fallback pass, in milliseconds. Only present when scene detection produced nothing. */
+  fallbackSampleMs?: number | null;
+  /** Time spent computing perceptual hashes and picking unique survivors, in milliseconds. */
+  dedupMs: number;
+  /** Time spent downscaling and re-encoding survivors for the VLM payload, in milliseconds. */
+  compressMs: number;
+}
+
 export type AIRecommendationSeverity =
   | (typeof AIRecommendationSeverity)[keyof typeof AIRecommendationSeverity]
   | null;
@@ -614,6 +640,8 @@ export interface Submission {
   imageUrl: string;
   mediaType: SubmissionMediaType;
   keyframesJson?: string[] | null;
+  /** Per-step ffmpeg/dedup/compress timings + counts captured during scoring of a video submission. Null for image submissions and for legacy rows recorded before this column existed. Surfaced in the manager audit detail view so a manager can judge whether a slow walk-through was caused by scene detection, dedup, compression, or VLM input prep. */
+  keyframeMetricsJson?: KeyframeMetrics | null;
   machineTag?: string | null;
   failingPillarsJson?: string[] | null;
   aiTotalScore?: number | null;

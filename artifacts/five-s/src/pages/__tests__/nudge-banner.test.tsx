@@ -82,6 +82,8 @@ vi.mock("@workspace/api-client-react", () => {
     useGetSubmission: stub("submission"),
     useGetOperatorThresholds: () => ({ data: undefined, isLoading: false }),
     getGetOperatorThresholdsQueryKey: () => ["operator-thresholds"],
+    useGetFacilitySettings: () => ({ data: undefined, isLoading: false }),
+    getGetFacilitySettingsQueryKey: () => ["facility-settings"],
     useGetShiftConfig: () => ({
       data: mockState.shiftConfig,
       isLoading: false,
