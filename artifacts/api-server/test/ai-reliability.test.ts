@@ -4,10 +4,15 @@ import { db, aiScoringMetricsTable } from "@workspace/db";
 import { gte } from "drizzle-orm";
 import { TestWorld, api } from "./helpers.js";
 
+interface ReliabilityErrorBreakdown {
+  message: string;
+  count: number;
+}
 interface ReliabilityWindow {
   totalCalls: number;
   retriedCalls: number;
   retryRate: number;
+  topErrors: ReliabilityErrorBreakdown[];
 }
 interface ReliabilityShape {
   last24h: ReliabilityWindow;
@@ -64,9 +69,11 @@ describe("GET /api/dashboard/ai-reliability", () => {
     assert.equal(r.body.last24h.totalCalls, 0);
     assert.equal(r.body.last24h.retriedCalls, 0);
     assert.equal(r.body.last24h.retryRate, 0);
+    assert.deepEqual(r.body.last24h.topErrors, []);
     assert.equal(r.body.last7d.totalCalls, 0);
     assert.equal(r.body.last7d.retriedCalls, 0);
     assert.equal(r.body.last7d.retryRate, 0);
+    assert.deepEqual(r.body.last7d.topErrors, []);
   });
 
   test("counts retried vs clean calls inside the rolling 24h window", async () => {
@@ -98,10 +105,91 @@ describe("GET /api/dashboard/ai-reliability", () => {
     assert.equal(r.body.last24h.totalCalls, 4);
     assert.equal(r.body.last24h.retriedCalls, 1);
     assert.equal(r.body.last24h.retryRate, 0.25);
+    // The single retried row's validation message shows up in the breakdown.
+    assert.deepEqual(r.body.last24h.topErrors, [
+      { message: "missing object 'pillar_scores'", count: 1 },
+    ]);
     // 7d window includes the same rows.
     assert.equal(r.body.last7d.totalCalls, 4);
     assert.equal(r.body.last7d.retriedCalls, 1);
     assert.equal(r.body.last7d.retryRate, 0.25);
+    assert.deepEqual(r.body.last7d.topErrors, [
+      { message: "missing object 'pillar_scores'", count: 1 },
+    ]);
+  });
+
+  test("groups distinct validation messages and orders them by frequency", async () => {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    await db
+      .delete(aiScoringMetricsTable)
+      .where(gte(aiScoringMetricsTable.createdAt, sevenDaysAgo));
+
+    // Three messages with different frequencies, plus a clean call to prove
+    // it's excluded, plus a retried row with a NULL message to prove that's
+    // also excluded from the breakdown (but still counted in retriedCalls).
+    await db.insert(aiScoringMetricsTable).values([
+      { modelVersion: "test-model", retried: true, validationError: "missing object 'pillar_scores'" },
+      { modelVersion: "test-model", retried: true, validationError: "missing object 'pillar_scores'" },
+      { modelVersion: "test-model", retried: true, validationError: "missing object 'pillar_scores'" },
+      { modelVersion: "test-model", retried: true, validationError: "score out of range" },
+      { modelVersion: "test-model", retried: true, validationError: "score out of range" },
+      { modelVersion: "test-model", retried: true, validationError: "reasoning is not a string" },
+      { modelVersion: "test-model", retried: true, validationError: null },
+      { modelVersion: "test-model", retried: false, validationError: null },
+    ]);
+
+    const manager = await world.createUser("MANAGER");
+    const r = await api<ReliabilityShape>(
+      manager.token,
+      "GET",
+      "/api/dashboard/ai-reliability",
+    );
+    assert.equal(r.status, 200);
+    assert.equal(r.body.last24h.totalCalls, 8);
+    // 7 retried rows total, regardless of whether their message is null.
+    assert.equal(r.body.last24h.retriedCalls, 7);
+    // Sorted by count desc; the clean row and the null-message retried row
+    // never appear in the breakdown.
+    assert.deepEqual(r.body.last24h.topErrors, [
+      { message: "missing object 'pillar_scores'", count: 3 },
+      { message: "score out of range", count: 2 },
+      { message: "reasoning is not a string", count: 1 },
+    ]);
+  });
+
+  test("caps the breakdown at the top-N most frequent messages", async () => {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    await db
+      .delete(aiScoringMetricsTable)
+      .where(gte(aiScoringMetricsTable.createdAt, sevenDaysAgo));
+
+    // 7 distinct messages — more than the server's top-N cap of 5.
+    const distinctMessages = [
+      "err-a", "err-b", "err-c", "err-d", "err-e", "err-f", "err-g",
+    ];
+    await db.insert(aiScoringMetricsTable).values(
+      distinctMessages.map((m) => ({
+        modelVersion: "test-model",
+        retried: true,
+        validationError: m,
+      })),
+    );
+
+    const manager = await world.createUser("MANAGER");
+    const r = await api<ReliabilityShape>(
+      manager.token,
+      "GET",
+      "/api/dashboard/ai-reliability",
+    );
+    assert.equal(r.status, 200);
+    // Each message appears once, so we can't predict which 5 of 7 ties win,
+    // but we can assert the cap and that every returned message is one of
+    // the originals with count=1.
+    assert.equal(r.body.last24h.topErrors.length, 5);
+    for (const e of r.body.last24h.topErrors) {
+      assert.equal(e.count, 1);
+      assert.ok(distinctMessages.includes(e.message));
+    }
   });
 
   test("excludes rows older than the rolling 7d window", async () => {

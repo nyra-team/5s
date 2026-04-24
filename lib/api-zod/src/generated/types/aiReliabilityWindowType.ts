@@ -5,6 +5,7 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { AiReliabilityErrorBreakdownType } from "./aiReliabilityErrorBreakdownType";
 
 /**
  * Retry-rate stats for one rolling time window of AI scoring calls.
@@ -16,4 +17,10 @@ export interface AiReliabilityWindowType {
   retriedCalls: number;
   /** retriedCalls / totalCalls, expressed as a 0-1 decimal. 0 when totalCalls is 0. */
   retryRate: number;
+  /** Top distinct validation error messages observed on retried calls in this window,
+sorted by count descending. Capped at the server's top-N. Helps engineers see which
+specific failures (e.g. "missing pillar_scores object") are driving the retry rate
+instead of inferring it from the headline percentage.
+ */
+  topErrors: AiReliabilityErrorBreakdownType[];
 }

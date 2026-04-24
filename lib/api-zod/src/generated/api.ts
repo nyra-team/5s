@@ -651,6 +651,28 @@ export const GetDashboardAiReliabilityResponse = zod
           .describe(
             "retriedCalls \/ totalCalls, expressed as a 0-1 decimal. 0 when totalCalls is 0.",
           ),
+        topErrors: zod
+          .array(
+            zod
+              .object({
+                message: zod
+                  .string()
+                  .describe(
+                    "The validation error string (already capped at ~500 chars by the writer).",
+                  ),
+                count: zod
+                  .number()
+                  .describe(
+                    "How many retried calls reported exactly this validation message inside the window.",
+                  ),
+              })
+              .describe(
+                "One distinct validation-error message and how many retries it caused inside the window.",
+              ),
+          )
+          .describe(
+            'Top distinct validation error messages observed on retried calls in this window,\nsorted by count descending. Capped at the server\'s top-N. Helps engineers see which\nspecific failures (e.g. \"missing pillar_scores object\") are driving the retry rate\ninstead of inferring it from the headline percentage.\n',
+          ),
       })
       .describe(
         "Retry-rate stats for one rolling time window of AI scoring calls.",
@@ -671,6 +693,28 @@ export const GetDashboardAiReliabilityResponse = zod
           .number()
           .describe(
             "retriedCalls \/ totalCalls, expressed as a 0-1 decimal. 0 when totalCalls is 0.",
+          ),
+        topErrors: zod
+          .array(
+            zod
+              .object({
+                message: zod
+                  .string()
+                  .describe(
+                    "The validation error string (already capped at ~500 chars by the writer).",
+                  ),
+                count: zod
+                  .number()
+                  .describe(
+                    "How many retried calls reported exactly this validation message inside the window.",
+                  ),
+              })
+              .describe(
+                "One distinct validation-error message and how many retries it caused inside the window.",
+              ),
+          )
+          .describe(
+            'Top distinct validation error messages observed on retried calls in this window,\nsorted by count descending. Capped at the server\'s top-N. Helps engineers see which\nspecific failures (e.g. \"missing pillar_scores object\") are driving the retry rate\ninstead of inferring it from the headline percentage.\n',
           ),
       })
       .describe(

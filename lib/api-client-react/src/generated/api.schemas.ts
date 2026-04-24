@@ -751,6 +751,16 @@ export interface OperatorDismissedNudge {
 }
 
 /**
+ * One distinct validation-error message and how many retries it caused inside the window.
+ */
+export interface AiReliabilityErrorBreakdown {
+  /** The validation error string (already capped at ~500 chars by the writer). */
+  message: string;
+  /** How many retried calls reported exactly this validation message inside the window. */
+  count: number;
+}
+
+/**
  * Retry-rate stats for one rolling time window of AI scoring calls.
  */
 export interface AiReliabilityWindow {
@@ -760,6 +770,12 @@ export interface AiReliabilityWindow {
   retriedCalls: number;
   /** retriedCalls / totalCalls, expressed as a 0-1 decimal. 0 when totalCalls is 0. */
   retryRate: number;
+  /** Top distinct validation error messages observed on retried calls in this window,
+sorted by count descending. Capped at the server's top-N. Helps engineers see which
+specific failures (e.g. "missing pillar_scores object") are driving the retry rate
+instead of inferring it from the headline percentage.
+ */
+  topErrors: AiReliabilityErrorBreakdown[];
 }
 
 /**

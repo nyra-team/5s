@@ -14,12 +14,13 @@ import {
   type GetDashboardTrendsShift,
   type OperatorDismissSummary,
 } from "@workspace/api-client-react";
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from "recharts";
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ResponsiveContainer, ReferenceDot } from "recharts";
 import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle, Repeat, Search } from "lucide-react";
 import { format, parseISO, formatDistanceToNow } from "date-fns";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { EnvironmentBadge, normalizeEnvironment } from "@/lib/environment";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -186,7 +187,7 @@ export default function Dashboard() {
                     width={92}
                     tick={{ fontSize: 12, fontWeight: 500, fill: "hsl(var(--foreground))" }}
                   />
-                  <Tooltip
+                  <ChartTooltip
                     cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
                     contentStyle={tooltipStyle}
                     formatter={(value: number) => [`${value}%`, "Avg Score"]}
@@ -211,7 +212,7 @@ export default function Dashboard() {
                     tickLine={false}
                     tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
                   />
-                  <Tooltip
+                  <ChartTooltip
                     cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
                     contentStyle={tooltipStyle}
                     formatter={(value: number) => [`${value}%`, "Avg Score"]}
@@ -246,7 +247,7 @@ export default function Dashboard() {
                   tickLine={false}
                   tick={{ fontSize: 13, fontWeight: 500, fill: "hsl(var(--foreground))" }}
                 />
-                <Tooltip
+                <ChartTooltip
                   cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
                   contentStyle={tooltipStyle}
                   formatter={(value: number) => [`${value}%`, "Avg Score"]}
@@ -377,7 +378,136 @@ function AiReliabilityPanel() {
           </div>
         </div>
       )}
+      {!noDataYet && (
+        <AiReliabilityErrorBreakdown
+          last24h={last24h.topErrors}
+          last7d={last7d.topErrors}
+        />
+      )}
     </section>
+  );
+}
+
+// Renders the most-frequent validation messages that drove retries inside
+// each window so engineers can see which specific failures
+// ("missing pillar_scores object") to target instead of guessing from the
+// headline percentage. We default to the 24h breakdown — what's misbehaving
+// today — and let the manager flip to the 7d baseline.
+const RETRY_MESSAGE_DISPLAY_LIMIT = 80;
+
+function AiReliabilityErrorBreakdown({
+  last24h,
+  last7d,
+}: {
+  last24h: { message: string; count: number }[];
+  last7d: { message: string; count: number }[];
+}) {
+  const [windowKey, setWindowKey] = useState<"24h" | "7d">("24h");
+  const errors = windowKey === "24h" ? last24h : last7d;
+  const total = errors.reduce((acc, e) => acc + e.count, 0);
+
+  return (
+    <div className="mt-5 pt-5 border-t border-border" data-testid="ai-reliability-breakdown">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div>
+          <p className="text-[12px] font-medium text-muted-foreground uppercase tracking-wide">
+            Top validation errors
+          </p>
+          <p className="text-[11.5px] text-muted-foreground mt-0.5">
+            What the AI's first answer is failing on, sorted by frequency.
+          </p>
+        </div>
+        <ToggleGroup
+          type="single"
+          size="sm"
+          value={windowKey}
+          onValueChange={(v) => {
+            if (v === "24h" || v === "7d") setWindowKey(v);
+          }}
+          className="bg-secondary/60 rounded-md p-0.5"
+        >
+          <ToggleGroupItem
+            value="24h"
+            className="text-[11px] px-2 h-7 data-[state=on]:bg-card"
+            data-testid="ai-reliability-breakdown-window-24h"
+          >
+            24h
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="7d"
+            className="text-[11px] px-2 h-7 data-[state=on]:bg-card"
+            data-testid="ai-reliability-breakdown-window-7d"
+          >
+            7d
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+      {errors.length === 0 ? (
+        <p
+          className="text-[12.5px] text-muted-foreground"
+          data-testid="ai-reliability-breakdown-empty"
+        >
+          No validation errors in this window — every retry, if any, came back clean on the second try without a recorded reason.
+        </p>
+      ) : (
+        <ul className="space-y-1.5" data-testid="ai-reliability-breakdown-list">
+          {errors.map((e, idx) => {
+            const truncated = e.message.length > RETRY_MESSAGE_DISPLAY_LIMIT;
+            const display = truncated
+              ? `${e.message.slice(0, RETRY_MESSAGE_DISPLAY_LIMIT - 1)}…`
+              : e.message;
+            const sharePct = total > 0 ? Math.round((e.count / total) * 100) : 0;
+            // Wrap in a tooltip only when truncation occurred — Radix's
+            // TooltipTrigger needs to render a focusable child, so we use
+            // a plain span when the full text is already visible.
+            const messageNode = truncated ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className="text-[12.5px] text-foreground/90 underline decoration-dotted decoration-muted-foreground/60 underline-offset-2 cursor-help"
+                    data-testid={`ai-reliability-breakdown-message-${idx}`}
+                  >
+                    {display}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent
+                  side="top"
+                  align="start"
+                  className="max-w-sm break-words whitespace-pre-wrap text-left"
+                >
+                  {e.message}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <span
+                className="text-[12.5px] text-foreground/90"
+                data-testid={`ai-reliability-breakdown-message-${idx}`}
+              >
+                {display}
+              </span>
+            );
+            return (
+              <li
+                key={`${windowKey}-${idx}-${e.message}`}
+                className="flex items-start justify-between gap-3 rounded-lg bg-secondary/30 px-3 py-2"
+                data-testid={`ai-reliability-breakdown-row-${idx}`}
+              >
+                <div className="min-w-0 flex-1">{messageNode}</div>
+                <span className="text-[11.5px] tabular-nums text-muted-foreground flex-shrink-0">
+                  <span
+                    className="font-medium text-foreground"
+                    data-testid={`ai-reliability-breakdown-count-${idx}`}
+                  >
+                    {e.count}
+                  </span>
+                  {" "}({sharePct}%)
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -681,7 +811,7 @@ export function AreaTrendCard({ trend }: { trend: AreaTrend }) {
             <LineChart data={trend.points} margin={{ top: 4, right: 6, left: 6, bottom: 0 }}>
               <YAxis hide domain={[0, 100]} />
               <XAxis dataKey="date" hide />
-              <Tooltip
+              <ChartTooltip
                 cursor={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}
                 contentStyle={tooltipStyle}
                 labelFormatter={(label: string) => format(parseISO(label), "MMM d")}

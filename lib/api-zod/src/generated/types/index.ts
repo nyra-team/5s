@@ -10,6 +10,7 @@ export * from "./aIIssueType";
 export * from "./aIIssueTypeSeverity";
 export * from "./aIRecommendationType";
 export * from "./aIRecommendationTypeSeverity";
+export * from "./aiReliabilityErrorBreakdownType";
 export * from "./aiReliabilityWindowType";
 export * from "./areaAssignmentListType";
 export * from "./areaDetectionAgreementAreaRowType";

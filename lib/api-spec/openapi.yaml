@@ -2242,6 +2242,18 @@ components:
           format: date-time
       required: [nudgeId, areaId, areaName, machine, shift, message, createdAt, dismissedAt]
 
+    AiReliabilityErrorBreakdown:
+      type: object
+      description: One distinct validation-error message and how many retries it caused inside the window.
+      properties:
+        message:
+          type: string
+          description: The validation error string (already capped at ~500 chars by the writer).
+        count:
+          type: integer
+          description: How many retried calls reported exactly this validation message inside the window.
+      required: [message, count]
+
     AiReliabilityWindow:
       type: object
       description: Retry-rate stats for one rolling time window of AI scoring calls.
@@ -2255,7 +2267,16 @@ components:
         retryRate:
           type: number
           description: retriedCalls / totalCalls, expressed as a 0-1 decimal. 0 when totalCalls is 0.
-      required: [totalCalls, retriedCalls, retryRate]
+        topErrors:
+          type: array
+          description: |
+            Top distinct validation error messages observed on retried calls in this window,
+            sorted by count descending. Capped at the server's top-N. Helps engineers see which
+            specific failures (e.g. "missing pillar_scores object") are driving the retry rate
+            instead of inferring it from the headline percentage.
+          items:
+            $ref: "#/components/schemas/AiReliabilityErrorBreakdown"
+      required: [totalCalls, retriedCalls, retryRate, topErrors]
 
     DashboardAiReliability:
       type: object

@@ -217,17 +217,23 @@ router.get("/dashboard/summary", authMiddleware, requireRole("MANAGER"), async (
 // response because the JSON failed validation. We aggregate over a rolling
 // 24h and 7d window so the dashboard can compare today against the recent
 // baseline at a glance — a sudden 24h spike means the model is misbehaving
-// and we're paying ~2x per audit.
+// and we're paying ~2x per audit. Per window we also return the most
+// frequent distinct validation messages so engineers can target the
+// specific failure ("missing pillar_scores object") instead of guessing.
+const AI_RELIABILITY_TOP_ERRORS = 5;
+
 router.get("/dashboard/ai-reliability", authMiddleware, requireRole("MANAGER"), async (_req, res): Promise<void> => {
   const now = Date.now();
   const last24h = new Date(now - 24 * 60 * 60 * 1000);
   const last7d = new Date(now - 7 * 24 * 60 * 60 * 1000);
 
-  // One round-trip per window keeps the read cheap; the metrics table is
-  // append-only and indexed on created_at so the count + filtered count
-  // both use the same b-tree scan.
+  // Two round-trips per window: one for the totals (cheap aggregate over the
+  // append-only, created_at-indexed table) and one for the top-N validation
+  // messages on retried rows. We could fold both into a single query but
+  // keeping them separate matches how the panel reads — totals as headline,
+  // breakdown as drill-down — and keeps each query trivially explainable.
   async function windowStats(since: Date) {
-    const [row] = await db
+    const [totalsRow] = await db
       .select({
         totalCalls: count(),
         retriedCalls: sql<number>`COALESCE(SUM(CASE WHEN ${aiScoringMetricsTable.retried} THEN 1 ELSE 0 END), 0)`,
@@ -235,10 +241,38 @@ router.get("/dashboard/ai-reliability", authMiddleware, requireRole("MANAGER"), 
       .from(aiScoringMetricsTable)
       .where(gte(aiScoringMetricsTable.createdAt, since));
 
-    const totalCalls = Number(row?.totalCalls ?? 0);
-    const retriedCalls = Number(row?.retriedCalls ?? 0);
+    // Group by validation_error so semantically identical failures collapse
+    // into a single row. We restrict to retried=true AND validation_error IS
+    // NOT NULL so a clean call (which writes a row with retried=false and a
+    // null error) can never sneak into the breakdown — only actual retries
+    // count toward what's "tripping the AI up".
+    const errorRows = await db
+      .select({
+        message: aiScoringMetricsTable.validationError,
+        count: count(),
+      })
+      .from(aiScoringMetricsTable)
+      .where(
+        and(
+          gte(aiScoringMetricsTable.createdAt, since),
+          eq(aiScoringMetricsTable.retried, true),
+          isNotNull(aiScoringMetricsTable.validationError),
+        ),
+      )
+      .groupBy(aiScoringMetricsTable.validationError)
+      .orderBy(desc(count()))
+      .limit(AI_RELIABILITY_TOP_ERRORS);
+
+    const totalCalls = Number(totalsRow?.totalCalls ?? 0);
+    const retriedCalls = Number(totalsRow?.retriedCalls ?? 0);
     const retryRate = totalCalls > 0 ? retriedCalls / totalCalls : 0;
-    return { totalCalls, retriedCalls, retryRate };
+    const topErrors = errorRows
+      // The isNotNull predicate above already filters nulls, but the column
+      // is nullable so the inferred type still includes null — coerce here
+      // so the response shape is exactly string + integer.
+      .filter((r): r is { message: string; count: number } => r.message != null)
+      .map((r) => ({ message: r.message, count: Number(r.count) }));
+    return { totalCalls, retriedCalls, retryRate, topErrors };
   }
 
   const [twentyFourHour, sevenDay] = await Promise.all([
