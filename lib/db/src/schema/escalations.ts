@@ -25,6 +25,8 @@ export const escalationsTable = pgTable("escalations", {
   // is NULL are scanned at startup so an API restart mid-grouping-window
   // doesn't silently swallow manager alerts.
   notifiedAt: timestamp("notified_at", { withTimezone: true }),
+  repingCount: integer("reping_count").notNull().default(0),
+  lastRepingAt: timestamp("last_reping_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

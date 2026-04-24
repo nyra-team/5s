@@ -20,6 +20,12 @@ export interface QuietHoursPrefs {
   quietHoursWeekdayMask: number;
 }
 
+export interface RepingContext {
+  ageMinutes: number;
+  attempt: number;
+  maxAttempts: number;
+}
+
 const DEFAULT_GROUPING_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_RECOVERY_WINDOW_MS = 60 * 60 * 1000;
 
@@ -139,7 +145,7 @@ export async function notifyEscalationCreated(payload: EscalationNotification): 
   const windowMs = groupingWindowMs();
   if (windowMs <= 0) {
     // Grouping disabled — send immediately as a single-event message.
-    await dispatch([payload]);
+    await dispatch([payload], null);
     return;
   }
 
@@ -176,13 +182,26 @@ export async function notifyEscalationCreated(payload: EscalationNotification): 
   );
 }
 
+/**
+ * Re-pings bypass the grouping window — they are reminders for one specific
+ * escalation that has been sitting in OPEN past the threshold, so coalescing
+ * them with other events would dilute the signal and make the "Aging X min"
+ * banner meaningless.
+ */
+export async function notifyEscalationReping(
+  payload: EscalationNotification,
+  context: RepingContext,
+): Promise<void> {
+  await dispatch([payload], context);
+}
+
 async function flushArea(areaId: number): Promise<void> {
   const bucket = pendingByArea.get(areaId);
   if (!bucket) return;
   pendingByArea.delete(areaId);
   clearTimeout(bucket.timer);
   try {
-    await dispatch(bucket.events);
+    await dispatch(bucket.events, null);
   } catch (err) {
     logger.error(
       { err, areaId, count: bucket.events.length },
@@ -229,7 +248,10 @@ async function markEscalationsNotified(escalationIds: number[]): Promise<void> {
   }
 }
 
-async function dispatch(events: EscalationNotification[]): Promise<void> {
+async function dispatch(
+  events: EscalationNotification[],
+  reping: RepingContext | null,
+): Promise<void> {
   if (events.length === 0) return;
 
   let managers: ManagerRow[];
@@ -250,7 +272,7 @@ async function dispatch(events: EscalationNotification[]): Promise<void> {
   } catch (err) {
     // Leave notified_at NULL so the next startup sweep retries these events.
     logger.error(
-      { err, count: events.length, areaName: events[0]?.areaName },
+      { err, count: events.length, areaName: events[0]?.areaName, reping: !!reping },
       "notify: failed to load managers (will retry on next restart)",
     );
     return;
@@ -279,8 +301,8 @@ async function dispatch(events: EscalationNotification[]): Promise<void> {
   );
 
   await Promise.allSettled([
-    emailRecipients.length > 0 ? sendEmails(emailRecipients, events) : Promise.resolve(),
-    anySlackSubscriberActive ? sendSlack(events) : Promise.resolve(),
+    emailRecipients.length > 0 ? sendEmails(emailRecipients, events, reping) : Promise.resolve(),
+    anySlackSubscriberActive ? sendSlack(events, reping) : Promise.resolve(),
   ]);
 
   // Stamp notified_at after the best-effort dispatch attempt — including the
@@ -408,7 +430,7 @@ export async function recoverPendingEscalationNotifications(): Promise<void> {
 
   for (const events of byArea.values()) {
     try {
-      await dispatch(events);
+      await dispatch(events, null);
     } catch (err) {
       logger.error(
         { err, areaId: events[0].areaId, count: events.length },
@@ -433,17 +455,23 @@ function windowMinutesLabel(): string {
   return `${mins} min`;
 }
 
-async function sendSlack(events: EscalationNotification[]): Promise<void> {
+async function sendSlack(
+  events: EscalationNotification[],
+  reping: RepingContext | null,
+): Promise<void> {
   const webhook = process.env.SLACK_WEBHOOK_URL?.trim();
   if (!webhook) {
     logger.info(
-      { count: events.length, areaName: events[0].areaName },
+      { count: events.length, areaName: events[0].areaName, reping: !!reping },
       "notify: SLACK_WEBHOOK_URL not set — skipping Slack message",
     );
     return;
   }
 
-  const message = events.length === 1 ? buildSingleSlack(events[0]) : buildGroupedSlack(events);
+  // Re-pings always carry exactly one event (see notifyEscalationReping), so
+  // grouped Slack messages are always plain "new escalations" digests.
+  const message =
+    events.length === 1 ? buildSingleSlack(events[0], reping) : buildGroupedSlack(events);
 
   try {
     const res = await fetch(webhook, {
@@ -454,31 +482,37 @@ async function sendSlack(events: EscalationNotification[]): Promise<void> {
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       logger.error(
-        { count: events.length, status: res.status, body: body.slice(0, 200) },
+        { count: events.length, status: res.status, body: body.slice(0, 200), reping: !!reping },
         "notify: Slack webhook returned non-2xx",
       );
       return;
     }
     logger.info(
-      { count: events.length, areaName: events[0].areaName },
+      { count: events.length, areaName: events[0].areaName, reping: !!reping },
       "notify: Slack message posted",
     );
   } catch (err) {
-    logger.error({ err, count: events.length }, "notify: Slack post failed");
+    logger.error({ err, count: events.length, reping: !!reping }, "notify: Slack post failed");
   }
 }
 
-function buildSingleSlack(payload: EscalationNotification): unknown {
+function buildSingleSlack(payload: EscalationNotification, reping: RepingContext | null): unknown {
   const link = escalationLink(payload.escalationId);
+  const headline = reping
+    ? `:bell: *5S escalation still open* — Aging ${reping.ageMinutes} min (reminder ${reping.attempt}/${reping.maxAttempts})`
+    : `:rotating_light: *5S audit auto-escalated*`;
+  const summary = reping
+    ? `:bell: 5S escalation still open: *${payload.areaName}* — ${payload.scorePercent}% (aging ${reping.ageMinutes} min)`
+    : `:rotating_light: 5S audit auto-escalated: *${payload.areaName}* — ${payload.scorePercent}%`;
   return {
-    text: `:rotating_light: 5S audit auto-escalated: *${payload.areaName}* — ${payload.scorePercent}%`,
+    text: summary,
     blocks: [
       {
         type: "section",
         text: {
           type: "mrkdwn",
           text:
-            `:rotating_light: *5S audit auto-escalated*\n` +
+            `${headline}\n` +
             `*Area:* ${payload.areaName}\n` +
             `*Score:* ${payload.scorePercent}%\n` +
             `*Operator:* ${payload.operatorEmail}\n` +
@@ -535,19 +569,25 @@ function buildGroupedSlack(events: EscalationNotification[]): unknown {
   };
 }
 
-async function sendEmails(recipients: string[], events: EscalationNotification[]): Promise<void> {
+async function sendEmails(
+  recipients: string[],
+  events: EscalationNotification[],
+  reping: RepingContext | null,
+): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   const from = process.env.NOTIFICATION_FROM_EMAIL?.trim();
   if (!apiKey || !from) {
     logger.info(
-      { count: events.length, recipientCount: recipients.length },
+      { count: events.length, recipientCount: recipients.length, reping: !!reping },
       "notify: RESEND_API_KEY / NOTIFICATION_FROM_EMAIL not set — skipping email",
     );
     return;
   }
 
+  // Re-pings always carry exactly one event (see notifyEscalationReping), so
+  // grouped emails are always plain "new escalations" digests.
   const { subject, html, text } =
-    events.length === 1 ? buildSingleEmail(events[0]) : buildGroupedEmail(events);
+    events.length === 1 ? buildSingleEmail(events[0], reping) : buildGroupedEmail(events);
 
   await Promise.allSettled(
     recipients.map(async (to) => {
@@ -563,22 +603,34 @@ async function sendEmails(recipients: string[], events: EscalationNotification[]
         if (!res.ok) {
           const body = await res.text().catch(() => "");
           logger.error(
-            { count: events.length, to, status: res.status, body: body.slice(0, 200) },
+            { count: events.length, to, status: res.status, body: body.slice(0, 200), reping: !!reping },
             "notify: Resend returned non-2xx",
           );
           return;
         }
-        logger.info({ count: events.length, to }, "notify: email sent");
+        logger.info({ count: events.length, to, reping: !!reping }, "notify: email sent");
       } catch (err) {
-        logger.error({ err, count: events.length, to }, "notify: email send failed");
+        logger.error({ err, count: events.length, to, reping: !!reping }, "notify: email send failed");
       }
     }),
   );
 }
 
-function buildSingleEmail(payload: EscalationNotification): { subject: string; html: string; text: string } {
+function buildSingleEmail(
+  payload: EscalationNotification,
+  reping: RepingContext | null,
+): { subject: string; html: string; text: string } {
   const link = escalationLink(payload.escalationId);
-  const subject = `5S audit escalated: ${payload.areaName} — ${payload.scorePercent}%`;
+  const subject = reping
+    ? `[Aging ${reping.ageMinutes} min] 5S escalation still open: ${payload.areaName} — ${payload.scorePercent}%`
+    : `5S audit escalated: ${payload.areaName} — ${payload.scorePercent}%`;
+  const heading = reping ? "5S escalation still open" : "5S audit auto-escalated";
+  const repingBannerHtml = reping
+    ? `<p style="margin:0 0 10px;padding:8px 12px;background:#fef3c7;color:#92400e;border-radius:6px;font-size:13px;font-weight:600">Aging ${reping.ageMinutes} min — reminder ${reping.attempt} of ${reping.maxAttempts}</p>`
+    : "";
+  const repingBannerText = reping
+    ? `Aging ${reping.ageMinutes} min — reminder ${reping.attempt} of ${reping.maxAttempts}\n\n`
+    : "";
 
   const actionsHtml =
     payload.recommendedActions.length === 0
@@ -590,7 +642,8 @@ function buildSingleEmail(payload: EscalationNotification): { subject: string; h
 
   const html =
     `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;color:#222">` +
-    `<h2 style="margin:0 0 10px;font-size:18px">5S audit auto-escalated</h2>` +
+    repingBannerHtml +
+    `<h2 style="margin:0 0 10px;font-size:18px">${heading}</h2>` +
     `<table style="font-size:14px;line-height:1.5">` +
     `<tr><td style="color:#666;padding-right:12px">Area</td><td><b>${escapeHtml(payload.areaName)}</b></td></tr>` +
     `<tr><td style="color:#666;padding-right:12px">Score</td><td><b>${payload.scorePercent}%</b></td></tr>` +
@@ -602,7 +655,8 @@ function buildSingleEmail(payload: EscalationNotification): { subject: string; h
     `</div>`;
 
   const text =
-    `5S audit auto-escalated\n\n` +
+    `${heading}\n\n` +
+    repingBannerText +
     `Area: ${payload.areaName}\n` +
     `Score: ${payload.scorePercent}%\n` +
     `Operator: ${payload.operatorEmail}\n` +

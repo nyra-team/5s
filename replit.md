@@ -85,6 +85,16 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - Manager UI: `/notifications` page (Bell icon nav link) backed by `GET/PUT /api/me/notification-preferences`. Server response also returns `emailConfigured`/`slackConfigured` so the UI can warn when toggles will be no-ops.
 - **Grouping (Task 36):** Multiple escalations in the same area within `ESCALATION_NOTIFICATION_WINDOW_MS` (default 300000 = 5 min) are batched into a single digest message ("N new escalations on Area X — lowest score Y%"). Each per-event link still resolves to the focused escalation in `/escalations`, plus a header link to the inbox. Set the env var to `0` to disable grouping (fire one message per event, like the original behavior). `flushPendingEscalationNotifications()` is exported for tests / graceful shutdown.
 
+## Escalation re-pings (Task 41)
+
+- A background sweep started in `index.ts` (`startRepingScheduler()` from `artifacts/api-server/src/lib/reping-scheduler.ts`) re-notifies managers when an escalation has been sitting in `OPEN` for too long.
+- Schema: `escalations.reping_count` (int, default 0) and `escalations.last_reping_at` (timestamptz, nullable) track delivery state per row.
+- An escalation re-pings when `status = 'OPEN'`, `repingCount < ESCALATION_REPING_MAX_COUNT`, and the most recent activity (`lastRepingAt` or `createdAt`) is older than `ESCALATION_REPING_THRESHOLD_MINUTES`. Acknowledging or resolving flips status away from `OPEN`, which silences future re-pings without touching the counter.
+- The counter is bumped via a guarded `UPDATE … WHERE status='OPEN' AND reping_count = <observed>` so concurrent sweeps (or status changes) don't double-send.
+- Re-ping notifications go out through the same email/Slack channels as the initial notify, but with an "Aging X min — reminder N/M" banner/headline.
+- Env knobs (all optional): `ESCALATION_REPING_THRESHOLD_MINUTES` (default 15), `ESCALATION_REPING_MAX_COUNT` (default 2; set to `0` to disable the scheduler), `ESCALATION_REPING_CHECK_INTERVAL_MS` (default 60000).
+- The interval is `unref()`-ed so it never blocks process exit. The scheduler is wired in `index.ts` only — tests load `app.ts` directly and therefore never start it.
+
 ## Architecture
 
 - See `artifacts/api-server/src/routes/README.md` for route conventions (notably: never use `sql\`... = ANY(${jsArray})\`` — use drizzle's `inArray()` helper, which handles single-element arrays correctly)

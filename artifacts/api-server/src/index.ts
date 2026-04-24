@@ -5,6 +5,7 @@ import {
   flushPendingEscalationNotifications,
   recoverPendingEscalationNotifications,
 } from "./lib/notifications";
+import { startRepingScheduler } from "./lib/reping-scheduler";
 
 const rawPort = process.env["PORT"];
 
@@ -41,6 +42,8 @@ const server = app.listen(port, (err) => {
   recoverPendingEscalationNotifications().catch((err) =>
     logger.error({ err }, "Startup escalation recovery failed unexpectedly"),
   );
+
+  startRepingScheduler();
 });
 
 // Graceful shutdown: flush any in-memory escalation digests so we don't drop
