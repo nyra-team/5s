@@ -18,7 +18,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { format, formatDistanceToNowStrict } from "date-fns";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 
 const SHIFT_OPTIONS = [
   { value: "A" as const, label: "Shift A", time: "6 AM – 2 PM" },
@@ -165,9 +165,20 @@ export default function OperatorHome() {
       <section className="space-y-5">
         <h2 className="text-xl font-semibold tracking-tight">Assigned areas</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {statuses?.map((status) => (
-            <AreaCard key={status.areaId} status={status} selectedShift={activeShift} />
-          ))}
+          <AnimatePresence mode="popLayout" initial={false}>
+            {statuses?.map((status) => (
+              <motion.div
+                key={`${status.areaId}-${status.submitted ? "done" : "pending"}`}
+                layout
+                initial={{ opacity: 0, scale: 0.96, y: 8 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: -8 }}
+                transition={{ type: "spring", stiffness: 320, damping: 30, mass: 0.8 }}
+              >
+                <AreaCard status={status} selectedShift={activeShift} />
+              </motion.div>
+            ))}
+          </AnimatePresence>
           {statuses?.length === 0 && (
             <p className="text-muted-foreground py-12 text-center col-span-full">No areas assigned for this shift.</p>
           )}
