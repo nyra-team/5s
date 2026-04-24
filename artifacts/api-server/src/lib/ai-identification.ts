@@ -254,7 +254,7 @@ async function identifyAreaImpl(input: IdentificationInput): Promise<Identificat
   let framePaths: string[];
   if (input.mediaType === "video") {
     try {
-      const kf = await extractKeyframes(fullMediaPath, { maxFrames: 4, intervalSec: 2 });
+      const kf = await extractKeyframes(fullMediaPath, { maxFrames: 4, fallbackIntervalSec: 2 });
       framePaths = kf.frameAbsPaths;
       if (framePaths.length === 0) {
         throw new Error("No keyframes extracted");

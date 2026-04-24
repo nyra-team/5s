@@ -38,7 +38,7 @@ const AUDIT_HISTORY_LIMIT = 5;
 interface AuditEntry {
   id: number;
   changedAt: string;
-  changedByUserId: number;
+  changedByUserId: number | null;
   changedByUserEmail: string | null;
   field: string;
   oldValue: number | null;
@@ -86,18 +86,23 @@ async function loadAuditHistory(): Promise<AuditEntry[]> {
     .limit(AUDIT_HISTORY_LIMIT);
   if (rows.length === 0) return [];
 
-  const userIds = Array.from(new Set(rows.map((r) => r.changedByUserId)));
-  const users = await db
-    .select({ id: usersTable.id, email: usersTable.email })
-    .from(usersTable)
-    .where(inArray(usersTable.id, userIds));
+  const userIds = Array.from(
+    new Set(rows.map((r) => r.changedByUserId).filter((id): id is number => id !== null)),
+  );
+  const users = userIds.length
+    ? await db
+        .select({ id: usersTable.id, email: usersTable.email })
+        .from(usersTable)
+        .where(inArray(usersTable.id, userIds))
+    : [];
   const emailById = new Map(users.map((u) => [u.id, u.email]));
 
   return rows.map((r) => ({
     id: r.id,
     changedAt: r.changedAt.toISOString(),
     changedByUserId: r.changedByUserId,
-    changedByUserEmail: emailById.get(r.changedByUserId) ?? null,
+    changedByUserEmail:
+      r.changedByUserId !== null ? emailById.get(r.changedByUserId) ?? null : null,
     field: r.field,
     oldValue: r.oldValue,
     newValue: r.newValue,
