@@ -27,8 +27,11 @@ import { dismissNudgesForSubmission } from "./nudges";
 import { logger } from "../lib/logger.js";
 import { notifyEscalationCreated } from "../lib/notifications.js";
 import {
-  loadEffectiveOperatorThresholds,
   priorBestWindowMs,
+  getEnvOperatorThresholds,
+  getDbOperatorThresholds,
+  getDbAreaOperatorThresholdsByIds,
+  resolveOperatorThresholds,
 } from "../lib/operator-thresholds.js";
 
 const ESCALATION_THRESHOLD_PERCENT = (() => {
@@ -594,10 +597,13 @@ router.get("/operator/recent", authMiddleware, async (req, res): Promise<void> =
   // without an extra round-trip per area. The strip itself only renders `limit`.
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-  // Resolve the prior-best window per request so admin-tuned overrides
-  // (env var or DB) take effect on the next call without a redeploy.
-  const effectiveThresholds = await loadEffectiveOperatorThresholds();
-  const PRIOR_BEST_WINDOW_MS = priorBestWindowMs(effectiveThresholds);
+  // Resolve the prior-best window per AREA so admin-tuned per-area overrides
+  // (env > area-DB > global-DB > default) take effect on the next call
+  // without a redeploy. We do this once with bulk fetches and then resolve
+  // per row using the cached layers — this is `O(unique areas + 1)` queries
+  // instead of one per row.
+  const env = getEnvOperatorThresholds();
+  const globalRow = await getDbOperatorThresholds();
 
   const rows = await db
     .select({
@@ -621,6 +627,22 @@ router.get("/operator/recent", authMiddleware, async (req, res): Promise<void> =
     )
     .orderBy(sql`${submissionsTable.createdAt} DESC`);
 
+  // Fetch per-area DB overrides for every area touched by the result set in
+  // one round trip, then resolve the effective window per area. The map can
+  // be empty (no area overrides → every area falls through to global/env/
+  // default), which is the common case.
+  const uniqueAreaIds = Array.from(new Set(rows.map((r) => r.areaId)));
+  const areaOverrides = await getDbAreaOperatorThresholdsByIds(uniqueAreaIds);
+  const windowMsByAreaId = new Map<number, number>();
+  for (const areaId of uniqueAreaIds) {
+    const resolved = resolveOperatorThresholds({
+      env,
+      areaOverride: areaOverrides.get(areaId) ?? null,
+      globalOverride: globalRow,
+    });
+    windowMsByAreaId.set(areaId, priorBestWindowMs(resolved));
+  }
+
   // For each submission, find the operator's prior submission for the same area
   // (any time before this one) and the operator's best score for the area in
   // the prior-best window strictly preceding this submission's timestamp
@@ -632,7 +654,13 @@ router.get("/operator/recent", authMiddleware, async (req, res): Promise<void> =
       (r) => r.areaId === row.areaId && r.id !== row.id && new Date(r.createdAt).getTime() < rowTime
     );
     const prior = sameAreaPrior[0]; // rows are DESC, so first match is the most recent prior
-    const priorWeek = sameAreaPrior.filter((r) => new Date(r.createdAt).getTime() >= rowTime - PRIOR_BEST_WINDOW_MS);
+    const windowMs =
+      windowMsByAreaId.get(row.areaId) ?? priorBestWindowMs({
+        encouragementMinPercent: 0,
+        priorBestWindowDays: 7,
+        dueSoonThresholdMinutes: 0,
+      });
+    const priorWeek = sameAreaPrior.filter((r) => new Date(r.createdAt).getTime() >= rowTime - windowMs);
     const best = priorWeek.length > 0
       ? priorWeek.reduce((m, r) => (r.scoreTotal > m ? r.scoreTotal : m), -Infinity)
       : null;

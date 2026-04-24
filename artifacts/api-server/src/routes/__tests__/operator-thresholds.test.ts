@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import request from "supertest";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import {
   db,
   pool,
   usersTable,
   operatorSettingsTable,
   operatorSettingsAuditTable,
+  areasTable,
+  areaOperatorSettingsTable,
 } from "@workspace/db";
 import app from "../../app";
 import { signToken } from "../../lib/auth";
@@ -25,8 +27,12 @@ let operatorToken: string;
 
 async function clearOverrides() {
   await db.delete(operatorSettingsAuditTable);
+  await db.delete(areaOperatorSettingsTable);
   await db.delete(operatorSettingsTable);
 }
+
+let areaA: { id: number; name: string };
+let areaB: { id: number; name: string };
 
 beforeAll(async () => {
   const [m] = await db
@@ -50,10 +56,24 @@ beforeAll(async () => {
 
   managerToken = signToken({ userId: managerId, role: "MANAGER" });
   operatorToken = signToken({ userId: operatorId, role: "OPERATOR" });
+
+  const [a] = await db
+    .insert(areasTable)
+    .values({ name: `${RUN_TAG}-area-A` })
+    .returning();
+  areaA = { id: a.id, name: a.name };
+  const [b] = await db
+    .insert(areasTable)
+    .values({ name: `${RUN_TAG}-area-B` })
+    .returning();
+  areaB = { id: b.id, name: b.name };
 });
 
 afterAll(async () => {
   await clearOverrides();
+  await db
+    .delete(areasTable)
+    .where(inArray(areasTable.id, [areaA.id, areaB.id]));
   await db.delete(usersTable).where(eq(usersTable.id, managerId));
   await db.delete(usersTable).where(eq(usersTable.id, operatorId));
   await pool.end();
@@ -334,5 +354,243 @@ describe("operator-thresholds audit trail", () => {
       (e: { newValue: number }) => e.newValue,
     );
     expect(newValues).toEqual([16, 15, 14, 13, 12]);
+  });
+});
+
+describe("GET /operator-thresholds (per-area provenance)", () => {
+  it("includes a sorted areaOverrides array", async () => {
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaB.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 2 });
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ encouragementMinPercent: 65 });
+
+    const get = await request(app)
+      .get("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(get.status).toBe(200);
+    const overrides = (get.body.areaOverrides as Array<{
+      areaId: number;
+      areaName: string;
+      encouragementMinPercent: number | null;
+      priorBestWindowDays: number | null;
+      dueSoonThresholdMinutes: number | null;
+    }>).filter((r) => r.areaId === areaA.id || r.areaId === areaB.id);
+    expect(overrides).toHaveLength(2);
+    // Sorted ascending by areaId so the UI selector is predictable.
+    expect(overrides[0].areaId).toBeLessThan(overrides[1].areaId);
+    const a = overrides.find((r) => r.areaId === areaA.id)!;
+    expect(a.areaName).toBe(areaA.name);
+    expect(a.encouragementMinPercent).toBe(65);
+    expect(a.priorBestWindowDays).toBeNull();
+    const b = overrides.find((r) => r.areaId === areaB.id)!;
+    expect(b.priorBestWindowDays).toBe(2);
+  });
+});
+
+describe("GET /operator-thresholds/areas/:id", () => {
+  it("returns 404 for an unknown area id", async () => {
+    const res = await request(app)
+      .get("/api/operator-thresholds/areas/9999999")
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 401 without a token", async () => {
+    const res = await request(app).get(
+      `/api/operator-thresholds/areas/${areaA.id}`,
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("falls back to defaults when no per-area row exists", async () => {
+    const res = await request(app)
+      .get(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${operatorToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.areaId).toBe(areaA.id);
+    expect(res.body.areaName).toBe(areaA.name);
+    expect(res.body.encouragementMinPercent).toBe(
+      DEFAULT_OPERATOR_THRESHOLDS.encouragementMinPercent,
+    );
+    expect(res.body.areaOverrides).toEqual({
+      encouragementMinPercent: null,
+      priorBestWindowDays: null,
+      dueSoonThresholdMinutes: null,
+    });
+    expect(res.body.globalOverrides).toEqual({
+      encouragementMinPercent: null,
+      priorBestWindowDays: null,
+      dueSoonThresholdMinutes: null,
+    });
+  });
+
+  it("layers area DB > global DB on a per-field basis", async () => {
+    // Set the global layer first.
+    await request(app)
+      .put("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ encouragementMinPercent: 60, priorBestWindowDays: 14 });
+    // Then override only `priorBestWindowDays` on areaA.
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 3 });
+
+    const res = await request(app)
+      .get(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.encouragementMinPercent).toBe(60); // from global
+    expect(res.body.priorBestWindowDays).toBe(3); // from area
+    expect(res.body.dueSoonThresholdMinutes).toBe(
+      DEFAULT_OPERATOR_THRESHOLDS.dueSoonThresholdMinutes,
+    );
+    expect(res.body.areaOverrides.priorBestWindowDays).toBe(3);
+    expect(res.body.globalOverrides.encouragementMinPercent).toBe(60);
+  });
+});
+
+describe("PUT /operator-thresholds/areas/:id", () => {
+  it("returns 403 when the caller is an operator", async () => {
+    const res = await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${operatorToken}`)
+      .send({ encouragementMinPercent: 75 });
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 404 for an unknown area id", async () => {
+    const res = await request(app)
+      .put("/api/operator-thresholds/areas/9999999")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 3 });
+    expect(res.status).toBe(404);
+  });
+
+  it("persists a per-area override and reflects it on the next GET", async () => {
+    const put = await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 2 });
+    expect(put.status).toBe(200);
+    expect(put.body.priorBestWindowDays).toBe(2);
+    expect(put.body.areaOverrides.priorBestWindowDays).toBe(2);
+    expect(put.body.updatedByUserId).toBe(managerId);
+    expect(put.body.updatedAt).not.toBeNull();
+
+    const get = await request(app)
+      .get(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${operatorToken}`);
+    expect(get.body.priorBestWindowDays).toBe(2);
+  });
+
+  it("treats null as 'clear that field'", async () => {
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 2, encouragementMinPercent: 88 });
+
+    const cleared = await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.areaOverrides.priorBestWindowDays).toBeNull();
+    // The other field is untouched.
+    expect(cleared.body.areaOverrides.encouragementMinPercent).toBe(88);
+  });
+
+  it("ignores invalid values without rejecting the whole payload", async () => {
+    const res = await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({
+        priorBestWindowDays: 9999, // out of range
+        encouragementMinPercent: 70, // valid
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.areaOverrides.priorBestWindowDays).toBeNull();
+    expect(res.body.areaOverrides.encouragementMinPercent).toBe(70);
+  });
+
+  it("tidies away the row once every field is cleared", async () => {
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 2 });
+
+    // Confirm the row exists in the global payload.
+    const before = await request(app)
+      .get("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(
+      (before.body.areaOverrides as Array<{ areaId: number }>).some(
+        (r) => r.areaId === areaA.id,
+      ),
+    ).toBe(true);
+
+    // Clear it.
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: null });
+
+    const after = await request(app)
+      .get("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(
+      (after.body.areaOverrides as Array<{ areaId: number }>).some(
+        (r) => r.areaId === areaA.id,
+      ),
+    ).toBe(false);
+  });
+
+  it("isolates overrides between areas", async () => {
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 2 });
+
+    const otherArea = await request(app)
+      .get(`/api/operator-thresholds/areas/${areaB.id}`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(otherArea.body.areaOverrides.priorBestWindowDays).toBeNull();
+    expect(otherArea.body.priorBestWindowDays).toBe(
+      DEFAULT_OPERATOR_THRESHOLDS.priorBestWindowDays,
+    );
+  });
+});
+
+describe("DELETE /operator-thresholds/areas/:id", () => {
+  it("clears every per-area override for the area", async () => {
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({
+        encouragementMinPercent: 70,
+        priorBestWindowDays: 2,
+        dueSoonThresholdMinutes: 15,
+      });
+
+    const del = await request(app)
+      .delete(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(del.status).toBe(200);
+    expect(del.body.areaOverrides).toEqual({
+      encouragementMinPercent: null,
+      priorBestWindowDays: null,
+      dueSoonThresholdMinutes: null,
+    });
+  });
+
+  it("returns 403 for operators", async () => {
+    const res = await request(app)
+      .delete(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${operatorToken}`);
+    expect(res.status).toBe(403);
   });
 });

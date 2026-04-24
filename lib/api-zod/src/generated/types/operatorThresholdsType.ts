@@ -5,6 +5,7 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { AreaOperatorThresholdEntryType } from "./areaOperatorThresholdEntryType";
 import type { OperatorThresholdAuditEntryType } from "./operatorThresholdAuditEntryType";
 import type { OperatorThresholdSourcesType } from "./operatorThresholdSourcesType";
 import type { OperatorThresholdsTypeDefaults } from "./operatorThresholdsTypeDefaults";
@@ -52,4 +53,10 @@ PUT — a manager who tweaks two dials at once produces two
 entries with the same `changedAt` timestamp.
  */
   auditHistory: OperatorThresholdAuditEntryType[];
+  /** Every per-area override row (joined with the area name) so the
+admin UI can render a per-area selector with provenance markers
+without a second round-trip. Areas with no override row are
+absent.
+ */
+  areaOverrides: AreaOperatorThresholdEntryType[];
 }

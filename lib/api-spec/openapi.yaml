@@ -848,6 +848,83 @@ paths:
               schema:
                 $ref: "#/components/schemas/OperatorThresholds"
 
+  /operator-thresholds/areas/{id}:
+    get:
+      operationId: getAreaOperatorThresholds
+      tags: [settings]
+      summary: Get the effective per-area operator thresholds (env > area-DB > global-DB > default)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Effective thresholds for the area + per-layer overrides
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaOperatorThresholds"
+        "404":
+          description: Area not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateAreaOperatorThresholds
+      tags: [settings]
+      summary: Update the per-area DB override row (manager only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOperatorThresholdsBody"
+      responses:
+        "200":
+          description: Effective thresholds for the area after the update
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaOperatorThresholds"
+        "404":
+          description: Area not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: clearAreaOperatorThresholds
+      tags: [settings]
+      summary: Clear every per-area override for an area in one shot (manager only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Effective thresholds for the area after clearing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaOperatorThresholds"
+        "404":
+          description: Area not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -1062,6 +1139,15 @@ components:
             entries with the same `changedAt` timestamp.
           items:
             $ref: "#/components/schemas/OperatorThresholdAuditEntry"
+        areaOverrides:
+          type: array
+          description: |
+            Every per-area override row (joined with the area name) so the
+            admin UI can render a per-area selector with provenance markers
+            without a second round-trip. Areas with no override row are
+            absent.
+          items:
+            $ref: "#/components/schemas/AreaOperatorThresholdEntry"
       required:
         - encouragementMinPercent
         - priorBestWindowDays
@@ -1070,6 +1156,7 @@ components:
         - envOverrides
         - dbOverrides
         - auditHistory
+        - areaOverrides
 
     OperatorThresholdAuditEntry:
       type: object
@@ -1108,6 +1195,110 @@ components:
         - id
         - changedAt
         - field
+
+    AreaOperatorThresholdEntry:
+      type: object
+      description: |
+        One per-area override row plus the resolved area name. Threshold
+        fields are nullable because each layer can selectively override
+        a subset of fields (the others fall through to global / env /
+        default).
+      properties:
+        areaId:
+          type: integer
+        areaName:
+          type: string
+        encouragementMinPercent:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 100
+        priorBestWindowDays:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 365
+        dueSoonThresholdMinutes:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 1440
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        updatedByUserId:
+          type: integer
+          nullable: true
+      required:
+        - areaId
+        - areaName
+        - encouragementMinPercent
+        - priorBestWindowDays
+        - dueSoonThresholdMinutes
+
+    AreaOperatorThresholds:
+      type: object
+      description: |
+        Effective per-area operator thresholds (env > area-DB > global-DB >
+        default) plus every layer's source values so the admin UI can show
+        provenance per field.
+      properties:
+        areaId:
+          type: integer
+        areaName:
+          type: string
+        encouragementMinPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        priorBestWindowDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+        dueSoonThresholdMinutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+        defaults:
+          type: object
+          properties:
+            encouragementMinPercent:
+              type: integer
+            priorBestWindowDays:
+              type: integer
+            dueSoonThresholdMinutes:
+              type: integer
+          required:
+            - encouragementMinPercent
+            - priorBestWindowDays
+            - dueSoonThresholdMinutes
+        envOverrides:
+          $ref: "#/components/schemas/OperatorThresholdSources"
+        globalOverrides:
+          $ref: "#/components/schemas/OperatorThresholdSources"
+          description: Global DB override values (the layer that applies when no area override is set).
+        areaOverrides:
+          $ref: "#/components/schemas/OperatorThresholdSources"
+          description: This area's per-area DB override row (all-nulls when the area has no row yet).
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When this area's per-area override row was last touched.
+        updatedByUserId:
+          type: integer
+          nullable: true
+      required:
+        - areaId
+        - areaName
+        - encouragementMinPercent
+        - priorBestWindowDays
+        - dueSoonThresholdMinutes
+        - defaults
+        - envOverrides
+        - globalOverrides
+        - areaOverrides
 
     UpdateOperatorThresholdsBody:
       type: object

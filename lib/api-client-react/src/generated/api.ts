@@ -19,6 +19,7 @@ import type {
 import type {
   Area,
   AreaIdentificationResult,
+  AreaOperatorThresholds,
   AreaProfile,
   AreaStatus,
   AreaTrend,
@@ -3497,4 +3498,275 @@ export const useUpdateOperatorThresholds = <
   TContext
 > => {
   return useMutation(getUpdateOperatorThresholdsMutationOptions(options));
+};
+
+/**
+ * @summary Get the effective per-area operator thresholds (env > area-DB > global-DB > default)
+ */
+export const getGetAreaOperatorThresholdsUrl = (id: number) => {
+  return `/api/operator-thresholds/areas/${id}`;
+};
+
+export const getAreaOperatorThresholds = async (
+  id: number,
+  options?: RequestInit,
+): Promise<AreaOperatorThresholds> => {
+  return customFetch<AreaOperatorThresholds>(
+    getGetAreaOperatorThresholdsUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAreaOperatorThresholdsQueryKey = (id: number) => {
+  return [`/api/operator-thresholds/areas/${id}`] as const;
+};
+
+export const getGetAreaOperatorThresholdsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAreaOperatorThresholds>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAreaOperatorThresholds>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAreaOperatorThresholdsQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAreaOperatorThresholds>>
+  > = ({ signal }) =>
+    getAreaOperatorThresholds(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAreaOperatorThresholds>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAreaOperatorThresholdsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAreaOperatorThresholds>>
+>;
+export type GetAreaOperatorThresholdsQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get the effective per-area operator thresholds (env > area-DB > global-DB > default)
+ */
+
+export function useGetAreaOperatorThresholds<
+  TData = Awaited<ReturnType<typeof getAreaOperatorThresholds>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAreaOperatorThresholds>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAreaOperatorThresholdsQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update the per-area DB override row (manager only)
+ */
+export const getUpdateAreaOperatorThresholdsUrl = (id: number) => {
+  return `/api/operator-thresholds/areas/${id}`;
+};
+
+export const updateAreaOperatorThresholds = async (
+  id: number,
+  updateOperatorThresholdsBody: UpdateOperatorThresholdsBody,
+  options?: RequestInit,
+): Promise<AreaOperatorThresholds> => {
+  return customFetch<AreaOperatorThresholds>(
+    getUpdateAreaOperatorThresholdsUrl(id),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(updateOperatorThresholdsBody),
+    },
+  );
+};
+
+export const getUpdateAreaOperatorThresholdsMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateAreaOperatorThresholds>>,
+    TError,
+    { id: number; data: BodyType<UpdateOperatorThresholdsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateAreaOperatorThresholds>>,
+  TError,
+  { id: number; data: BodyType<UpdateOperatorThresholdsBody> },
+  TContext
+> => {
+  const mutationKey = ["updateAreaOperatorThresholds"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateAreaOperatorThresholds>>,
+    { id: number; data: BodyType<UpdateOperatorThresholdsBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateAreaOperatorThresholds(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateAreaOperatorThresholdsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateAreaOperatorThresholds>>
+>;
+export type UpdateAreaOperatorThresholdsMutationBody =
+  BodyType<UpdateOperatorThresholdsBody>;
+export type UpdateAreaOperatorThresholdsMutationError =
+  ErrorType<ErrorResponse>;
+
+/**
+ * @summary Update the per-area DB override row (manager only)
+ */
+export const useUpdateAreaOperatorThresholds = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateAreaOperatorThresholds>>,
+    TError,
+    { id: number; data: BodyType<UpdateOperatorThresholdsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateAreaOperatorThresholds>>,
+  TError,
+  { id: number; data: BodyType<UpdateOperatorThresholdsBody> },
+  TContext
+> => {
+  return useMutation(getUpdateAreaOperatorThresholdsMutationOptions(options));
+};
+
+/**
+ * @summary Clear every per-area override for an area in one shot (manager only)
+ */
+export const getClearAreaOperatorThresholdsUrl = (id: number) => {
+  return `/api/operator-thresholds/areas/${id}`;
+};
+
+export const clearAreaOperatorThresholds = async (
+  id: number,
+  options?: RequestInit,
+): Promise<AreaOperatorThresholds> => {
+  return customFetch<AreaOperatorThresholds>(
+    getClearAreaOperatorThresholdsUrl(id),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export const getClearAreaOperatorThresholdsMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof clearAreaOperatorThresholds>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof clearAreaOperatorThresholds>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["clearAreaOperatorThresholds"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof clearAreaOperatorThresholds>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return clearAreaOperatorThresholds(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ClearAreaOperatorThresholdsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof clearAreaOperatorThresholds>>
+>;
+
+export type ClearAreaOperatorThresholdsMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Clear every per-area override for an area in one shot (manager only)
+ */
+export const useClearAreaOperatorThresholds = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof clearAreaOperatorThresholds>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof clearAreaOperatorThresholds>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getClearAreaOperatorThresholdsMutationOptions(options));
 };

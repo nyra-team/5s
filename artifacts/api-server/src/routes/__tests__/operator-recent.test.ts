@@ -7,6 +7,7 @@ import {
   areasTable,
   usersTable,
   submissionsTable,
+  areaOperatorSettingsTable,
 } from "@workspace/db";
 import app from "../../app";
 import { signToken } from "../../lib/auth";
@@ -64,6 +65,12 @@ async function clearSubmissions() {
     .where(inArray(submissionsTable.userId, [userId, otherUserId]));
 }
 
+async function clearAreaOverrides() {
+  await db
+    .delete(areaOperatorSettingsTable)
+    .where(inArray(areaOperatorSettingsTable.areaId, [areaA.id, areaB.id]));
+}
+
 beforeAll(async () => {
   const [u] = await db
     .insert(usersTable)
@@ -101,6 +108,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await clearAreaOverrides();
   await clearSubmissions();
   await db.delete(usersTable).where(inArray(usersTable.id, [userId, otherUserId]));
   await db.delete(areasTable).where(eq(areasTable.id, areaA.id));
@@ -109,6 +117,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await clearAreaOverrides();
   await clearSubmissions();
 });
 
@@ -291,6 +300,71 @@ describe("GET /operator/recent", () => {
       .set("Authorization", `Bearer ${token}`);
     expect(huge.status).toBe(200);
     expect(huge.body).toHaveLength(5);
+  });
+
+  it("honors a per-area priorBestWindowDays override (tighter window excludes priors that the global window includes)", async () => {
+    // Global default is 7d. Set a 1-day override on areaA so a 2-day-old
+    // prior — which would normally be inside the window — is now excluded.
+    // areaB keeps the default behavior, proving the override is per-area
+    // rather than applied globally.
+    const HOUR_MS = 60 * 60 * 1000;
+    const now = Date.now();
+    await db.insert(areaOperatorSettingsTable).values({
+      areaId: areaA.id,
+      priorBestWindowDays: 1,
+    });
+
+    const targetA = await insertSubmission({
+      userId,
+      areaId: areaA.id,
+      scoreTotal: 10,
+      createdAt: new Date(now),
+    });
+    // Inside the GLOBAL 7d window but OUTSIDE the per-area 1d window.
+    await insertSubmission({
+      userId,
+      areaId: areaA.id,
+      scoreTotal: 30,
+      createdAt: new Date(now - 2 * 24 * HOUR_MS),
+    });
+    // Inside both windows — should always count.
+    await insertSubmission({
+      userId,
+      areaId: areaA.id,
+      scoreTotal: 12,
+      createdAt: new Date(now - 6 * HOUR_MS),
+    });
+
+    // areaB control: a 2-day-old prior must still be picked up (default 7d
+    // window applies because areaB has no per-area override).
+    const targetB = await insertSubmission({
+      userId,
+      areaId: areaB.id,
+      scoreTotal: 10,
+      createdAt: new Date(now - HOUR_MS),
+    });
+    await insertSubmission({
+      userId,
+      areaId: areaB.id,
+      scoreTotal: 25,
+      createdAt: new Date(now - 2 * 24 * HOUR_MS),
+    });
+
+    const res = await request(app)
+      .get("/api/operator/recent")
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(200);
+
+    const aRow = res.body.find((r: { id: number }) => r.id === targetA.id);
+    expect(aRow).toBeDefined();
+    // The 30-pt prior is past the 1-day window — must NOT leak in.
+    expect(aRow.bestScoreInLastWeek).toBe(12);
+    expect(aRow.bestScoreInLastWeek).not.toBe(30);
+
+    const bRow = res.body.find((r: { id: number }) => r.id === targetB.id);
+    expect(bRow).toBeDefined();
+    // areaB has no override — 2-day-old prior is still within the default 7d.
+    expect(bRow.bestScoreInLastWeek).toBe(25);
   });
 
   it("does not leak submissions from other operators", async () => {

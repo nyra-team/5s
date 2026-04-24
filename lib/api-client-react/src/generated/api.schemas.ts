@@ -138,6 +138,35 @@ dueSoonThresholdMinutes.
 }
 
 /**
+ * One per-area override row plus the resolved area name. Threshold
+fields are nullable because each layer can selectively override
+a subset of fields (the others fall through to global / env /
+default).
+
+ */
+export interface AreaOperatorThresholdEntry {
+  areaId: number;
+  areaName: string;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  encouragementMinPercent: number | null;
+  /**
+   * @minimum 1
+   * @maximum 365
+   */
+  priorBestWindowDays: number | null;
+  /**
+   * @minimum 0
+   * @maximum 1440
+   */
+  dueSoonThresholdMinutes: number | null;
+  updatedAt?: string | null;
+  updatedByUserId?: number | null;
+}
+
+/**
  * Effective operator-facing thresholds (env > DB > default), plus the
 per-layer overrides so the admin UI can show provenance.
 
@@ -180,6 +209,53 @@ PUT — a manager who tweaks two dials at once produces two
 entries with the same `changedAt` timestamp.
  */
   auditHistory: OperatorThresholdAuditEntry[];
+  /** Every per-area override row (joined with the area name) so the
+admin UI can render a per-area selector with provenance markers
+without a second round-trip. Areas with no override row are
+absent.
+ */
+  areaOverrides: AreaOperatorThresholdEntry[];
+}
+
+export type AreaOperatorThresholdsDefaults = {
+  encouragementMinPercent: number;
+  priorBestWindowDays: number;
+  dueSoonThresholdMinutes: number;
+};
+
+/**
+ * Effective per-area operator thresholds (env > area-DB > global-DB >
+default) plus every layer's source values so the admin UI can show
+provenance per field.
+
+ */
+export interface AreaOperatorThresholds {
+  areaId: number;
+  areaName: string;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  encouragementMinPercent: number;
+  /**
+   * @minimum 1
+   * @maximum 365
+   */
+  priorBestWindowDays: number;
+  /**
+   * @minimum 0
+   * @maximum 1440
+   */
+  dueSoonThresholdMinutes: number;
+  defaults: AreaOperatorThresholdsDefaults;
+  envOverrides: OperatorThresholdSources;
+  /** Global DB override values (the layer that applies when no area override is set). */
+  globalOverrides: OperatorThresholdSources;
+  /** This area's per-area DB override row (all-nulls when the area has no row yet). */
+  areaOverrides: OperatorThresholdSources;
+  /** When this area's per-area override row was last touched. */
+  updatedAt?: string | null;
+  updatedByUserId?: number | null;
 }
 
 /**

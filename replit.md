@@ -38,7 +38,7 @@ The application is built as a monorepo using pnpm workspaces, with Node.js 24 an
 -   **AI-Powered Scoring & Suggestions:** Provides 0-25 5S scores and VLM-generated, location-specific improvement suggestions.
 -   **Manager Dashboard:** Offers compliance tracking, score trends, submission browsing, ideal photo management, and AI calibration tools.
 -   **Escalation Management:** Automatically escalates low-scoring submissions, with configurable notification channels (email, Slack) and re-ping reminders for open escalations.
--   **Operator Threshold Tuning:** Runtime-tunable parameters for operator-facing cutoffs (e.g., encouragement thresholds, prior best lookback window, due soon lead time) with precedence for environment variables, database overrides, and shipped defaults.
+-   **Operator Threshold Tuning:** Runtime-tunable parameters for operator-facing cutoffs (e.g., encouragement thresholds, prior best lookback window, due soon lead time). Resolved per field with precedence: environment variables > per-area DB override > global DB override > shipped default. Per-area overrides live in `area_operator_settings` (one row per area) and let managers tighten or relax thresholds for individual workstations without affecting the rest of the plant.
 -   **Theming:** Dynamic light/dark theme switching based on configured night shift hours and timezone.
 
 **UI/UX Decisions:**
@@ -46,7 +46,7 @@ The application is built as a monorepo using pnpm workspaces, with Node.js 24 an
 -   Manager views include dashboards with charts for compliance and score trends, a submission browser, and an interface for managing ideal photos and labeling submissions.
 -   Keyboard shortcuts are implemented for managers in submission lists for efficient navigation and action.
 -   Notifications UI allows managers to configure preferences for email and Slack.
--   Operator thresholds are managed via a dedicated manager admin UI with sliders for easy adjustment.
+-   Operator thresholds are managed via a dedicated manager admin UI with a scope selector that toggles between the global editor and a per-area editor; the per-area editor shows inherited values with "(global)" / "(default)" markers so the manager always knows what they're falling back to.
 
 ## External Dependencies
 
