@@ -8,6 +8,7 @@ import {
   usersTable,
   escalationsTable,
   areaProfilesTable,
+  areaAssignmentsTable,
 } from "@workspace/db";
 import { GetSubmissionParams, ListSubmissionsQueryParams } from "@workspace/api-zod";
 import { authMiddleware } from "../lib/auth";
@@ -67,6 +68,31 @@ const submissionSelect = {
   embeddingHash: submissionsTable.embeddingHash,
   createdAt: submissionsTable.createdAt,
 };
+
+/**
+ * Returns the area ids the given operator is allowed to act on:
+ *   - `null`  → no assignments configured for this user; treat them as
+ *               having access to *all* areas (backward-compatible mode for
+ *               sites that haven't filled in the new model yet).
+ *   - `[]`    → assignments table has been touched but the operator was
+ *               left with zero areas; we honor that as "no access".
+ *   - `[…]`   → the explicit set of assigned area ids.
+ *
+ * Distinguishing "no rows" from "explicit empty set" is impossible with
+ * just this table (deletes are physical), so we adopt the documented rule:
+ * zero rows == grant all. Managers who want to lock an operator out should
+ * either remove the user or give them a sentinel "no-access" area, but the
+ * common case (a freshly seeded DB or an operator the manager hasn't
+ * configured yet) keeps working.
+ */
+async function getAssignedAreaIds(userId: number): Promise<number[] | null> {
+  const rows = await db
+    .select({ areaId: areaAssignmentsTable.areaId })
+    .from(areaAssignmentsTable)
+    .where(eq(areaAssignmentsTable.userId, userId));
+  if (rows.length === 0) return null;
+  return rows.map((r) => r.areaId);
+}
 
 function getShiftDateRange(dateStr?: string | Date, shift?: string) {
   const date = !dateStr ? new Date() : (dateStr instanceof Date ? dateStr : new Date(dateStr + "T00:00:00"));
@@ -263,16 +289,32 @@ async function maybeCreateEscalation(args: {
 }
 
 router.post("/submissions/identify-area", authMiddleware, uploadFields, async (req, res): Promise<void> => {
+  const { userId } = (req as any).user;
   const file = extractFile(req);
   if (!file) { res.status(400).json({ error: "Media file is required (use field 'media' or 'photo')" }); return; }
 
   // Pull every area's profile and keep only those that have completed the
   // learning phase. Identification against a still-LEARNING profile would be
   // mostly noise, and the spec says fall back to manual selection in that
-  // case rather than guessing. We deliberately scope to ALL areas (not just
-  // the operator's submissions history) because the task's "assigned areas"
-  // model doesn't exist yet — every operator can submit for any area, so
-  // every TRAINED profile is a valid candidate.
+  // case rather than guessing.
+  //
+  // We further narrow the candidate pool to the calling operator's assigned
+  // areas. If the operator has zero assignments, we fall back to all TRAINED
+  // areas — that's the backward-compatible "no assignments configured"
+  // mode for sites that haven't filled in the new model yet.
+  const assignedAreaIds = await getAssignedAreaIds(userId);
+
+  const baseConds = [eq(areaProfilesTable.status, "TRAINED")];
+  if (assignedAreaIds !== null) {
+    if (assignedAreaIds.length === 0) {
+      // Operator has assignments configured but none — surface the empty
+      // result instead of leaking everyone else's areas.
+      res.json({ candidates: [], hasTrainedAreas: false, rationale: null });
+      return;
+    }
+    baseConds.push(inArray(areasTable.id, assignedAreaIds));
+  }
+
   const rows = await db
     .select({
       areaId: areasTable.id,
@@ -285,7 +327,7 @@ router.post("/submissions/identify-area", authMiddleware, uploadFields, async (r
     })
     .from(areasTable)
     .innerJoin(areaProfilesTable, eq(areaProfilesTable.areaId, areasTable.id))
-    .where(eq(areaProfilesTable.status, "TRAINED"));
+    .where(and(...baseConds));
 
   if (rows.length === 0) {
     res.json({ candidates: [], hasTrainedAreas: false, rationale: null });
@@ -350,6 +392,15 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
 
   const [area] = await db.select().from(areasTable).where(eq(areasTable.id, areaId));
   if (!area) { res.status(404).json({ error: "Area not found", code: "AREA_NOT_FOUND" }); return; }
+
+  // Enforce assignment scope on writes too. Without this, an operator could
+  // bypass the home-grid filter by hitting the endpoint directly with an
+  // areaId they aren't supposed to own.
+  const assignedAreaIdsForPost = await getAssignedAreaIds(userId);
+  if (assignedAreaIdsForPost !== null && !assignedAreaIdsForPost.includes(areaId)) {
+    res.status(403).json({ error: "You are not assigned to this area" });
+    return;
+  }
 
   let pipeline;
   try {
@@ -708,7 +759,22 @@ router.get("/operator/status", authMiddleware, async (req, res): Promise<void> =
   // Use IST so the per-shift area list aligns with the IST clock the operator sees.
   const { start, end } = getISTShiftRange(undefined, shift);
 
-  const areas = await db.select().from(areasTable).orderBy(areasTable.id);
+  // Scope the home grid to the operator's assigned areas. `null` means the
+  // operator has no assignments configured at all → fall back to listing
+  // everything (backward-compatible behavior). The auto-detect skip rule on
+  // the client is keyed off `assignedAreas.length > 1`, so once we narrow
+  // the response here it naturally turns into "only run identification when
+  // the operator owns more than one area".
+  const assignedAreaIds = await getAssignedAreaIds(userId);
+  const areas = assignedAreaIds === null
+    ? await db.select().from(areasTable).orderBy(areasTable.id)
+    : assignedAreaIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(areasTable)
+          .where(inArray(areasTable.id, assignedAreaIds))
+          .orderBy(areasTable.id);
 
   const submissions = await db
     .select(submissionSelect)

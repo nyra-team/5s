@@ -6,9 +6,13 @@ import {
   useGetAreaProfile,
   useResetAreaProfile,
   useUpdateAreaProfile,
+  useListOperators,
+  useGetAreaAssignments,
+  useSetAreaAssignments,
   Area,
   getListAreasQueryKey,
   getGetAreaProfileQueryKey,
+  getGetAreaAssignmentsQueryKey,
 } from "@workspace/api-client-react";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -18,7 +22,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Plus, Pencil, Trash2, Check, X, BookOpen, RefreshCw, Sparkles, Wrench, Workflow, AlertCircle, Save, Edit3,
+  Plus, Pencil, Trash2, Check, X, BookOpen, RefreshCw, Sparkles, Wrench, Workflow, AlertCircle, Save, Edit3, Users,
 } from "lucide-react";
 import { EnvironmentBadge, ENVIRONMENT_LABELS, type EnvironmentType } from "@/lib/environment";
 import { useQueryClient } from "@tanstack/react-query";
@@ -429,6 +433,8 @@ function AreaConfigCard({ area }: { area: Area }) {
               </>
             )}
           </div>
+
+          <AreaAssignmentsSection areaId={area.id} areaName={area.name} />
         </div>
       </div>
 
@@ -496,6 +502,162 @@ function ProfileChips({ icon, label, items, tone = "default" }: { icon: React.Re
           <span key={i} className={`text-[11.5px] px-2 py-0.5 rounded-full font-medium ${toneCls}`}>{s}</span>
         ))}
       </div>
+    </div>
+  );
+}
+
+// Per-area panel for picking which operators are assigned to it. Renders the
+// full operator directory as a checkbox list and only enables the Save button
+// when the local selection differs from what's currently on the server. Empty
+// selection is allowed and means "nobody is assigned" (the API treats that
+// as: no rows for this area, which intentionally falls back to the default
+// "all operators with no assignments configured see all areas" rule
+// described in the route).
+function AreaAssignmentsSection({ areaId, areaName }: { areaId: number; areaName: string }) {
+  const { data: operators, isLoading: operatorsLoading } = useListOperators();
+  const { data: assignments, isLoading: assignmentsLoading } = useGetAreaAssignments(areaId, {
+    query: { queryKey: getGetAreaAssignmentsQueryKey(areaId) },
+  });
+  const setAssignments = useSetAreaAssignments();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const [editing, setEditing] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    if (assignments?.operatorIds) setSelected(new Set(assignments.operatorIds));
+  }, [assignments?.operatorIds]);
+
+  const serverSet = new Set(assignments?.operatorIds ?? []);
+  const dirty =
+    selected.size !== serverSet.size ||
+    Array.from(selected).some((id) => !serverSet.has(id));
+
+  const toggle = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleSave = () => {
+    setAssignments.mutate(
+      { id: areaId, data: { operatorIds: Array.from(selected) } },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Assignments saved",
+            description: `${selected.size} operator${selected.size === 1 ? "" : "s"} can now submit for ${areaName}.`,
+          });
+          queryClient.invalidateQueries({ queryKey: getGetAreaAssignmentsQueryKey(areaId) });
+          setEditing(false);
+        },
+        onError: () =>
+          toast({ variant: "destructive", title: "Save failed", description: "Could not update assignments." }),
+      },
+    );
+  };
+
+  const handleCancel = () => {
+    setSelected(new Set(assignments?.operatorIds ?? []));
+    setEditing(false);
+  };
+
+  const assignedOperators = (operators ?? []).filter((o) => serverSet.has(o.id));
+
+  return (
+    <div className="mt-5 pt-4 border-t border-border/60">
+      <div className="flex items-center justify-between mb-2">
+        <p className="eyebrow flex items-center gap-1.5">
+          <Users className="w-3 h-3" /> Assigned operators
+        </p>
+        {!editing && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="rounded-full text-muted-foreground h-8 px-3"
+            onClick={() => setEditing(true)}
+            data-testid={`button-edit-assignments-${areaId}`}
+          >
+            <Edit3 className="w-3.5 h-3.5 mr-1" /> Edit
+          </Button>
+        )}
+      </div>
+
+      {assignmentsLoading || operatorsLoading ? (
+        <div className="h-10 bg-secondary/40 rounded-lg animate-pulse"></div>
+      ) : editing ? (
+        <div className="rounded-xl bg-secondary/40 p-3 space-y-3">
+          {(operators ?? []).length === 0 ? (
+            <p className="text-[12.5px] text-muted-foreground italic">
+              No operator accounts exist yet — create one before assigning.
+            </p>
+          ) : (
+            <div
+              className="max-h-48 overflow-y-auto space-y-1 pr-1"
+              data-testid={`list-assignment-operators-${areaId}`}
+            >
+              {(operators ?? []).map((op) => {
+                const checked = selected.has(op.id);
+                return (
+                  <label
+                    key={op.id}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-card cursor-pointer text-[13px]"
+                    data-testid={`row-assignment-operator-${areaId}-${op.id}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(op.id)}
+                      className="w-4 h-4 rounded border-border accent-primary"
+                      data-testid={`checkbox-assignment-${areaId}-${op.id}`}
+                    />
+                    <span className="truncate">{op.email}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <Button
+              className="flex-1 h-9 rounded-xl"
+              onClick={handleSave}
+              disabled={!dirty || setAssignments.isPending}
+              data-testid={`button-save-assignments-${areaId}`}
+            >
+              <Save className="w-3.5 h-3.5 mr-1.5" />
+              {setAssignments.isPending ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              variant="outline"
+              className="h-9 rounded-xl"
+              onClick={handleCancel}
+              data-testid={`button-cancel-assignments-${areaId}`}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : assignedOperators.length === 0 ? (
+        <p className="text-[12.5px] text-muted-foreground italic" data-testid={`text-no-assignments-${areaId}`}>
+          No operators assigned — every operator without a personal assignment list sees this area.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5" data-testid={`chips-assignments-${areaId}`}>
+          {assignedOperators.map((op) => (
+            <span
+              key={op.id}
+              className="text-[11.5px] px-2 py-0.5 rounded-full font-medium bg-card text-foreground/80"
+              data-testid={`chip-assignment-${areaId}-${op.id}`}
+            >
+              {op.email}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

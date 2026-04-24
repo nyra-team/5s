@@ -97,6 +97,43 @@ export const DeleteAreaParams = zod.object({
 });
 
 /**
+ * @summary List operator IDs assigned to an area (manager-only)
+ */
+export const GetAreaAssignmentsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetAreaAssignmentsResponse = zod.object({
+  areaId: zod.number(),
+  operatorIds: zod.array(zod.number()),
+});
+
+/**
+ * @summary Replace the set of operators assigned to an area (manager-only)
+ */
+export const SetAreaAssignmentsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const SetAreaAssignmentsBody = zod.object({
+  operatorIds: zod.array(zod.number().min(1)),
+});
+
+export const SetAreaAssignmentsResponse = zod.object({
+  areaId: zod.number(),
+  operatorIds: zod.array(zod.number()),
+});
+
+/**
+ * @summary List operator users (manager-only) for the assignment picker
+ */
+export const ListOperatorsResponseItem = zod.object({
+  id: zod.number(),
+  email: zod.string(),
+});
+export const ListOperatorsResponse = zod.array(ListOperatorsResponseItem);
+
+/**
  * @summary Get the learned profile for an area
  */
 export const GetAreaProfileParams = zod.object({

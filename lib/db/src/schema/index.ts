@@ -9,3 +9,4 @@ export * from "./nudges";
 export * from "./operator-settings";
 export * from "./operator-settings-audit";
 export * from "./area-operator-settings";
+export * from "./area-assignments";

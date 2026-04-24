@@ -365,6 +365,20 @@ export interface UpdateAreaProfileBody {
   commonIssues?: string[];
 }
 
+export interface OperatorUser {
+  id: number;
+  email: string;
+}
+
+export interface AreaAssignmentList {
+  areaId: number;
+  operatorIds: number[];
+}
+
+export interface SetAreaAssignmentsBody {
+  operatorIds: number[];
+}
+
 export interface AreaIdentificationCandidate {
   areaId: number;
   areaName: string;

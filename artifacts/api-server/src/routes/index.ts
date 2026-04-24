@@ -13,6 +13,7 @@ import liveRouter from "./live";
 import preferencesRouter from "./preferences";
 import operatorThresholdsRouter from "./operator-thresholds";
 import adminRouter from "./admin";
+import assignmentsRouter from "./assignments";
 
 const router: IRouter = Router();
 
@@ -30,5 +31,6 @@ router.use(liveRouter);
 router.use(preferencesRouter);
 router.use(operatorThresholdsRouter);
 router.use(adminRouter);
+router.use(assignmentsRouter);
 
 export default router;

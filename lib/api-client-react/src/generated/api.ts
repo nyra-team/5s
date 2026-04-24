@@ -18,6 +18,7 @@ import type {
 
 import type {
   Area,
+  AreaAssignmentList,
   AreaIdentificationResult,
   AreaOperatorThresholds,
   AreaProfile,
@@ -56,10 +57,12 @@ import type {
   OperatorDismissSummary,
   OperatorDismissedNudge,
   OperatorThresholds,
+  OperatorUser,
   QuickApproveLabelBody,
   RecentSubmission,
   ReuploadSubmissionBody,
   ScoreSummary,
+  SetAreaAssignmentsBody,
   Submission,
   UpdateAreaBody,
   UpdateAreaProfileBody,
@@ -622,6 +625,255 @@ export const useDeleteArea = <
 > => {
   return useMutation(getDeleteAreaMutationOptions(options));
 };
+
+/**
+ * @summary List operator IDs assigned to an area (manager-only)
+ */
+export const getGetAreaAssignmentsUrl = (id: number) => {
+  return `/api/areas/${id}/assignments`;
+};
+
+export const getAreaAssignments = async (
+  id: number,
+  options?: RequestInit,
+): Promise<AreaAssignmentList> => {
+  return customFetch<AreaAssignmentList>(getGetAreaAssignmentsUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAreaAssignmentsQueryKey = (id: number) => {
+  return [`/api/areas/${id}/assignments`] as const;
+};
+
+export const getGetAreaAssignmentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAreaAssignments>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAreaAssignments>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetAreaAssignmentsQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAreaAssignments>>
+  > = ({ signal }) => getAreaAssignments(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAreaAssignments>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAreaAssignmentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAreaAssignments>>
+>;
+export type GetAreaAssignmentsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List operator IDs assigned to an area (manager-only)
+ */
+
+export function useGetAreaAssignments<
+  TData = Awaited<ReturnType<typeof getAreaAssignments>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAreaAssignments>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAreaAssignmentsQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Replace the set of operators assigned to an area (manager-only)
+ */
+export const getSetAreaAssignmentsUrl = (id: number) => {
+  return `/api/areas/${id}/assignments`;
+};
+
+export const setAreaAssignments = async (
+  id: number,
+  setAreaAssignmentsBody: SetAreaAssignmentsBody,
+  options?: RequestInit,
+): Promise<AreaAssignmentList> => {
+  return customFetch<AreaAssignmentList>(getSetAreaAssignmentsUrl(id), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(setAreaAssignmentsBody),
+  });
+};
+
+export const getSetAreaAssignmentsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setAreaAssignments>>,
+    TError,
+    { id: number; data: BodyType<SetAreaAssignmentsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof setAreaAssignments>>,
+  TError,
+  { id: number; data: BodyType<SetAreaAssignmentsBody> },
+  TContext
+> => {
+  const mutationKey = ["setAreaAssignments"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof setAreaAssignments>>,
+    { id: number; data: BodyType<SetAreaAssignmentsBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return setAreaAssignments(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SetAreaAssignmentsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof setAreaAssignments>>
+>;
+export type SetAreaAssignmentsMutationBody = BodyType<SetAreaAssignmentsBody>;
+export type SetAreaAssignmentsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Replace the set of operators assigned to an area (manager-only)
+ */
+export const useSetAreaAssignments = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setAreaAssignments>>,
+    TError,
+    { id: number; data: BodyType<SetAreaAssignmentsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof setAreaAssignments>>,
+  TError,
+  { id: number; data: BodyType<SetAreaAssignmentsBody> },
+  TContext
+> => {
+  return useMutation(getSetAreaAssignmentsMutationOptions(options));
+};
+
+/**
+ * @summary List operator users (manager-only) for the assignment picker
+ */
+export const getListOperatorsUrl = () => {
+  return `/api/users/operators`;
+};
+
+export const listOperators = async (
+  options?: RequestInit,
+): Promise<OperatorUser[]> => {
+  return customFetch<OperatorUser[]>(getListOperatorsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListOperatorsQueryKey = () => {
+  return [`/api/users/operators`] as const;
+};
+
+export const getListOperatorsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listOperators>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listOperators>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListOperatorsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listOperators>>> = ({
+    signal,
+  }) => listOperators({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listOperators>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListOperatorsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listOperators>>
+>;
+export type ListOperatorsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List operator users (manager-only) for the assignment picker
+ */
+
+export function useListOperators<
+  TData = Awaited<ReturnType<typeof listOperators>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listOperators>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListOperatorsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Get the learned profile for an area

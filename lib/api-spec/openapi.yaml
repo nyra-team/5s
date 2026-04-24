@@ -36,6 +36,10 @@ tags:
     description: Per-user preferences (notifications, etc.)
   - name: settings
     description: Admin-tunable settings (operator thresholds, etc.)
+  - name: users
+    description: User directory (manager-only)
+  - name: assignments
+    description: Operator → area assignments
 
 paths:
   /healthz:
@@ -152,6 +156,63 @@ paths:
       responses:
         "204":
           description: Area deleted
+
+  /areas/{id}/assignments:
+    get:
+      operationId: getAreaAssignments
+      tags: [assignments]
+      summary: List operator IDs assigned to an area (manager-only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Assigned operators
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaAssignmentList"
+    put:
+      operationId: setAreaAssignments
+      tags: [assignments]
+      summary: Replace the set of operators assigned to an area (manager-only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetAreaAssignmentsBody"
+      responses:
+        "200":
+          description: Assignments updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaAssignmentList"
+
+  /users/operators:
+    get:
+      operationId: listOperators
+      tags: [users]
+      summary: List operator users (manager-only) for the assignment picker
+      responses:
+        "200":
+          description: Operator directory
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OperatorUser"
 
   /areas/{id}/profile:
     get:
@@ -1503,6 +1564,36 @@ components:
         commonIssues:
           type: array
           items: { type: string }
+
+    OperatorUser:
+      type: object
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+      required: [id, email]
+
+    AreaAssignmentList:
+      type: object
+      properties:
+        areaId:
+          type: integer
+        operatorIds:
+          type: array
+          items:
+            type: integer
+      required: [areaId, operatorIds]
+
+    SetAreaAssignmentsBody:
+      type: object
+      properties:
+        operatorIds:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+      required: [operatorIds]
 
     AreaIdentificationCandidate:
       type: object
