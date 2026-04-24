@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, eq, gte, lt, isNotNull, sql } from "drizzle-orm";
+import { and, eq, gte, lt, isNotNull, inArray, sql } from "drizzle-orm";
 import {
   db,
   areasTable,
@@ -124,7 +124,7 @@ router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, r
     ? await db
         .select({ submissionId: escalationsTable.submissionId, status: escalationsTable.status })
         .from(escalationsTable)
-        .where(sql`${escalationsTable.submissionId} = ANY(${lowScoringIds})`)
+        .where(inArray(escalationsTable.submissionId, lowScoringIds))
     : [];
   const openEscalationsBySub = new Set(
     escalationsForLow.filter((e) => e.status === "OPEN").map((e) => e.submissionId),
