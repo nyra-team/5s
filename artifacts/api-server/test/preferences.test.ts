@@ -1,8 +1,13 @@
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { eq } from "drizzle-orm";
-import { db, usersTable } from "@workspace/db";
-import { TestWorld, api } from "./helpers.js";
+import {
+  db,
+  usersTable,
+  submissionsTable,
+  escalationsTable,
+} from "@workspace/db";
+import { TestWorld, type TestArea, type TestUser, api } from "./helpers.js";
 import {
   notifyEscalationCreated,
   flushPendingEscalationNotifications,
@@ -257,19 +262,49 @@ describe("notifyEscalationCreated channel filtering", () => {
     }
   });
 
-  // The notifier doesn't load the escalation row back from the DB during
-  // dispatch — it only uses the fields on this payload. The escalationId is
-  // also fed into a best-effort `markEscalationsNotified` UPDATE which simply
-  // matches zero rows for a non-existent id, so we don't need a real row.
-  function makeEvent(areaId: number, areaName: string): EscalationNotification {
+  // The live notifier now atomically claims escalations before dispatching
+  // (UPDATE ... WHERE notified_at IS NULL RETURNING id) to defeat the
+  // live-vs-recovery race, so we need a real row in the DB — a dangling
+  // escalationId is filtered out by the claim and dispatch is skipped. We
+  // also need a real operator + submission to satisfy the FKs.
+  async function seedEvent(opts: {
+    area: TestArea;
+    operator: TestUser;
+  }): Promise<EscalationNotification> {
+    const [sub] = await db
+      .insert(submissionsTable)
+      .values({
+        areaId: opts.area.id,
+        userId: opts.operator.id,
+        shift: "A",
+        scoreTotal: 41,
+        scoreJson: { sort: 1, set: 1, shine: 1, standardize: 1, sustain: 1 },
+        suggestionsJson: [],
+        imageUrl: "https://example.test/img.jpg",
+      })
+      .returning({ id: submissionsTable.id });
+    const [esc] = await db
+      .insert(escalationsTable)
+      .values({
+        submissionId: sub.id,
+        areaId: opts.area.id,
+        operatorId: opts.operator.id,
+        scoreTotal: 41,
+        scorePercent: 41,
+        failingPillarsJson: ["sort", "set"],
+        recommendedActionsJson: ["wipe down M-1"],
+        status: "OPEN",
+        notifiedAt: null,
+      })
+      .returning({ id: escalationsTable.id });
     return {
-      escalationId: 0,
-      submissionId: 0,
-      areaId,
-      areaName,
+      escalationId: esc.id,
+      submissionId: sub.id,
+      areaId: opts.area.id,
+      areaName: opts.area.name,
       scorePercent: 41,
       failingPillars: ["sort", "set"],
-      operatorEmail: "op@5s.test",
+      operatorEmail: opts.operator.email,
       recommendedActions: ["wipe down M-1"],
     };
   }
@@ -286,8 +321,9 @@ describe("notifyEscalationCreated channel filtering", () => {
     await setPrefs(optedOut.id, { notifyEmailEnabled: false, notifySlackEnabled: false });
     await setPrefs(slackOnly.id, { notifyEmailEnabled: false, notifySlackEnabled: true });
 
+    const operator = await world.createUser("OPERATOR");
     const area = await world.createArea();
-    await notifyEscalationCreated(makeEvent(area.id, area.name));
+    await notifyEscalationCreated(await seedEvent({ area, operator }));
 
     const emailRecipients = recorder.calls
       .filter((c) => c.url === RESEND_URL)
@@ -313,8 +349,9 @@ describe("notifyEscalationCreated channel filtering", () => {
     await setPrefs(a.id, { notifyEmailEnabled: true, notifySlackEnabled: false });
     await setPrefs(b.id, { notifyEmailEnabled: true, notifySlackEnabled: false });
 
+    const operator = await world.createUser("OPERATOR");
     const area = await world.createArea();
-    await notifyEscalationCreated(makeEvent(area.id, area.name));
+    await notifyEscalationCreated(await seedEvent({ area, operator }));
 
     const slackCalls = recorder.calls.filter((c) => c.url === SLACK_WEBHOOK);
     assert.equal(
@@ -337,8 +374,9 @@ describe("notifyEscalationCreated channel filtering", () => {
     await setPrefs(slackUser.id, { notifyEmailEnabled: false, notifySlackEnabled: true });
     await setPrefs(muted.id, { notifyEmailEnabled: false, notifySlackEnabled: false });
 
+    const operator = await world.createUser("OPERATOR");
     const area = await world.createArea();
-    await notifyEscalationCreated(makeEvent(area.id, area.name));
+    await notifyEscalationCreated(await seedEvent({ area, operator }));
 
     const slackCalls = recorder.calls.filter((c) => c.url === SLACK_WEBHOOK);
     assert.equal(slackCalls.length, 1, "exactly one slack post per dispatch");

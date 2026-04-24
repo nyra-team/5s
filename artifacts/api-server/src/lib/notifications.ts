@@ -241,7 +241,19 @@ export async function notifyEscalationCreated(payload: EscalationNotification): 
   const windowMs = groupingWindowMs();
   if (windowMs <= 0) {
     // Grouping disabled — send immediately as a single-event message.
-    await dispatch([payload], null);
+    // Atomically claim before dispatching: if a sibling process's startup
+    // recovery sweep happened to fire between this row being inserted and
+    // this notifier being invoked, the sweep will have already stamped
+    // notified_at and we must not re-send.
+    const claimed = await claimEscalationsForLiveDispatch([payload.escalationId]);
+    if (!claimed.has(payload.escalationId)) {
+      logger.info(
+        { escalationId: payload.escalationId, areaId: payload.areaId },
+        "notify: immediate live dispatch skipped — escalation already notified by another process",
+      );
+      return;
+    }
+    await dispatch([payload], null, { preClaimed: true });
     return;
   }
 
@@ -320,13 +332,87 @@ export function setRepingNotifierForTesting(
   return prev;
 }
 
+/**
+ * Atomically claim a set of escalation IDs for live dispatch (the grouping
+ * flush path or the immediate-send path with WINDOW_MS=0). Returns the IDs
+ * the caller now owns — anything that another process already stamped (e.g.
+ * a concurrent startup recovery sweep that booted while we were sitting on
+ * a grouping window) is excluded.
+ *
+ * Why claim before dispatch:
+ * The recovery-vs-recovery race was fixed by stamping `notified_at` inside
+ * the recovery sweep's atomic UPDATE. There is a narrower live-vs-recovery
+ * race left over: process A is mid-grouping-window for an escalation that
+ * was created BEFORE process B booted; process B's recovery sweep claims
+ * and dispatches it, then process A's grouping timer fires and dispatches
+ * it AGAIN because `flushArea -> dispatch` previously didn't re-check
+ * `notified_at`. By gating the live flush on the same atomic
+ *   UPDATE escalations SET notified_at = now() WHERE notified_at IS NULL
+ *     AND id = ANY(...) RETURNING id
+ * pattern, exactly one of the two processes ever wins the row.
+ *
+ * Trade-off: same as the recovery sweep — stamping `notified_at` BEFORE
+ * dispatch means a transient Slack/Resend outage drops this attempt with
+ * no startup-sweep retry. We accept that to keep exactly-once semantics
+ * for the much louder failure mode (double-emailing managers on every
+ * deploy).
+ */
+async function claimEscalationsForLiveDispatch(
+  escalationIds: number[],
+): Promise<Set<number>> {
+  if (escalationIds.length === 0) return new Set();
+  try {
+    const claimed = await db
+      .update(escalationsTable)
+      .set({ notifiedAt: new Date(), notifyDeliveryStatus: "DELIVERED" })
+      .where(
+        and(
+          inArray(escalationsTable.id, escalationIds),
+          isNull(escalationsTable.notifiedAt),
+        ),
+      )
+      .returning({ id: escalationsTable.id });
+    return new Set(claimed.map((r) => r.id));
+  } catch (err) {
+    // If the claim itself fails we skip dispatch entirely rather than risk
+    // a double-send. The escalations stay un-stamped so the next startup
+    // sweep will retry them.
+    logger.error(
+      { err, escalationIds },
+      "notify: failed to atomically claim escalations for live dispatch (skipping to avoid double-send)",
+    );
+    return new Set();
+  }
+}
+
 async function flushArea(areaId: number): Promise<void> {
   const bucket = pendingByArea.get(areaId);
   if (!bucket) return;
   pendingByArea.delete(areaId);
   clearTimeout(bucket.timer);
   try {
-    await dispatch(bucket.events, null);
+    const claimed = await claimEscalationsForLiveDispatch(
+      bucket.events.map((e) => e.escalationId),
+    );
+    const toSend = bucket.events.filter((e) => claimed.has(e.escalationId));
+    if (toSend.length === 0) {
+      logger.info(
+        { areaId, attempted: bucket.events.length },
+        "notify: live flush skipped — every escalation in the bucket was already notified by another process",
+      );
+      return;
+    }
+    if (toSend.length < bucket.events.length) {
+      logger.info(
+        {
+          areaId,
+          sending: toSend.length,
+          alreadyNotified: bucket.events.length - toSend.length,
+        },
+        "notify: live flush — some escalations were already notified by another process; dispatching the rest",
+      );
+    }
+    await dispatch(toSend, null, { preClaimed: true });
   } catch (err) {
     logger.error(
       { err, areaId, count: bucket.events.length },
@@ -386,6 +472,7 @@ async function markEscalationsNotified(
 async function dispatch(
   events: EscalationNotification[],
   reping: RepingContext | null,
+  opts: { preClaimed?: boolean } = {},
 ): Promise<void> {
   if (events.length === 0) return;
 
@@ -444,10 +531,20 @@ async function dispatch(
   // case where no provider is configured (those are explicitly logged inside
   // sendSlack/sendEmails). We only skip stamping when manager loading itself
   // failed above, because that's a transient condition we want to retry.
-  await markEscalationsNotified(
-    events.map((e) => e.escalationId),
-    "DELIVERED",
-  );
+  //
+  // The live grouping/immediate paths claim the rows BEFORE calling dispatch
+  // (see `claimEscalationsForLiveDispatch`) to atomically guard against a
+  // concurrent startup-recovery sweep, so they pass `preClaimed: true` and
+  // we skip the redundant restamp here. Re-pings and the recovery sweep
+  // continue to stamp here (recovery's own claim only touches `notified_at`,
+  // not `notify_delivery_status`, and re-pings stamp to record the latest
+  // delivery attempt time).
+  if (!opts.preClaimed) {
+    await markEscalationsNotified(
+      events.map((e) => e.escalationId),
+      "DELIVERED",
+    );
+  }
 }
 
 export interface RecoverySweepResult {

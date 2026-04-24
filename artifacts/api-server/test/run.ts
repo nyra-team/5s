@@ -24,6 +24,7 @@ import "./identify-area.test.js";
 import "./reping-scheduler.test.js";
 import "./sweep.test.js";
 import "./recover-pending-notifications.test.js";
+import "./live-recovery-race.test.js";
 import "./preferences.test.js";
 import "./ai-reliability.test.js";
 import "./dashboard-area-detection-agreement.test.js";
