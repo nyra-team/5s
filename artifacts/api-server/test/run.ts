@@ -22,6 +22,7 @@ import "./reasoning.test.js";
 import "./backfill-reasoning.test.js";
 import "./identify-area.test.js";
 import "./reping-scheduler.test.js";
+import "./sweep.test.js";
 
 after(async () => {
   await closeServer();

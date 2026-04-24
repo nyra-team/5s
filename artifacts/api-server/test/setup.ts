@@ -81,8 +81,11 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
+  RAND_HEX_LEN,
   SWEEP_MIN_AGE_MS,
   SWEEP_THRESHOLD_MS,
+  TIME_HEX_LEN,
+  buildSuffixRegex,
   classifyOrphanCandidate,
 } from "./sweep-policy.js";
 
@@ -97,16 +100,10 @@ const parsed = new URL(adminUrl);
 const baseDbName =
   decodeURIComponent(parsed.pathname.replace(/^\//, "")) || "postgres";
 
-// Suffix layout for per-run clones: 8 hex chars of unix-seconds (good through
-// year 2106) followed by 8 hex chars of randomness. Together they keep the
-// conventional `<basename>_test_<hex>` shape while letting the sweeper
-// recover the creation time without needing pg_stat_file or any extra
-// privileges.
-const TIME_HEX_LEN = 8;
-const RAND_HEX_LEN = 8;
-const SUFFIX_RE = new RegExp(
-  `^${escapeRegex(baseDbName)}_test_([0-9a-f]{${TIME_HEX_LEN}})[0-9a-f]{${RAND_HEX_LEN}}$`,
-);
+// Suffix layout for per-run clones lives in `./sweep-policy.ts` so the
+// sweep test can pin the same widths/regex setup.ts uses and detect silent
+// drift in either direction.
+const SUFFIX_RE = buildSuffixRegex(baseDbName);
 
 const nowSec = Math.floor(Date.now() / 1000);
 const timeHex = nowSec.toString(16).padStart(TIME_HEX_LEN, "0");
@@ -123,10 +120,6 @@ const TEMPLATE_LOCK_ID = (() => {
     .digest();
   return digest.readInt32BE(0);
 })();
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;

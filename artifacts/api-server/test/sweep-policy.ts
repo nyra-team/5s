@@ -12,6 +12,29 @@ export const SWEEP_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
 // above the wrapper → child startup latency (a few hundred ms in practice).
 export const SWEEP_MIN_AGE_MS = 60 * 1000; // 1 minute
 
+// Suffix layout for per-run clones: `TIME_HEX_LEN` hex chars of unix-seconds
+// (8 is good through year 2106) followed by `RAND_HEX_LEN` hex chars of
+// randomness. Together they keep the conventional `<basename>_test_<hex>`
+// shape while letting the sweeper recover the creation time without needing
+// pg_stat_file or any extra privileges. Lives here so the sweep test can
+// pin the exact widths setup.ts uses and detect silent drift.
+export const TIME_HEX_LEN = 8;
+export const RAND_HEX_LEN = 8;
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Build the regex that recognises a per-run test database name and captures
+ * its embedded timestamp (as `TIME_HEX_LEN` hex chars of unix-seconds).
+ */
+export function buildSuffixRegex(baseDbName: string): RegExp {
+  return new RegExp(
+    `^${escapeRegex(baseDbName)}_test_([0-9a-f]{${TIME_HEX_LEN}})[0-9a-f]{${RAND_HEX_LEN}}$`,
+  );
+}
+
 export type SweepVerdict =
   | "drop-idle"
   | "drop-stuck"
