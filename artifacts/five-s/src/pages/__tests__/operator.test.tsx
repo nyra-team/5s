@@ -73,7 +73,29 @@ const mockState = {
 
 const refetchCurrentShiftMock = vi.fn();
 
-vi.mock("@workspace/api-client-react", () => {
+// Stable mutate spies. The api-client mock factory below wires these into
+// useCreateSubmission / useReuploadSubmission so a test can assert what the
+// operator screen actually posted to the server (e.g. that the AI's auto-
+// detected area_id is the one that hits the wire on submit). Re-using the
+// same vi.fn() across renders means we don't lose calls when the component
+// re-renders mid-flow.
+const mockCreateSubmissionMutate = vi.fn();
+const mockReuploadSubmissionMutate = vi.fn();
+
+// Instrumentation for useIdentifySubmissionArea so the auto-detect end-to-end
+// test can flip isPending and resolve the mutation on demand. Each render of
+// AreaCard owns its own setPending (one per pending card), so we record the
+// most recent caller — the one whose photo input the test just uploaded to.
+const mockIdentifyControl: {
+  lastOptions:
+    | { onSuccess?: (r: unknown) => void; onError?: (e: unknown) => void }
+    | null;
+  lastSetPending: ((b: boolean) => void) | null;
+  lastVars: unknown | null;
+} = { lastOptions: null, lastSetPending: null, lastVars: null };
+
+vi.mock("@workspace/api-client-react", async () => {
+  const React = await import("react");
   const stub = (key: keyof typeof mockState) => () => ({
     data: mockState[key],
     isLoading: false,
@@ -119,28 +141,43 @@ vi.mock("@workspace/api-client-react", () => {
     useGetFacilitySettings: () => ({ data: undefined, isLoading: false }),
     getGetFacilitySettingsQueryKey: () => ["facility-settings"],
     useCreateSubmission: () => ({
-      mutate: vi.fn(),
+      mutate: mockCreateSubmissionMutate,
       isPending: false,
     }),
     useReuploadSubmission: () => ({
-      mutate: vi.fn(),
+      mutate: mockReuploadSubmissionMutate,
       isPending: false,
     }),
     // Auto-detect area runs when the operator picks media in the capture sheet
-    // (added in task #83). The tests don't exercise the real network call, so
-    // a real-shape resolved value is enough — but the hook must exist on the
-    // mock or AreaCard crashes during render with "useIdentifySubmissionArea
-    // is not defined".
-    useIdentifySubmissionArea: () => ({
-      mutate: vi.fn(),
-      mutateAsync: vi.fn(async () => ({
-        candidates: [],
-        hasTrainedAreas: false,
-        rationale: null,
-      })),
-      isPending: false,
-      reset: vi.fn(),
-    }),
+    // (added in task #83). The default return value resolves to "no trained
+    // profiles" so existing tests that never trigger media selection still see
+    // a stable, idle hook. The auto-detect end-to-end test calls mutate which
+    // flips this hook's local pending state and stashes onSuccess/onError on
+    // mockIdentifyControl so the test can resolve the mutation on demand.
+    useIdentifySubmissionArea: () => {
+      const [pending, setPending] = React.useState(false);
+      return {
+        mutate: (
+          vars: unknown,
+          opts?: {
+            onSuccess?: (r: unknown) => void;
+            onError?: (e: unknown) => void;
+          },
+        ) => {
+          mockIdentifyControl.lastVars = vars;
+          mockIdentifyControl.lastOptions = opts ?? null;
+          mockIdentifyControl.lastSetPending = setPending;
+          setPending(true);
+        },
+        mutateAsync: vi.fn(async () => ({
+          candidates: [],
+          hasTrainedAreas: false,
+          rationale: null,
+        })),
+        isPending: pending,
+        reset: vi.fn(),
+      };
+    },
     useDismissNudge: () => ({
       mutate: vi.fn(),
       mutateAsync: vi.fn(async () => undefined),
@@ -286,6 +323,11 @@ beforeEach(() => {
     startHours: { A: 6, B: 14, C: 22 },
   };
   refetchCurrentShiftMock.mockReset();
+  mockCreateSubmissionMutate.mockReset();
+  mockReuploadSubmissionMutate.mockReset();
+  mockIdentifyControl.lastOptions = null;
+  mockIdentifyControl.lastSetPending = null;
+  mockIdentifyControl.lastVars = null;
   window.localStorage.clear();
 });
 
@@ -779,6 +821,108 @@ describe("OperatorHome — capture sheet", () => {
     expect(
       within(checklist).getByText("Walk past every machine and workstation"),
     ).toBeInTheDocument();
+  });
+
+  // End-to-end auto-detect coverage. The backend success path is unit-tested
+  // separately (artifacts/api-server/test/identify-area.test.ts), but a
+  // regression in the React state wiring — the identify mutation result being
+  // ignored, chosenAreaId not auto-switching to the AI's top suggestion, or
+  // the wrong areaId hitting the wire on submit — would still slip through.
+  // This test drives the operator screen through the full flow with a mocked
+  // identify response so the assertions stay fast and offline.
+  it("uses the AI's top auto-detect suggestion as the submission's areaId end-to-end", async () => {
+    // Two assigned areas so detection actually runs (it's skipped when there
+    // is only one assigned area, since the suggestion would be a tautology).
+    mockState.statuses = [
+      makeStatus({ areaId: 1, areaName: "Bay 1" }),
+      makeStatus({ areaId: 2, areaName: "Bay 2" }),
+    ];
+
+    const { container } = renderOperator();
+
+    // Simulate the operator picking a photo for Bay 1. The "Take photo" button
+    // inside the capture sheet just clicks a hidden file input ref, which
+    // doesn't actually open a picker in jsdom — uploading directly to the
+    // input fires the same change handler (handleFileSelect("create")) and
+    // opens the sheet via setIsCaptureOpen(true).
+    const photoInputs = container.querySelectorAll<HTMLInputElement>(
+      'input[type="file"][accept="image/*"]',
+    );
+    // Each pending AreaCard renders its own photo input; with two cards we
+    // expect two image inputs. The first one belongs to Bay 1 because the
+    // sort tie-breaker is areaId ascending when neither area has due info.
+    expect(photoInputs.length).toBeGreaterThanOrEqual(2);
+    const bay1PhotoInput = photoInputs[0];
+
+    const file = new File(["fake-png-bytes"], "capture.png", {
+      type: "image/png",
+    });
+    await userEvent.upload(bay1PhotoInput, file);
+
+    // The capture sheet opens with a preview, and the auto-detect block
+    // shows the "Detecting area…" indicator while the identify mutation is
+    // in flight. The mutate spy below confirms the operator screen actually
+    // dispatched the call (the wiring under test).
+    const sheet = await screen.findByTestId("sheet-capture");
+    expect(within(sheet).getByTestId("detection-pending")).toHaveTextContent(
+      /Detecting area/i,
+    );
+    expect(mockIdentifyControl.lastOptions).not.toBeNull();
+    expect(mockIdentifyControl.lastSetPending).not.toBeNull();
+
+    // Resolve the identify mutation with a confident Bay 2 suggestion. We
+    // also flip the hook's local pending state to false so the sheet stops
+    // showing the pending indicator — this mirrors what react-query would do
+    // on a real onSuccess.
+    await act(async () => {
+      mockIdentifyControl.lastOptions!.onSuccess!({
+        candidates: [
+          { areaId: 2, areaName: "Bay 2", confidence: 0.92 },
+          { areaId: 1, areaName: "Bay 1", confidence: 0.08 },
+        ],
+        hasTrainedAreas: true,
+        rationale: "Visible Bay 2 signage and layout",
+      });
+      mockIdentifyControl.lastSetPending!(false);
+    });
+
+    // The detection result block replaces the pending indicator and surfaces
+    // Bay 2 as the top suggestion with its confidence.
+    const result = await within(sheet).findByTestId("detection-result");
+    expect(within(result).getByTestId("detection-top-name")).toHaveTextContent(
+      "Bay 2",
+    );
+    expect(
+      within(result).getByTestId("detection-top-confidence"),
+    ).toHaveTextContent("92%");
+
+    // Critical: the "chosen" area auto-switches to the AI's high-confidence
+    // suggestion (≥ 0.4 threshold), so a single Submit tap completes the
+    // flow with the AI's pick. The Change picker label is the operator-
+    // visible proof of this state, and the green "Using" badge confirms the
+    // top candidate matches the chosen area.
+    expect(within(sheet).getByTestId("button-change-area")).toHaveTextContent(
+      /currently Bay 2/i,
+    );
+    expect(within(result).getByText(/Using/)).toBeInTheDocument();
+
+    // Submit. The submission must post Bay 2's id (the AI suggestion), with
+    // tappedAreaId still pointing at the originally tapped Bay 1 and
+    // aiSuggestedAreaId echoing what the AI proposed — this is the wire
+    // contract the server uses to reconcile intent vs. chosen vs. AI.
+    await userEvent.click(within(sheet).getByTestId("button-capture-submit"));
+
+    expect(mockCreateSubmissionMutate).toHaveBeenCalledTimes(1);
+    const args = mockCreateSubmissionMutate.mock.calls[0][0] as {
+      data: {
+        areaId: number;
+        tappedAreaId: number;
+        aiSuggestedAreaId?: number;
+      };
+    };
+    expect(args.data.areaId).toBe(2);
+    expect(args.data.tappedAreaId).toBe(1);
+    expect(args.data.aiSuggestedAreaId).toBe(2);
   });
 });
 
