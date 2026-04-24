@@ -41,6 +41,7 @@ async function insertSubmission(opts: {
   scoreTotal: number;
   createdAt: Date;
   shift?: "A" | "B" | "C";
+  scoringMode?: string;
 }) {
   const [row] = await db
     .insert(submissionsTable)
@@ -54,6 +55,7 @@ async function insertSubmission(opts: {
       imageUrl: `/uploads/${RUN_TAG}.jpg`,
       mediaType: "image",
       createdAt: opts.createdAt,
+      ...(opts.scoringMode ? { scoringMode: opts.scoringMode } : {}),
     })
     .returning();
   return row;
@@ -365,6 +367,42 @@ describe("GET /operator/recent", () => {
     expect(bRow).toBeDefined();
     // areaB has no override — 2-day-old prior is still within the default 7d.
     expect(bRow.bestScoreInLastWeek).toBe(25);
+  });
+
+  it("surfaces scoringMode so the recent strip can flag FALLBACK rows as 'Couldn't be scored'", async () => {
+    // The operator sees a destructive toast on submit when scoring falls back,
+    // but the toast is the only signal — once they navigate away (or miss it)
+    // the row otherwise renders as a real "0%" audit. Returning scoringMode
+    // here is what lets the recent-strip card replace the percent badge with
+    // a "Couldn't be scored" pill instead.
+    const now = Date.now();
+    const fallback = await insertSubmission({
+      userId,
+      areaId: areaA.id,
+      scoreTotal: 0,
+      createdAt: new Date(now),
+      scoringMode: "FALLBACK",
+    });
+    const ok = await insertSubmission({
+      userId,
+      areaId: areaB.id,
+      scoreTotal: 22,
+      createdAt: new Date(now - 60_000),
+      scoringMode: "VLM_RUBRIC",
+    });
+
+    const res = await request(app)
+      .get("/api/operator/recent")
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(200);
+
+    const fallbackRow = res.body.find((r: { id: number }) => r.id === fallback.id);
+    expect(fallbackRow).toBeDefined();
+    expect(fallbackRow.scoringMode).toBe("FALLBACK");
+
+    const okRow = res.body.find((r: { id: number }) => r.id === ok.id);
+    expect(okRow).toBeDefined();
+    expect(okRow.scoringMode).toBe("VLM_RUBRIC");
   });
 
   it("does not leak submissions from other operators", async () => {

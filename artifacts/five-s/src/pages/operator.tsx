@@ -889,12 +889,21 @@ function RecentAuditCard({
 }) {
   const percent = recent.scoreTotal * 4;
   const tone = scoreTone(percent);
+  // FALLBACK = the upload landed and the row was saved, but the AI couldn't
+  // grade it. The persisted scoreTotal is 0 by construction, but it isn't a
+  // real audit result — surface that distinctly so an operator who navigated
+  // away from (or missed) the submit toast doesn't mistake it for a real 0%.
+  const isFallback = recent.scoringMode === "FALLBACK";
   const prevPercent = recent.prevScoreTotal != null ? recent.prevScoreTotal * 4 : null;
   const delta = prevPercent != null ? Math.round(percent - prevPercent) : null;
 
   let trendIcon: React.ReactNode = null;
   let trendLabel = "";
-  if (delta != null) {
+  if (isFallback) {
+    // The trend line is meaningless when the score itself isn't real.
+    trendIcon = <AlertTriangle className="w-3 h-3" />;
+    trendLabel = "Tap to re-upload";
+  } else if (delta != null) {
     if (delta > 0) {
       trendIcon = <TrendingUp className="w-3 h-3" />;
       trendLabel = `+${delta} pts vs last`;
@@ -909,8 +918,9 @@ function RecentAuditCard({
     trendLabel = "First submission";
   }
 
-  const trendColor =
-    delta != null && delta > 0
+  const trendColor = isFallback
+    ? "text-rose-600 dark:text-rose-400"
+    : delta != null && delta > 0
       ? "text-emerald-600 dark:text-emerald-400"
       : delta != null && delta < 0
         ? "text-rose-600 dark:text-rose-400"
@@ -920,8 +930,9 @@ function RecentAuditCard({
   // re-captures while walking the floor. The trend line stays directly under
   // the score; actions sit between the trend line and the timestamp footer
   // (which is pinned to the bottom via mt-auto so a long action label can
-  // never push the trend off-card).
-  const topActions = recent.topActions ?? [];
+  // never push the trend off-card). Suppressed for FALLBACK rows since any
+  // "actions" attached to them are derived from a meaningless score.
+  const topActions = isFallback ? [] : (recent.topActions ?? []);
 
   return (
     <button
@@ -934,11 +945,21 @@ function RecentAuditCard({
         <p className="font-semibold text-[14px] tracking-tight leading-snug line-clamp-2">
           {recent.areaName}
         </p>
-        <span
-          className={`shrink-0 px-2 py-0.5 rounded-full text-[11.5px] font-semibold ${tone.bg} ${tone.text}`}
-        >
-          {Math.round(percent)}%
-        </span>
+        {isFallback ? (
+          <span
+            className="shrink-0 px-2 py-0.5 rounded-full text-[11.5px] font-semibold bg-rose-50 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 inline-flex items-center gap-1"
+            data-testid={`recent-card-fallback-badge-${recent.id}`}
+          >
+            <AlertTriangle className="w-3 h-3" aria-hidden="true" />
+            Couldn't be scored
+          </span>
+        ) : (
+          <span
+            className={`shrink-0 px-2 py-0.5 rounded-full text-[11.5px] font-semibold ${tone.bg} ${tone.text}`}
+          >
+            {Math.round(percent)}%
+          </span>
+        )}
       </div>
       <div className={`inline-flex items-center gap-1 text-[11.5px] font-medium ${trendColor}`}>
         {trendIcon}
@@ -987,6 +1008,63 @@ function RecentDetailDialog({
     },
   });
 
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const reupload = useReuploadSubmission();
+  const reuploadInputRef = useRef<HTMLInputElement>(null);
+
+  // FALLBACK = the upload landed and the row was saved, but the AI couldn't
+  // grade it. The pillar reasoning / "Action items" sections are seeded with
+  // placeholder data in that case (the no-op fallback action), so we replace
+  // the whole detail body with an explanation + a one-tap re-upload button so
+  // the operator can fix it without leaving the dialog.
+  const isFallback = data?.scoringMode === "FALLBACK";
+
+  const triggerReupload = () => {
+    reuploadInputRef.current?.click();
+  };
+
+  const handleReuploadFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset so picking the same file again still triggers change.
+    e.target.value = "";
+    if (!file || !data) return;
+    reupload.mutate(
+      {
+        id: data.id,
+        // Re-upload preserves the original area; the body just needs the new
+        // media. We forward the existing shift + machineTag so the server
+        // doesn't accidentally reset them when re-scoring.
+        data: {
+          media: file as Blob,
+          shift: data.shift as "A" | "B" | "C",
+          ...(data.machineTag ? { machineTag: data.machineTag } : {}),
+        },
+      },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Re-upload submitted",
+            description: "We'll re-score the new capture in a moment.",
+          });
+          // Refresh both the audit detail (so the dialog doesn't re-open with
+          // stale data if the user opens it again) and the lists that show
+          // the recent strip / area grid so the new score / state appears
+          // without waiting for the next poll.
+          if (data.id != null) {
+            queryClient.invalidateQueries({ queryKey: getGetSubmissionQueryKey(data.id) });
+          }
+          queryClient.invalidateQueries({ queryKey: getGetOperatorStatusQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetOperatorRecentQueryKey({ limit: 12 }) });
+          onClose();
+        },
+        onError: (err) => {
+          toast(buildUploadErrorToast(err, "Re-upload failed"));
+        },
+      },
+    );
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-md rounded-2xl">
@@ -1017,71 +1095,108 @@ function RecentDetailDialog({
                 />
               )}
             </div>
-            <div className="flex items-center justify-between">
-              <p className="text-[13px] text-muted-foreground">Score</p>
-              <span
-                className={`px-3 py-1 rounded-full text-[13px] font-semibold ${
-                  scoreTone(data.scoreTotal * 4).bg
-                } ${scoreTone(data.scoreTotal * 4).text}`}
-              >
-                {Math.round(data.scoreTotal * 4)}%
-              </span>
-            </div>
-            {data.scoreJson && (
-              <div className="space-y-2">
-                <p className="eyebrow flex items-center gap-1.5">
-                  <Sparkles className="w-3 h-3" /> Why each pillar got the score it did
-                </p>
-                <ul className="space-y-2" data-testid="recent-pillar-reasoning">
-                  {Object.entries(data.scoreJson as Record<string, number>).map(([key, value]) => {
-                    const reason = (data.aiReasoningJson as Record<string, string> | null | undefined)?.[key];
-                    return (
-                      <li key={key} className="bg-secondary/60 p-3 rounded-xl">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="capitalize text-[12.5px] font-semibold text-foreground/80">{key}</span>
-                          <span className="text-[12.5px] font-semibold tabular-nums">{value}/5</span>
-                        </div>
-                        {reason ? (
-                          <p
-                            className="text-[12.5px] leading-snug text-muted-foreground mt-1"
-                            data-testid={`recent-pillar-reasoning-${key}`}
-                          >
-                            {reason}
-                          </p>
-                        ) : (
-                          <p className="text-[12px] italic text-muted-foreground/70 mt-1">
-                            No reasoning recorded.
-                          </p>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            )}
-            {data.suggestionsJson && data.suggestionsJson.length > 0 && (
-              <div className="space-y-1.5">
-                <p className="eyebrow flex items-center gap-1.5">
-                  <Info className="w-3 h-3" /> Action items
-                </p>
-                <ul className="space-y-2">
-                  {data.suggestionsJson.map((s: string, i: number) => (
-                    <SuggestionRow
-                      key={i}
-                      text={s}
-                      index={i}
-                      // suggestionsJson is derived 1:1 from aiRecommendationsJson
-                      // on the server (`recommendations.map(r => r.action)`),
-                      // so the indices line up. Older submissions lack the
-                      // recommendations array entirely; SuggestionRow falls
-                      // back to keyword inference when severity is null.
-                      aiSeverity={normalizeAiSeverity(
-                        data.aiRecommendationsJson?.[i]?.severity ?? null,
-                      )}
-                    />
-                  ))}
-                </ul>
-              </div>
+            {isFallback ? (
+              <>
+                <div
+                  className="rounded-xl border border-rose-200 dark:border-rose-500/30 bg-rose-50/70 dark:bg-rose-500/10 p-4 space-y-2"
+                  data-testid="recent-detail-fallback-banner"
+                >
+                  <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300">
+                    <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                    <p className="font-semibold text-[14px]">Couldn't be scored</p>
+                  </div>
+                  <p className="text-[12.5px] leading-snug text-rose-800/80 dark:text-rose-200/80">
+                    We saved your capture, but our scoring service couldn't grade it. The 0% on this row isn't a real audit result — re-upload with brighter lighting and a steadier angle and we'll try again.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  className="w-full h-11 rounded-xl"
+                  onClick={triggerReupload}
+                  disabled={reupload.isPending}
+                  data-testid={`recent-detail-reupload-${data.id}`}
+                >
+                  <RefreshCw className={`w-4 h-4 mr-2 ${reupload.isPending ? "animate-spin" : ""}`} />
+                  {reupload.isPending ? "Re-uploading…" : "Re-upload"}
+                </Button>
+                <input
+                  ref={reuploadInputRef}
+                  type="file"
+                  accept="image/*,video/*"
+                  className="hidden"
+                  onChange={handleReuploadFile}
+                  data-testid={`recent-detail-reupload-input-${data.id}`}
+                />
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <p className="text-[13px] text-muted-foreground">Score</p>
+                  <span
+                    className={`px-3 py-1 rounded-full text-[13px] font-semibold ${
+                      scoreTone(data.scoreTotal * 4).bg
+                    } ${scoreTone(data.scoreTotal * 4).text}`}
+                  >
+                    {Math.round(data.scoreTotal * 4)}%
+                  </span>
+                </div>
+                {data.scoreJson && (
+                  <div className="space-y-2">
+                    <p className="eyebrow flex items-center gap-1.5">
+                      <Sparkles className="w-3 h-3" /> Why each pillar got the score it did
+                    </p>
+                    <ul className="space-y-2" data-testid="recent-pillar-reasoning">
+                      {Object.entries(data.scoreJson as Record<string, number>).map(([key, value]) => {
+                        const reason = (data.aiReasoningJson as Record<string, string> | null | undefined)?.[key];
+                        return (
+                          <li key={key} className="bg-secondary/60 p-3 rounded-xl">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="capitalize text-[12.5px] font-semibold text-foreground/80">{key}</span>
+                              <span className="text-[12.5px] font-semibold tabular-nums">{value}/5</span>
+                            </div>
+                            {reason ? (
+                              <p
+                                className="text-[12.5px] leading-snug text-muted-foreground mt-1"
+                                data-testid={`recent-pillar-reasoning-${key}`}
+                              >
+                                {reason}
+                              </p>
+                            ) : (
+                              <p className="text-[12px] italic text-muted-foreground/70 mt-1">
+                                No reasoning recorded.
+                              </p>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+                {data.suggestionsJson && data.suggestionsJson.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="eyebrow flex items-center gap-1.5">
+                      <Info className="w-3 h-3" /> Action items
+                    </p>
+                    <ul className="space-y-2">
+                      {data.suggestionsJson.map((s: string, i: number) => (
+                        <SuggestionRow
+                          key={i}
+                          text={s}
+                          index={i}
+                          // suggestionsJson is derived 1:1 from aiRecommendationsJson
+                          // on the server (`recommendations.map(r => r.action)`),
+                          // so the indices line up. Older submissions lack the
+                          // recommendations array entirely; SuggestionRow falls
+                          // back to keyword inference when severity is null.
+                          aiSeverity={normalizeAiSeverity(
+                            data.aiRecommendationsJson?.[i]?.severity ?? null,
+                          )}
+                        />
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
             )}
             {/* "Observed issues" sits underneath "Action items" so the operator
                 sees what the AI flagged (e.g. "leak observed near pump base")

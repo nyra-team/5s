@@ -323,6 +323,81 @@ describe("OperatorHome — recent audits strip", () => {
       screen.queryByTestId("button-toggle-recent-audits"),
     ).not.toBeInTheDocument();
   });
+
+  it("opens a fallback explanation + re-upload button when an operator taps a FALLBACK card", async () => {
+    // The card is the breadcrumb; the dialog is where the operator gets the
+    // "why did this happen + what now" answer. Without this, they'd be left
+    // with only the badge and nowhere to actually fix the row from the strip.
+    mockState.recent = [
+      makeRecent({
+        id: 77,
+        areaId: 1,
+        scoreTotal: 0,
+        scoringMode: "FALLBACK",
+      } as Partial<RecentSubmission>),
+    ];
+    mockState.statuses = [makeStatus({ areaId: 1 })];
+    // useGetSubmission is invoked by RecentDetailDialog when it opens. Hand
+    // it a submission stamped FALLBACK so the dialog renders its explanation
+    // banner + re-upload action instead of pillar reasoning.
+    mockState.submission = makeSubmission({
+      id: 77,
+      areaId: 1,
+      scoreTotal: 0,
+      scoringMode: "FALLBACK",
+      suggestionsJson: ["Manual inspection required — AI scoring unavailable"],
+      aiReasoningJson: null,
+    } as Partial<Submission>);
+
+    renderOperator();
+
+    await userEvent.click(screen.getByTestId("recent-card-77"));
+
+    expect(await screen.findByTestId("recent-detail-fallback-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("recent-detail-reupload-77")).toHaveTextContent(/Re-upload/i);
+    // Pillar reasoning + the misleading 0% pill are suppressed in fallback
+    // mode since neither is real data the operator should act on.
+    expect(screen.queryByTestId("recent-pillar-reasoning")).not.toBeInTheDocument();
+  });
+
+  it("renders a 'Couldn't be scored' badge instead of '0%' for FALLBACK rows", () => {
+    // The submit-time toast already calls FALLBACK out, but it's the only
+    // signal — once the operator navigates away, the recent-strip card needs
+    // to surface the same warning so they don't try to fix the area thinking
+    // it really scored 0. The card replaces the percent pill with a
+    // dedicated badge and suppresses the misleading trend line / inline
+    // actions, both of which are derived from the meaningless score.
+    mockState.recent = [
+      makeRecent({
+        id: 99,
+        areaId: 1,
+        scoreTotal: 0,
+        scoringMode: "FALLBACK",
+        prevScoreTotal: 18,
+        // A real action would normally render inline; suppressed for FALLBACK
+        // because it was generated from the no-op fallback recommendation set.
+        topActions: ["Tidy bench"],
+      } as Partial<RecentSubmission>),
+    ];
+    mockState.statuses = [makeStatus({ areaId: 1 })];
+
+    renderOperator();
+
+    const card = screen.getByTestId("recent-card-99");
+    expect(within(card).getByTestId("recent-card-fallback-badge-99")).toHaveTextContent(/Couldn't be scored/i);
+    // The misleading "0%" pill must NOT also render alongside the fallback
+    // badge — the whole point of the badge is to replace the percent.
+    expect(within(card).queryByText(/^0%$/)).not.toBeInTheDocument();
+    // The trend line ("+/- pts vs last") is meaningless against a score the
+    // AI never produced, so it's replaced with a re-upload nudge instead.
+    expect(within(card).getByText(/Tap to re-upload/i)).toBeInTheDocument();
+    expect(within(card).queryByText(/pts vs last/i)).not.toBeInTheDocument();
+    // Inline action chips derived from the no-op fallback recommendation
+    // shouldn't compete with the badge for the operator's attention.
+    expect(
+      within(card).queryByTestId("recent-card-actions-99"),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe("OperatorHome — area sort order", () => {

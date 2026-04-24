@@ -724,6 +724,11 @@ router.get("/operator/recent", authMiddleware, async (req, res): Promise<void> =
       machineTag: submissionsTable.machineTag,
       createdAt: submissionsTable.createdAt,
       suggestionsJson: submissionsTable.suggestionsJson,
+      // scoringMode lets the recent strip distinguish a real 0% audit from
+      // one where the AI couldn't grade the upload at all (FALLBACK). The
+      // toast on submit already calls this out, but operators who navigate
+      // away or miss the toast otherwise see the saved row as a real "0%".
+      scoringMode: submissionsTable.scoringMode,
     })
     .from(submissionsTable)
     .innerJoin(areasTable, eq(submissionsTable.areaId, areasTable.id))

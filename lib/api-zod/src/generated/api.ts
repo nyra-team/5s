@@ -1301,6 +1301,12 @@ export const GetOperatorRecentResponseItem = zod
       .describe(
         "Up to 2 short action labels (taken from the submission's suggestionsJson) so the operator can preview outstanding actions inline without opening the detail dialog. Always present; empty when the submission has no suggestions.",
       ),
+    scoringMode: zod
+      .string()
+      .nullish()
+      .describe(
+        'How the submission was scored. \"VLM_RUBRIC\" \/ \"VLM_KEYFRAMES_RUBRIC\" mean the AI graded it normally; \"FALLBACK\" means scoring failed and the saved score is meaningless — the operator\'s recent strip surfaces this as \"Couldn\'t be scored\" so they don\'t mistake the fallback for a real 0%.',
+      ),
   })
   .describe(
     "A trimmed view of the operator's own submission with prior-score context for trend rendering.",
