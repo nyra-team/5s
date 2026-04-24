@@ -9,8 +9,42 @@ export interface HealthStatus {
   status: string;
 }
 
+/**
+ * Standard error envelope returned by 4xx/5xx responses across the API.
+
+The `error` field is always present (a short developer-readable
+summary). The optional `code`, `hint`, and `retryable` fields make up
+the structured envelope attached by endpoints that want to give
+callers something more actionable than a free-form string:
+
+- `code` — stable machine-readable identifier so a client can branch
+  on the failure mode (e.g. show a connection toast vs. a "fix your
+  capture" toast).
+- `hint` — short user-facing sentence describing what to try next.
+- `retryable` — true when retrying the same request without further
+  user input is expected to succeed (typically transient
+  infrastructure failures).
+
+Clients should treat unknown `code` values as opaque and fall back to
+`hint` (if present) or `error`.
+ */
 export interface ErrorResponse {
+  /** Short developer-readable summary of the failure. */
   error: string;
+  /** Stable machine-readable identifier for the failure mode. Known
+values emitted today include `SCORING_FAILED`, `MEDIA_REQUIRED`,
+`AREA_REQUIRED`, `AREA_NOT_FOUND`, `SUBMISSION_NOT_FOUND`,
+`FORBIDDEN`, and `INVALID_ID`. New codes may be added over time;
+unknown codes should be treated as opaque. */
+  code?: string;
+  /** User-facing actionable hint describing what the operator (or
+caller) should try next. Safe to surface verbatim in UI. */
+  hint?: string;
+  /** True when the same request is worth retrying without further
+user input — typically a transient infrastructure failure such
+as the AI scoring pipeline timing out. Absent when not
+specified by the endpoint. */
+  retryable?: boolean;
 }
 
 export interface LoginBody {

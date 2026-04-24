@@ -21,6 +21,7 @@ import {
   NextCheck,
   Nudge,
   AreaProfile,
+  ErrorResponse,
   Submission,
   AIIssue,
   getGetCurrentShiftQueryKey,
@@ -113,9 +114,10 @@ export interface UploadErrorToast {
 /**
  * Build the toast payload for a failed createSubmission / reuploadSubmission
  * call. Inspects the (orval-generated) ApiError thrown by customFetch for the
- * structured `{ code, hint, error }` envelope our /submissions endpoints
- * attach so the operator gets an actionable next step instead of the generic
- * "Submission failed". Exported for unit testing.
+ * structured `{ code, hint, error, retryable }` envelope our /submissions
+ * endpoints attach (documented in lib/api-spec/openapi.yaml as
+ * `ErrorResponse`) so the operator gets an actionable next step instead of
+ * the generic "Submission failed". Exported for unit testing.
  *
  * Distinguishes:
  * - Network failure (no `status` on the error)        → "check your connection"
@@ -125,16 +127,11 @@ export interface UploadErrorToast {
  *                                                       message if present
  */
 export function buildUploadErrorToast(err: unknown, fallbackTitle: string): UploadErrorToast {
-  const e = err as { status?: number; data?: unknown; message?: string } | null;
-  const data = (e && typeof e === "object" ? e.data : null) as
-    | { code?: string; hint?: string; error?: string; message?: string }
-    | null;
+  const e = err as { status?: number; data?: ErrorResponse | null; message?: string } | null;
+  const data = e && typeof e === "object" ? (e.data ?? null) : null;
   const code = typeof data?.code === "string" ? data.code : null;
   const hint = typeof data?.hint === "string" ? data.hint : null;
-  const apiMessage =
-    (typeof data?.error === "string" && data.error) ||
-    (typeof data?.message === "string" && data.message) ||
-    null;
+  const apiMessage = (typeof data?.error === "string" && data.error) || null;
 
   if (e && typeof e.status !== "number") {
     return {

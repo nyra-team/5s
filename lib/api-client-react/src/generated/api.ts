@@ -1279,7 +1279,7 @@ export const createSubmission = async (
 };
 
 export const getCreateSubmissionMutationOptions = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<ErrorResponse>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -1320,13 +1320,13 @@ export type CreateSubmissionMutationResult = NonNullable<
   Awaited<ReturnType<typeof createSubmission>>
 >;
 export type CreateSubmissionMutationBody = BodyType<CreateSubmissionBody>;
-export type CreateSubmissionMutationError = ErrorType<unknown>;
+export type CreateSubmissionMutationError = ErrorType<ErrorResponse>;
 
 /**
  * @summary Submit a 5S video walk-through (preferred) or photo for scoring
  */
 export const useCreateSubmission = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<ErrorResponse>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -1372,7 +1372,7 @@ export const identifySubmissionArea = async (
 };
 
 export const getIdentifySubmissionAreaMutationOptions = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<ErrorResponse>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -1414,13 +1414,13 @@ export type IdentifySubmissionAreaMutationResult = NonNullable<
 >;
 export type IdentifySubmissionAreaMutationBody =
   BodyType<IdentifySubmissionAreaBody>;
-export type IdentifySubmissionAreaMutationError = ErrorType<unknown>;
+export type IdentifySubmissionAreaMutationError = ErrorType<ErrorResponse>;
 
 /**
  * @summary Identify which of the operator's trained areas the submitted media most likely shows
  */
 export const useIdentifySubmissionArea = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<ErrorResponse>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -1560,7 +1560,7 @@ export const reuploadSubmission = async (
 };
 
 export const getReuploadSubmissionMutationOptions = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<ErrorResponse>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -1601,13 +1601,13 @@ export type ReuploadSubmissionMutationResult = NonNullable<
   Awaited<ReturnType<typeof reuploadSubmission>>
 >;
 export type ReuploadSubmissionMutationBody = BodyType<ReuploadSubmissionBody>;
-export type ReuploadSubmissionMutationError = ErrorType<unknown>;
+export type ReuploadSubmissionMutationError = ErrorType<ErrorResponse>;
 
 /**
  * @summary Re-upload media for an existing submission
  */
 export const useReuploadSubmission = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<ErrorResponse>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<

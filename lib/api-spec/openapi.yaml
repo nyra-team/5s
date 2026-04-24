@@ -364,6 +364,42 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Submission"
+        "400":
+          description: |-
+            Bad request. Returned when the form is missing a required field.
+            Known `code` values: `AREA_REQUIRED`, `MEDIA_REQUIRED`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: |-
+            The operator is not assigned to the requested area. The
+            structured `code` field is not currently populated on this
+            path (only `error` is sent), so clients should branch on
+            HTTP status here rather than `code`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: |-
+            The requested area does not exist. Known `code` values:
+            `AREA_NOT_FOUND`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: |-
+            The scoring pipeline failed (e.g. AI scorer or media decoder
+            errored). Known `code` values: `SCORING_FAILED`. `retryable` is
+            set to `true` so callers can offer a retry without re-prompting
+            the user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /submissions/identify-area:
     post:
@@ -392,6 +428,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaIdentificationResult"
+        "400":
+          description: |-
+            Bad request. Returned when no media file was attached. Known
+            `code` values: `MEDIA_REQUIRED` (when emitted by clients that
+            populate the structured envelope).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /submissions/{id}:
     get:
@@ -448,6 +493,42 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Submission"
+        "400":
+          description: |-
+            Bad request. Returned when the submission id can't be parsed or
+            no media file was attached. Known `code` values: `INVALID_ID`,
+            `MEDIA_REQUIRED`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: |-
+            The caller is not allowed to re-upload media for this
+            submission (only the original operator can). Known `code`
+            values: `FORBIDDEN`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: |-
+            The requested submission does not exist. Known `code` values:
+            `SUBMISSION_NOT_FOUND`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: |-
+            The scoring pipeline failed during the re-score (e.g. AI scorer
+            or media decoder errored). Known `code` values:
+            `SCORING_FAILED`. `retryable` is set to `true` so callers can
+            offer a retry without re-prompting the user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /dashboard/compliance:
     get:
@@ -1175,9 +1256,48 @@ components:
 
     ErrorResponse:
       type: object
+      description: |-
+        Standard error envelope returned by 4xx/5xx responses across the API.
+
+        The `error` field is always present (a short developer-readable
+        summary). The optional `code`, `hint`, and `retryable` fields make up
+        the structured envelope attached by endpoints that want to give
+        callers something more actionable than a free-form string:
+
+        - `code` — stable machine-readable identifier so a client can branch
+          on the failure mode (e.g. show a connection toast vs. a "fix your
+          capture" toast).
+        - `hint` — short user-facing sentence describing what to try next.
+        - `retryable` — true when retrying the same request without further
+          user input is expected to succeed (typically transient
+          infrastructure failures).
+
+        Clients should treat unknown `code` values as opaque and fall back to
+        `hint` (if present) or `error`.
       properties:
         error:
           type: string
+          description: Short developer-readable summary of the failure.
+        code:
+          type: string
+          description: |-
+            Stable machine-readable identifier for the failure mode. Known
+            values emitted today include `SCORING_FAILED`, `MEDIA_REQUIRED`,
+            `AREA_REQUIRED`, `AREA_NOT_FOUND`, `SUBMISSION_NOT_FOUND`,
+            `FORBIDDEN`, and `INVALID_ID`. New codes may be added over time;
+            unknown codes should be treated as opaque.
+        hint:
+          type: string
+          description: |-
+            User-facing actionable hint describing what the operator (or
+            caller) should try next. Safe to surface verbatim in UI.
+        retryable:
+          type: boolean
+          description: |-
+            True when the same request is worth retrying without further
+            user input — typically a transient infrastructure failure such
+            as the AI scoring pipeline timing out. Absent when not
+            specified by the endpoint.
       required: [error]
 
     LoginBody:
