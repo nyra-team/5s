@@ -458,6 +458,42 @@ export const GetDashboardSummaryResponse = zod.object({
 });
 
 /**
+ * @summary Per-area daily score trend over the last N days
+ */
+export const getDashboardTrendsQueryDaysDefault = 14;
+export const getDashboardTrendsQueryDaysMax = 60;
+
+export const GetDashboardTrendsQueryParams = zod.object({
+  days: zod.coerce
+    .number()
+    .min(1)
+    .max(getDashboardTrendsQueryDaysMax)
+    .default(getDashboardTrendsQueryDaysDefault),
+});
+
+export const GetDashboardTrendsResponseItem = zod.object({
+  areaId: zod.number(),
+  areaName: zod.string(),
+  status: zod.enum(["LEARNING", "TRAINED"]),
+  trainedOnDate: zod.coerce.date().nullish(),
+  points: zod.array(
+    zod.object({
+      date: zod.coerce.date(),
+      avgScore: zod
+        .number()
+        .nullable()
+        .describe(
+          "Average scorePercent for the day, or null if no submissions.",
+        ),
+      count: zod.number(),
+    }),
+  ),
+});
+export const GetDashboardTrendsResponse = zod.array(
+  GetDashboardTrendsResponseItem,
+);
+
+/**
  * @summary Get the current shift based on server time
  */
 export const GetCurrentShiftResponse = zod.object({

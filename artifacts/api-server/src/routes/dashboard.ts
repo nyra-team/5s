@@ -1,9 +1,14 @@
 import { Router, type IRouter } from "express";
-import { eq, and, gte, lt, sql, count, avg } from "drizzle-orm";
-import { db, submissionsTable, areasTable, escalationsTable } from "@workspace/db";
-import { GetDashboardComplianceQueryParams, GetDashboardScoresQueryParams } from "@workspace/api-zod";
+import { eq, and, gte, lt, sql, count, avg, asc } from "drizzle-orm";
+import { db, submissionsTable, areasTable, escalationsTable, areaProfilesTable } from "@workspace/db";
+import {
+  GetDashboardComplianceQueryParams,
+  GetDashboardScoresQueryParams,
+  GetDashboardTrendsQueryParams,
+} from "@workspace/api-zod";
 import { authMiddleware, requireRole } from "../lib/auth";
 import { getCurrentShift, getTodayDateString, getISTDayRange, getISTShiftRange } from "../lib/scoring";
+import { TRAINING_THRESHOLD } from "../lib/learning";
 
 const router: IRouter = Router();
 
@@ -190,6 +195,119 @@ router.get("/dashboard/summary", authMiddleware, requireRole("MANAGER"), async (
     totalSubmissions: totalStats?.count ?? 0,
     openEscalations: openEsc?.count ?? 0,
   });
+});
+
+// Per-area daily score trend over the last N days (default 14). For each area
+// we return one point per IST calendar day with the average scorePercent
+// (scoreTotal × 4) and submission count, plus the IST date the area first
+// reached the TRAINED threshold (5th submission) so the UI can highlight when
+// the AI's per-area model graduated from LEARNING.
+router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
+  const parsed = GetDashboardTrendsQueryParams.safeParse(req.query);
+  const days = parsed.success ? parsed.data.days : 14;
+
+  // Window end = end of today (IST), window start = start of the day (today - days + 1).
+  const todayRange = getISTDayRange();
+  const windowEnd = todayRange.end;
+  const startRange = getISTDayRange(
+    (() => {
+      const d = new Date(todayRange.start.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+      return normalizeDateInput(d);
+    })()
+  );
+  const windowStart = startRange.start;
+
+  const areas = await db.select().from(areasTable);
+  if (areas.length === 0) {
+    res.json([]);
+    return;
+  }
+
+  const istDayExpr = sql<string>`to_char(${submissionsTable.createdAt} at time zone 'Asia/Kolkata', 'YYYY-MM-DD')`;
+
+  const dailyRows = await db
+    .select({
+      areaId: submissionsTable.areaId,
+      day: istDayExpr,
+      avgScore: avg(submissionsTable.scoreTotal),
+      count: count(),
+    })
+    .from(submissionsTable)
+    .where(
+      and(
+        gte(submissionsTable.createdAt, windowStart),
+        lt(submissionsTable.createdAt, windowEnd)
+      )
+    )
+    .groupBy(submissionsTable.areaId, istDayExpr);
+
+  const byArea = new Map<number, Map<string, { avgScore: number; count: number }>>();
+  for (const r of dailyRows) {
+    const inner = byArea.get(r.areaId) ?? new Map();
+    inner.set(r.day, {
+      avgScore: Math.round((Number(r.avgScore) || 0) * 4),
+      count: r.count,
+    });
+    byArea.set(r.areaId, inner);
+  }
+
+  // Build the contiguous list of IST date strings the chart needs (oldest → today).
+  const dayLabels: string[] = [];
+  for (let i = 0; i < days; i++) {
+    const dayStart = new Date(windowStart.getTime() + i * 24 * 60 * 60 * 1000);
+    const label = normalizeDateInput(dayStart);
+    if (label) dayLabels.push(label);
+  }
+
+  const profiles = await db.select().from(areaProfilesTable);
+  const profileByArea = new Map(profiles.map((p) => [p.areaId, p]));
+
+  // For TRAINED areas, the "trained on" day is the IST calendar date of the
+  // TRAINING_THRESHOLD-th submission (ordered oldest → newest).
+  const trainedAreaIds = profiles
+    .filter((p) => p.status === "TRAINED")
+    .map((p) => p.areaId);
+  const trainedOnByArea = new Map<number, string | null>();
+  for (const areaId of trainedAreaIds) {
+    const subs = await db
+      .select({ createdAt: submissionsTable.createdAt })
+      .from(submissionsTable)
+      .where(eq(submissionsTable.areaId, areaId))
+      .orderBy(asc(submissionsTable.createdAt))
+      .limit(TRAINING_THRESHOLD);
+    if (subs.length >= TRAINING_THRESHOLD) {
+      trainedOnByArea.set(areaId, normalizeDateInput(subs[TRAINING_THRESHOLD - 1].createdAt) ?? null);
+    } else {
+      trainedOnByArea.set(areaId, null);
+    }
+  }
+
+  const result = areas.map((a) => {
+    const inner = byArea.get(a.id) ?? new Map<string, { avgScore: number; count: number }>();
+    // Days with no submissions are emitted as avgScore: null (not 0) so the
+    // chart renders a gap instead of pretending the area scored 0%.
+    const points = dayLabels.map((d) => {
+      const hit = inner.get(d);
+      return {
+        date: d,
+        avgScore: hit ? hit.avgScore : null,
+        count: hit?.count ?? 0,
+      };
+    });
+    const profile = profileByArea.get(a.id);
+    const status: "LEARNING" | "TRAINED" =
+      profile?.status === "TRAINED" ? "TRAINED" : "LEARNING";
+    const trainedOnDate = trainedOnByArea.get(a.id) ?? null;
+    return {
+      areaId: a.id,
+      areaName: a.name,
+      status,
+      trainedOnDate,
+      points,
+    };
+  });
+
+  res.json(result);
 });
 
 export default router;

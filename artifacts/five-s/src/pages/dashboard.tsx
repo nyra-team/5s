@@ -1,7 +1,7 @@
-import { useGetDashboardCompliance, useGetDashboardScores, useGetDashboardSummary, useListAreas, useGetAreaProfile } from "@workspace/api-client-react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen } from "lucide-react";
-import { format } from "date-fns";
+import { useGetDashboardCompliance, useGetDashboardScores, useGetDashboardSummary, useListAreas, useGetAreaProfile, useGetDashboardTrends, type AreaTrend } from "@workspace/api-client-react";
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from "recharts";
+import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp } from "lucide-react";
+import { format, parseISO } from "date-fns";
 import { Link } from "wouter";
 
 function HeroStat({
@@ -124,6 +124,8 @@ export default function Dashboard() {
       </section>
 
       <LearningStatusPanel />
+
+      <LearningTrendPanel />
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-card rounded-2xl shadow-soft p-6">
@@ -268,6 +270,142 @@ function LearningChip({ areaId, areaName }: { areaId: number; areaName: string }
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function LearningTrendPanel() {
+  const { data: trends, isLoading } = useGetDashboardTrends({ days: 14 });
+
+  if (isLoading) {
+    return (
+      <section className="bg-card rounded-2xl shadow-soft p-6">
+        <div className="h-40 bg-secondary rounded-xl animate-pulse" />
+      </section>
+    );
+  }
+
+  if (!trends || trends.length === 0) return null;
+
+  return (
+    <section className="bg-card rounded-2xl shadow-soft p-6" data-testid="dashboard-trends">
+      <div className="flex items-start justify-between mb-5">
+        <div>
+          <p className="eyebrow">AI learning</p>
+          <h2 className="text-lg font-semibold tracking-tight mt-1">Score trends (14 days)</h2>
+          <p className="text-[13px] text-muted-foreground mt-1">
+            Daily average score per area. The dot marks the day the AI graduated to <span className="font-medium text-foreground">Trained</span>.
+          </p>
+        </div>
+        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+          <TrendingUp className="w-4 h-4 text-primary" />
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {trends.map((t) => (
+          <AreaTrendCard key={t.areaId} trend={t} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AreaTrendCard({ trend }: { trend: AreaTrend }) {
+  const totalPoints = trend.points.reduce((acc, p) => acc + p.count, 0);
+  const isTrained = trend.status === "TRAINED";
+
+  // Find the trained-on point inside the visible window so we can place a dot.
+  // Only place the dot if that day actually has a numeric score to anchor it to.
+  const trainedPoint = trend.trainedOnDate
+    ? trend.points.find((p) => p.date === trend.trainedOnDate && p.avgScore !== null)
+    : undefined;
+
+  // Average across days that actually have submissions, so empty days don't drag the headline.
+  const daysWithData = trend.points.filter(
+    (p): p is typeof p & { avgScore: number } => p.avgScore !== null && p.count > 0
+  );
+  const headline =
+    daysWithData.length > 0
+      ? Math.round(
+          daysWithData.reduce((acc, p) => acc + p.avgScore, 0) / daysWithData.length
+        )
+      : null;
+
+  return (
+    <div
+      className="rounded-xl bg-secondary/30 p-4 flex flex-col gap-2"
+      data-testid={`dashboard-trend-${trend.areaId}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[13px] font-medium truncate">{trend.areaName}</p>
+        <span
+          className={`text-[10.5px] font-medium px-2 py-0.5 rounded-full ${
+            isTrained
+              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+              : "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+          }`}
+        >
+          {isTrained ? "Trained" : "Learning"}
+        </span>
+      </div>
+      <div className="flex items-baseline gap-2">
+        <span className="text-[22px] leading-none font-semibold tabular-nums">
+          {headline !== null ? `${headline}%` : "—"}
+        </span>
+        <span className="text-[11.5px] text-muted-foreground">
+          {totalPoints > 0 ? `${totalPoints} walk-throughs` : "No data yet"}
+        </span>
+      </div>
+      <div className="h-20">
+        {totalPoints === 0 ? (
+          <div className="h-full flex items-center justify-center text-[11.5px] text-muted-foreground">
+            No submissions in this window
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={trend.points} margin={{ top: 4, right: 6, left: 6, bottom: 0 }}>
+              <YAxis hide domain={[0, 100]} />
+              <XAxis dataKey="date" hide />
+              <Tooltip
+                cursor={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}
+                contentStyle={tooltipStyle}
+                labelFormatter={(label: string) => format(parseISO(label), "MMM d")}
+                formatter={(value: number | null, _name, payload) => {
+                  const count = (payload?.payload as { count?: number } | undefined)?.count ?? 0;
+                  if (value === null || count === 0) return ["No data", "Avg"];
+                  return [`${value}% · ${count} sub${count === 1 ? "" : "s"}`, "Avg"];
+                }}
+              />
+              <Line
+                type="monotone"
+                dataKey="avgScore"
+                stroke="hsl(var(--primary))"
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
+                connectNulls={false}
+              />
+              {trainedPoint && (
+                <ReferenceDot
+                  x={trainedPoint.date}
+                  y={trainedPoint.avgScore}
+                  r={5}
+                  fill="hsl(var(--primary))"
+                  stroke="hsl(var(--background))"
+                  strokeWidth={2}
+                  ifOverflow="extendDomain"
+                />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+      {trend.trainedOnDate && (
+        <p className="text-[11px] text-muted-foreground">
+          Trained on {format(parseISO(trend.trainedOnDate), "MMM d")}
+          {!trainedPoint && " (before this window)"}
+        </p>
+      )}
     </div>
   );
 }

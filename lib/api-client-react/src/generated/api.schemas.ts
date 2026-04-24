@@ -232,6 +232,29 @@ export interface ScoreSummary {
   count: number;
 }
 
+export interface AreaTrendPoint {
+  date: string;
+  /** Average scorePercent for the day, or null if no submissions. */
+  avgScore: number | null;
+  count: number;
+}
+
+export type AreaTrendStatus =
+  (typeof AreaTrendStatus)[keyof typeof AreaTrendStatus];
+
+export const AreaTrendStatus = {
+  LEARNING: "LEARNING",
+  TRAINED: "TRAINED",
+} as const;
+
+export interface AreaTrend {
+  areaId: number;
+  areaName: string;
+  status: AreaTrendStatus;
+  trainedOnDate?: string | null;
+  points: AreaTrendPoint[];
+}
+
 export interface DashboardSummary {
   todaySubmissions: number;
   todayAvgScore: number;
@@ -521,6 +544,14 @@ export const GetDashboardScoresGroupBy = {
   shift: "shift",
   day: "day",
 } as const;
+
+export type GetDashboardTrendsParams = {
+  /**
+   * @minimum 1
+   * @maximum 60
+   */
+  days?: number;
+};
 
 export type GetOperatorStatusParams = {
   shift?: GetOperatorStatusShift;

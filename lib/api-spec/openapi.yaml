@@ -414,6 +414,29 @@ paths:
               schema:
                 $ref: "#/components/schemas/DashboardSummary"
 
+  /dashboard/trends:
+    get:
+      operationId: getDashboardTrends
+      tags: [dashboard]
+      summary: Per-area daily score trend over the last N days
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 60
+            default: 14
+      responses:
+        "200":
+          description: Trend per area
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AreaTrend"
+
   /shift/current:
     get:
       operationId: getCurrentShift
@@ -1108,6 +1131,40 @@ components:
         count:
           type: integer
       required: [label, avgScore, count]
+
+    AreaTrendPoint:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        avgScore:
+          type: number
+          nullable: true
+          description: Average scorePercent for the day, or null if no submissions.
+        count:
+          type: integer
+      required: [date, avgScore, count]
+
+    AreaTrend:
+      type: object
+      properties:
+        areaId:
+          type: integer
+        areaName:
+          type: string
+        status:
+          type: string
+          enum: [LEARNING, TRAINED]
+        trainedOnDate:
+          type: string
+          format: date
+          nullable: true
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/AreaTrendPoint"
+      required: [areaId, areaName, status, points]
 
     DashboardSummary:
       type: object
