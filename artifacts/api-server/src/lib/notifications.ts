@@ -79,9 +79,15 @@ function inboxLink(): string {
 
 function parseHHMM(s: string | null | undefined): number | null {
   if (!s) return null;
-  // Accept "HH:MM" as written by the form, but also "HH:MM:SS" — Postgres
-  // `time` columns serialize back with a trailing seconds component, so DB
-  // round-trips can land here in either shape.
+  // The canonical wire/storage shape is "HH:MM" — the column is `text`,
+  // the form's <input type="time"> only submits HH:MM, and the
+  // preferences route normalises every write to HH:MM. The optional
+  // `:SS` group below is defensive only (e.g. an out-of-band SQL update
+  // that landed an HH:MM:SS value, or a future schema drift back to
+  // `time without time zone`) and is no longer load-bearing for normal
+  // operation. Keeping it ensures notification dispatch fails open
+  // (still mutes during quiet hours) rather than silently disabling
+  // suppression if a stray seconds suffix slips through.
   const m = /^(\d{1,2}):(\d{2})(?::\d{2})?$/.exec(s);
   if (!m) return null;
   const h = parseInt(m[1], 10);

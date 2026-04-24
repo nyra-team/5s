@@ -106,13 +106,17 @@ describe("quietHoursStatus", () => {
     expect(status).toEqual({ active: false, activeUntil: null, nextStart: null });
   });
 
-  it("accepts HH:MM:SS as well as HH:MM (Postgres `time` round-trips include seconds)", () => {
-    // Same scenario as the wrapping-window active case, but with the times
-    // shaped the way Postgres returns them.
+  it("still tolerates HH:MM:SS as a defensive fallback (no longer load-bearing)", () => {
+    // Canonical storage is now HH:MM end-to-end (text column + strict
+    // route normalisation), so this branch should never fire in normal
+    // operation. We keep the fallback wired up so an out-of-band SQL
+    // update or future schema drift back to `time without time zone`
+    // doesn't silently disable quiet-hours suppression in dispatch.
     const prefs = { ...baseEnabled, quietHoursStart: "22:00:00", quietHoursEnd: "07:00:00" };
     const now = istMoment("2026-04-22T23:30");
     const status = quietHoursStatus(prefs, now);
     expect(status.active).toBe(true);
     expect(status.activeUntil).toBe(new Date("2026-04-23T07:00:00+05:30").toISOString());
+    expect(isInQuietHours(prefs, now)).toBe(true);
   });
 });

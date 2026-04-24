@@ -21,12 +21,16 @@ interface PreferencesShape {
   quietHoursNextStart: string | null;
 }
 
-const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-// Postgres `time` columns (and some legacy data) serialise as "HH:MM:SS".
-// The UI form picker only round-trips "HH:MM", so any drift breaks the
-// edit flow. Normalise both on read (so the client always gets HH:MM) and
-// on write (so HH:MM:SS submissions don't get silently dropped by the
-// strict regex above).
+// Canonical wire/storage shape is 24h "HH:MM" — the column is `text`
+// and the form's <input type="time"> only ever submits HH:MM, so the
+// schema and DB are aligned today and round-trip cleanly without any
+// seconds suffix. The optional `:SS` group below is tolerated on both
+// the read and write boundary purely as defense-in-depth: if a legacy
+// row, an out-of-band SQL update, or a future schema drift back to
+// `time without time zone` produces an "HH:MM:SS" value, this folds
+// it back to canonical HH:MM in the same step instead of dropping
+// the value to the default and losing the user's preference. This
+// fallback is no longer load-bearing for normal operation.
 function normalizeTimeOfDay(input: unknown): string | null {
   if (typeof input !== "string") return null;
   const trimmed = input.trim();
