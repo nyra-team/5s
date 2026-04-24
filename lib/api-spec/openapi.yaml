@@ -1962,7 +1962,17 @@ components:
           type: string
           enum: [factory, warehouse, home, corporate_office]
           description: The kind of physical setting this area represents. Drives the AI rubric used to score submissions.
-      required: [id, name, environmentType]
+        walkthroughHintsOverride:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: >-
+            Manager-curated override of the environment-specific walk-through
+            hint bullets shown to operators in the capture sheet. `null` means
+            no override is set and the operator UI falls back to the default
+            list for this area's `environmentType`.
+      required: [id, name, environmentType, walkthroughHintsOverride]
 
     CreateAreaBody:
       type: object
@@ -1983,6 +1993,18 @@ components:
         environmentType:
           type: string
           enum: [factory, warehouse, home, corporate_office]
+        walkthroughHintsOverride:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: >-
+            Manager-curated override of the walk-through hint bullets. Send a
+            non-empty array of strings to set/replace the override, or `null`
+            (or an empty array, which the server normalizes to `null`) to
+            clear the override and revert this area to the default list for
+            its `environmentType`. Omit the field to leave the current
+            override unchanged.
       required: [name]
 
     AreaProfile:
@@ -2855,11 +2877,21 @@ components:
           description: >-
             Physical environment of the area. Drives the environment-specific
             quick-start checklist shown to operators in the capture sheet.
+        walkthroughHintsOverride:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: >-
+            Manager-curated override of the walk-through hint bullets for this
+            area. When non-null the operator capture sheet shows these bullets
+            instead of the environment default; when null the default list for
+            `environmentType` is shown.
         submitted:
           type: boolean
         submission:
           $ref: "#/components/schemas/Submission"
-      required: [areaId, areaName, environmentType, submitted]
+      required: [areaId, areaName, environmentType, walkthroughHintsOverride, submitted]
 
     Escalation:
       type: object

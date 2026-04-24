@@ -10,4 +10,6 @@ import type { UpdateAreaBodyTypeEnvironmentType } from "./updateAreaBodyTypeEnvi
 export interface UpdateAreaBodyType {
   name: string;
   environmentType?: UpdateAreaBodyTypeEnvironmentType;
+  /** Manager-curated override of the walk-through hint bullets. Send a non-empty array of strings to set/replace the override, or `null` (or an empty array, which the server normalizes to `null`) to clear the override and revert this area to the default list for its `environmentType`. Omit the field to leave the current override unchanged. */
+  walkthroughHintsOverride?: string[] | null;
 }

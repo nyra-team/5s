@@ -2259,13 +2259,18 @@ function CaptureSheet({
             </div>
           )}
 
-          {mode === "create" && !previewUrl && (
-            <EnvironmentChecklist
-              type={normalizeEnvironment(
-                assignedAreas.find((a) => a.areaId === chosenAreaId)?.environmentType,
-              )}
-            />
-          )}
+          {mode === "create" && !previewUrl && (() => {
+            // Match by `chosenAreaId` (which already accounts for auto-detect
+            // overrides) so the bullets follow whichever area the operator
+            // is actually capturing for, not the originally-tapped one.
+            const chosen = assignedAreas.find((a) => a.areaId === chosenAreaId);
+            return (
+              <EnvironmentChecklist
+                type={normalizeEnvironment(chosen?.environmentType)}
+                override={chosen?.walkthroughHintsOverride ?? null}
+              />
+            );
+          })()}
 
           <ProfileHint profile={profile} lastGood={lastGood} />
 

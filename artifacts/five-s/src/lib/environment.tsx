@@ -104,20 +104,31 @@ export function EnvironmentBadge({
 // sees both "what good looks like" (from the AI profile) AND "what to point
 // the camera at" (from the static, environment-aware list) before they
 // hit record.
+//
+// `override` lets a manager swap the default bullets for this area. When
+// `override` is a non-empty array we render those bullets instead of the
+// environment default; when it's `null`/`undefined`/empty, we fall back to
+// the static list keyed by `type`. Operators see no UI change when no
+// override is set.
 export function EnvironmentChecklist({
   type,
+  override,
   testId = "environment-checklist",
 }: {
   type: EnvironmentType;
+  override?: string[] | null;
   testId?: string;
 }) {
-  const items = ENVIRONMENT_CHECKLIST[type];
+  const cleanedOverride = override?.map((s) => s.trim()).filter(Boolean) ?? null;
+  const usingOverride = !!cleanedOverride && cleanedOverride.length > 0;
+  const items = usingOverride ? cleanedOverride! : ENVIRONMENT_CHECKLIST[type];
   if (!items || items.length === 0) return null;
   return (
     <div
       className="rounded-xl bg-secondary/60 p-3 space-y-2"
       data-testid={testId}
       data-environment={type}
+      data-source={usingOverride ? "override" : "default"}
     >
       <p className="eyebrow inline-flex items-center gap-1.5">
         <ListChecks className="w-3 h-3" /> Include in your walk-through

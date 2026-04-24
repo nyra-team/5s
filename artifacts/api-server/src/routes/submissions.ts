@@ -863,6 +863,10 @@ router.get("/operator/status", authMiddleware, async (req, res): Promise<void> =
       areaId: area.id,
       areaName: area.name,
       environmentType: area.environmentType,
+      // Surfaced so the capture sheet can render the manager's per-area
+      // override of the walk-through bullets when one is set, falling back
+      // to the static environmentType default otherwise.
+      walkthroughHintsOverride: area.walkthroughHintsOverrideJson ?? null,
       submitted: !!sub,
       ...(sub ? { submission: sub } : {}),
     };

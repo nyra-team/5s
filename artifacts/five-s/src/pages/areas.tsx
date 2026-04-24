@@ -28,9 +28,9 @@ import {
   Tabs, TabsList, TabsTrigger, TabsContent,
 } from "@/components/ui/tabs";
 import {
-  Plus, Pencil, Trash2, Check, X, BookOpen, RefreshCw, Sparkles, Wrench, Workflow, AlertCircle, Save, Edit3, Users, LayoutGrid, UserCog,
+  Plus, Pencil, Trash2, Check, X, BookOpen, RefreshCw, Sparkles, Wrench, Workflow, AlertCircle, Save, Edit3, Users, LayoutGrid, UserCog, ListChecks, RotateCcw,
 } from "lucide-react";
-import { EnvironmentBadge, ENVIRONMENT_LABELS, type EnvironmentType } from "@/lib/environment";
+import { EnvironmentBadge, ENVIRONMENT_LABELS, ENVIRONMENT_CHECKLIST, type EnvironmentType } from "@/lib/environment";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -476,6 +476,8 @@ function AreaConfigCard({ area }: { area: Area }) {
             )}
           </div>
 
+          <WalkthroughHintsSection area={area} />
+
           <AreaAssignmentsSection areaId={area.id} areaName={area.name} />
         </div>
       </div>
@@ -544,6 +546,205 @@ function ProfileChips({ icon, label, items, tone = "default" }: { icon: React.Re
           <span key={i} className={`text-[11.5px] px-2 py-0.5 rounded-full font-medium ${toneCls}`}>{s}</span>
         ))}
       </div>
+    </div>
+  );
+}
+
+// Per-area panel for overriding the walk-through hint bullets that operators
+// see in the capture sheet. By default operators see the static list keyed
+// off the area's environmentType (factory/warehouse/home/corporate_office);
+// this section lets a manager replace those bullets for a specific area
+// — e.g. "include the cleanroom airlock" or "show the back loading bay" —
+// or reset back to the env default. Only non-empty arrays round-trip as
+// overrides; an empty list (blank Save or `[]`) is normalized server-side
+// to null so the operator UI consistently falls back to the env default
+// (see EnvironmentChecklist in lib/environment.tsx).
+function WalkthroughHintsSection({ area }: { area: Area }) {
+  const envType = (area.environmentType as EnvironmentType) ?? "factory";
+  const updateArea = useUpdateArea();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const override = area.walkthroughHintsOverride ?? null;
+  const defaultHints = ENVIRONMENT_CHECKLIST[envType] ?? [];
+  const currentHints = override && override.length > 0 ? override : defaultHints;
+  const usingOverride = override !== null;
+
+  const startEditing = () => {
+    // Seed the textarea with whatever's currently shown so the manager can
+    // tweak the env default rather than start from a blank box.
+    setDraft(currentHints.join("\n"));
+    setEditing(true);
+  };
+
+  const splitLines = (s: string) =>
+    s.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+  const handleSave = () => {
+    const bullets = splitLines(draft);
+    // Saving an empty textarea is treated the same as Reset — there's no UI
+    // for "hide the checklist entirely", so an empty list always means
+    // "fall back to the env default" to keep manager and operator views in
+    // sync with the rendering rule (override is only applied when non-empty).
+    const payload = bullets.length > 0 ? bullets : null;
+    const reverting = payload === null;
+    updateArea.mutate(
+      { id: area.id, data: { name: area.name, walkthroughHintsOverride: payload } },
+      {
+        onSuccess: () => {
+          toast({
+            title: reverting ? "Reverted to default" : "Walk-through hints saved",
+            description: reverting
+              ? `${ENVIRONMENT_LABELS[envType]} default hints will be shown for ${area.name}.`
+              : `Operators capturing for ${area.name} will see your custom list.`,
+          });
+          queryClient.invalidateQueries({ queryKey: getListAreasQueryKey() });
+          setEditing(false);
+        },
+        onError: () =>
+          toast({
+            variant: "destructive",
+            title: "Save failed",
+            description: "Could not update walk-through hints.",
+          }),
+      },
+    );
+  };
+
+  const handleReset = () => {
+    updateArea.mutate(
+      { id: area.id, data: { name: area.name, walkthroughHintsOverride: null } },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Reverted to default",
+            description: `${ENVIRONMENT_LABELS[envType]} default hints will be shown for ${area.name}.`,
+          });
+          queryClient.invalidateQueries({ queryKey: getListAreasQueryKey() });
+          setEditing(false);
+        },
+        onError: () =>
+          toast({
+            variant: "destructive",
+            title: "Reset failed",
+            description: "Could not clear the override.",
+          }),
+      },
+    );
+  };
+
+  const handleCancel = () => {
+    setDraft("");
+    setEditing(false);
+  };
+
+  return (
+    <div className="mt-5 pt-4 border-t border-border/60">
+      <div className="flex items-center justify-between mb-2">
+        <p className="eyebrow flex items-center gap-1.5">
+          <ListChecks className="w-3 h-3" /> Walk-through hints
+        </p>
+        <div className="flex items-center gap-2">
+          <span
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold ${
+              usingOverride
+                ? "bg-sky-50 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300"
+                : "bg-secondary text-muted-foreground"
+            }`}
+            data-testid={`badge-hints-source-${area.id}`}
+          >
+            {usingOverride ? "Custom" : `${ENVIRONMENT_LABELS[envType]} default`}
+          </span>
+          {!editing && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="rounded-full text-muted-foreground h-10 px-4"
+              onClick={startEditing}
+              data-testid={`button-edit-hints-${area.id}`}
+            >
+              <Edit3 className="w-3.5 h-3.5 mr-1" /> Edit
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {editing ? (
+        <div className="rounded-xl bg-secondary/40 p-3 space-y-3">
+          <Textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={Math.max(5, Math.min(10, splitLines(draft).length + 2))}
+            placeholder="One bullet per line, e.g. Include the cleanroom airlock"
+            className="text-[12.5px] rounded-lg bg-card border-transparent focus-visible:border-ring resize-none"
+            data-testid={`textarea-hints-${area.id}`}
+          />
+          <p className="text-[11px] text-muted-foreground leading-snug">
+            One bullet per line. Operators see these in the capture sheet before they hit
+            record. Leave blank and Save (or use Reset) to revert to the{" "}
+            {ENVIRONMENT_LABELS[envType]} default ({defaultHints.length} bullets).
+          </p>
+          <div className="flex gap-2 flex-wrap">
+            <Button
+              className="flex-1 h-10 rounded-xl"
+              onClick={handleSave}
+              disabled={updateArea.isPending}
+              data-testid={`button-save-hints-${area.id}`}
+            >
+              <Save className="w-4 h-4 mr-2" />
+              {updateArea.isPending ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              variant="outline"
+              className="h-10 rounded-xl"
+              onClick={handleReset}
+              disabled={updateArea.isPending || !usingOverride}
+              data-testid={`button-reset-hints-${area.id}`}
+            >
+              <RotateCcw className="w-4 h-4 mr-2" /> Reset to default
+            </Button>
+            <Button
+              variant="ghost"
+              className="h-10 rounded-xl"
+              onClick={handleCancel}
+              disabled={updateArea.isPending}
+              data-testid={`button-cancel-hints-${area.id}`}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div
+          className="rounded-xl bg-secondary/40 p-3"
+          data-testid={`view-hints-${area.id}`}
+        >
+          {currentHints.length === 0 ? (
+            <p className="text-[12.5px] text-muted-foreground italic">
+              No bullets configured — operators won't see a checklist for this area.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {currentHints.map((item, i) => (
+                <li
+                  key={i}
+                  className="text-[12.5px] text-foreground/85 leading-snug flex gap-2 items-start"
+                  data-testid={`hint-item-${area.id}-${i}`}
+                >
+                  <span
+                    className="mt-1.5 inline-block w-1 h-1 rounded-full bg-foreground/60 shrink-0"
+                    aria-hidden="true"
+                  />
+                  <span className="flex-1">{item}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

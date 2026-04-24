@@ -12,4 +12,6 @@ export interface AreaType {
   name: string;
   /** The kind of physical setting this area represents. Drives the AI rubric used to score submissions. */
   environmentType: AreaTypeEnvironmentType;
+  /** Manager-curated override of the environment-specific walk-through hint bullets shown to operators in the capture sheet. `null` means no override is set and the operator UI falls back to the default list for this area's `environmentType`. */
+  walkthroughHintsOverride: string[] | null;
 }

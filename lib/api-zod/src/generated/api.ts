@@ -51,6 +51,12 @@ export const ListAreasResponseItem = zod.object({
     .describe(
       "The kind of physical setting this area represents. Drives the AI rubric used to score submissions.",
     ),
+  walkthroughHintsOverride: zod
+    .array(zod.string())
+    .nullable()
+    .describe(
+      "Manager-curated override of the environment-specific walk-through hint bullets shown to operators in the capture sheet. `null` means no override is set and the operator UI falls back to the default list for this area's `environmentType`.",
+    ),
 });
 export const ListAreasResponse = zod.array(ListAreasResponseItem);
 
@@ -77,6 +83,12 @@ export const UpdateAreaBody = zod.object({
   environmentType: zod
     .enum(["factory", "warehouse", "home", "corporate_office"])
     .optional(),
+  walkthroughHintsOverride: zod
+    .array(zod.string())
+    .nullish()
+    .describe(
+      "Manager-curated override of the walk-through hint bullets. Send a non-empty array of strings to set\/replace the override, or `null` (or an empty array, which the server normalizes to `null`) to clear the override and revert this area to the default list for its `environmentType`. Omit the field to leave the current override unchanged.",
+    ),
 });
 
 export const UpdateAreaResponse = zod.object({
@@ -86,6 +98,12 @@ export const UpdateAreaResponse = zod.object({
     .enum(["factory", "warehouse", "home", "corporate_office"])
     .describe(
       "The kind of physical setting this area represents. Drives the AI rubric used to score submissions.",
+    ),
+  walkthroughHintsOverride: zod
+    .array(zod.string())
+    .nullable()
+    .describe(
+      "Manager-curated override of the environment-specific walk-through hint bullets shown to operators in the capture sheet. `null` means no override is set and the operator UI falls back to the default list for this area's `environmentType`.",
     ),
 });
 
@@ -1349,6 +1367,12 @@ export const GetOperatorStatusResponseItem = zod.object({
     .enum(["factory", "warehouse", "home", "corporate_office"])
     .describe(
       "Physical environment of the area. Drives the environment-specific quick-start checklist shown to operators in the capture sheet.",
+    ),
+  walkthroughHintsOverride: zod
+    .array(zod.string())
+    .nullable()
+    .describe(
+      "Manager-curated override of the walk-through hint bullets for this area. When non-null the operator capture sheet shows these bullets instead of the environment default; when null the default list for `environmentType` is shown.",
     ),
   submitted: zod.boolean(),
   submission: zod

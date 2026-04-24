@@ -20,7 +20,18 @@ const router: IRouter = Router();
 
 router.get("/areas", authMiddleware, async (_req, res): Promise<void> => {
   const areas = await db.select().from(areasTable).orderBy(areasTable.id);
-  res.json(areas);
+  // Surface the per-area walk-through hint override under its API name
+  // (`walkthroughHintsOverride`) so the manager UI can read/edit it. NULL
+  // in the column means "no override" — the operator UI falls back to the
+  // default list for this area's environmentType.
+  res.json(
+    areas.map((a) => ({
+      id: a.id,
+      name: a.name,
+      environmentType: a.environmentType,
+      walkthroughHintsOverride: a.walkthroughHintsOverrideJson ?? null,
+    })),
+  );
 });
 
 router.post("/areas", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
@@ -34,7 +45,12 @@ router.post("/areas", authMiddleware, requireRole("MANAGER"), async (req, res): 
   if (parsed.data.environmentType) values.environmentType = parsed.data.environmentType;
 
   const [area] = await db.insert(areasTable).values(values).returning();
-  res.status(201).json(area);
+  res.status(201).json({
+    id: area.id,
+    name: area.name,
+    environmentType: area.environmentType,
+    walkthroughHintsOverride: area.walkthroughHintsOverrideJson ?? null,
+  });
 });
 
 router.patch("/areas/:id", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
@@ -50,8 +66,24 @@ router.patch("/areas/:id", authMiddleware, requireRole("MANAGER"), async (req, r
     return;
   }
 
-  const patch: { name?: string; environmentType?: string } = { name: parsed.data.name };
+  const patch: {
+    name?: string;
+    environmentType?: string;
+    walkthroughHintsOverrideJson?: string[] | null;
+  } = { name: parsed.data.name };
   if (parsed.data.environmentType) patch.environmentType = parsed.data.environmentType;
+  // The override field is `nullish()` in the spec, so:
+  //   - undefined  → key omitted, leave the existing override untouched
+  //   - null       → manager wants to reset to the environmentType default
+  //   - string[]   → manager wants to set/replace the override
+  // An empty array is normalized to `null` (clear) so the contract stays
+  // consistent with the render rule (only non-empty overrides are applied)
+  // and managers can't accidentally store an "invisible" override.
+  if (parsed.data.walkthroughHintsOverride !== undefined) {
+    const incoming = parsed.data.walkthroughHintsOverride;
+    patch.walkthroughHintsOverrideJson =
+      Array.isArray(incoming) && incoming.length === 0 ? null : incoming;
+  }
 
   const [area] = await db
     .update(areasTable)
@@ -64,7 +96,12 @@ router.patch("/areas/:id", authMiddleware, requireRole("MANAGER"), async (req, r
     return;
   }
 
-  res.json(area);
+  res.json({
+    id: area.id,
+    name: area.name,
+    environmentType: area.environmentType,
+    walkthroughHintsOverride: area.walkthroughHintsOverrideJson ?? null,
+  });
 });
 
 router.delete("/areas/:id", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {

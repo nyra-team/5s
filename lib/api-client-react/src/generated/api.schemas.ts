@@ -410,6 +410,8 @@ export interface Area {
   name: string;
   /** The kind of physical setting this area represents. Drives the AI rubric used to score submissions. */
   environmentType: AreaEnvironmentType;
+  /** Manager-curated override of the environment-specific walk-through hint bullets shown to operators in the capture sheet. `null` means no override is set and the operator UI falls back to the default list for this area's `environmentType`. */
+  walkthroughHintsOverride: string[] | null;
 }
 
 /**
@@ -444,6 +446,8 @@ export const UpdateAreaBodyEnvironmentType = {
 export interface UpdateAreaBody {
   name: string;
   environmentType?: UpdateAreaBodyEnvironmentType;
+  /** Manager-curated override of the walk-through hint bullets. Send a non-empty array of strings to set/replace the override, or `null` (or an empty array, which the server normalizes to `null`) to clear the override and revert this area to the default list for its `environmentType`. Omit the field to leave the current override unchanged. */
+  walkthroughHintsOverride?: string[] | null;
 }
 
 export type AreaProfileStatus =
@@ -1040,6 +1044,8 @@ export interface AreaStatus {
   areaName: string;
   /** Physical environment of the area. Drives the environment-specific quick-start checklist shown to operators in the capture sheet. */
   environmentType: AreaStatusEnvironmentType;
+  /** Manager-curated override of the walk-through hint bullets for this area. When non-null the operator capture sheet shows these bullets instead of the environment default; when null the default list for `environmentType` is shown. */
+  walkthroughHintsOverride: string[] | null;
   submitted: boolean;
   submission?: Submission;
 }

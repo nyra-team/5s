@@ -13,6 +13,8 @@ export interface AreaStatusType {
   areaName: string;
   /** Physical environment of the area. Drives the environment-specific quick-start checklist shown to operators in the capture sheet. */
   environmentType: AreaStatusTypeEnvironmentType;
+  /** Manager-curated override of the walk-through hint bullets for this area. When non-null the operator capture sheet shows these bullets instead of the environment default; when null the default list for `environmentType` is shown. */
+  walkthroughHintsOverride: string[] | null;
   submitted: boolean;
   submission?: SubmissionType;
 }
