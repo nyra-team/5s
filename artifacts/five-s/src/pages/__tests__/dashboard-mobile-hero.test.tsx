@@ -113,9 +113,14 @@ vi.mock("@workspace/api-client-react", () => {
       reset: vi.fn(),
     }),
     useRebuildAreaProfile: noopMutation,
-    getGetBackfillReasoningStatusQueryKey: () => ["backfill-reasoning-status"],
+    useGetEscalationCount: () => ({
+      data: { open: 0 },
+      isLoading: false,
+      isError: false,
+    }),
     getGetDashboardOperatorDismissesDetailQueryKey: () => ["dismisses-detail"],
     getGetAreaProfileQueryKey: () => ["area-profile"],
+    getGetBackfillReasoningStatusQueryKey: () => ["backfill-reasoning-status"],
   };
 });
 

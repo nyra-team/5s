@@ -43,6 +43,13 @@
       "when": 1777055000000,
       "tag": "0005_add_reping_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777060000000,
+      "tag": "0006_scoring_reliability",
+      "breakpoints": true
     }
   ]
 }

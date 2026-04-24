@@ -105,6 +105,95 @@ describe("buildUploadErrorToast", () => {
     expect(t.description).toBe("There was an error uploading. Please try again.");
   });
 
+  // Task #203: structured pipeline failures get distinct, actionable copy.
+  // Each test asserts both the title (so the operator can scan toasts) AND
+  // the description (so the action they should take is clear) — and it
+  // explicitly checks that the server-supplied `hint` always wins so copy
+  // can be tuned without a client release.
+  describe("structured ScoringError codes", () => {
+    it("VIDEO_UNREADABLE: tells the operator to record a different video or use a still", () => {
+      const t = buildUploadErrorToast(
+        apiError(422, {
+          error: "We couldn't read this video.",
+          code: "VIDEO_UNREADABLE",
+          hint: "The video appears unreadable. Try recording again as a short MP4 or capture a still photo instead.",
+          retryable: true,
+        }),
+        "Submission failed",
+      );
+      expect(t.title).toBe("We couldn't read this video");
+      expect(t.title).not.toBe("Submission failed");
+      expect(t.description).toMatch(/MP4|still photo/i);
+    });
+
+    it("FRAMES_TOO_DARK: tells the operator to add more light", () => {
+      const t = buildUploadErrorToast(
+        apiError(422, {
+          error: "Capture is too dark to score.",
+          code: "FRAMES_TOO_DARK",
+          retryable: true,
+        }),
+        "Submission failed",
+      );
+      expect(t.title).toBe("Capture is too dark");
+      expect(t.description).toMatch(/light|torch/i);
+    });
+
+    it("AI_RATE_LIMITED: tells the operator to wait and retry — capture is fine", () => {
+      const t = buildUploadErrorToast(
+        apiError(502, {
+          error: "Our AI is rate-limited right now.",
+          code: "AI_RATE_LIMITED",
+          retryable: true,
+        }),
+        "Submission failed",
+      );
+      expect(t.title).toBe("AI is busy right now");
+      expect(t.description).toMatch(/wait|minute/i);
+      // The operator should NOT be told to fix capture quality here.
+      expect(t.description).toMatch(/capture is fine|try again/i);
+    });
+
+    it("AI_TIMEOUT: tells the operator the model didn't respond in time", () => {
+      const t = buildUploadErrorToast(
+        apiError(502, {
+          error: "AI scoring timed out.",
+          code: "AI_TIMEOUT",
+          retryable: true,
+        }),
+        "Submission failed",
+      );
+      expect(t.title).toBe("AI scoring timed out");
+      expect(t.description).toMatch(/respond|time/i);
+    });
+
+    it("AI_MALFORMED: tells the operator to retry the same capture", () => {
+      const t = buildUploadErrorToast(
+        apiError(502, {
+          error: "AI returned an unusable response.",
+          code: "AI_MALFORMED",
+          retryable: true,
+        }),
+        "Submission failed",
+      );
+      expect(t.title).toBe("AI returned an unusable response");
+      expect(t.description).toMatch(/transient|try the same capture/i);
+    });
+
+    it("server-supplied hint always wins so copy can be tuned without a client release", () => {
+      const t = buildUploadErrorToast(
+        apiError(502, {
+          error: "Our AI is rate-limited right now.",
+          code: "AI_RATE_LIMITED",
+          hint: "Backed off until 14:32 IST — please wait two minutes.",
+          retryable: true,
+        }),
+        "Submission failed",
+      );
+      expect(t.description).toBe("Backed off until 14:32 IST — please wait two minutes.");
+    });
+  });
+
   it("uses a connectivity-specific message when the error has no status (network failure)", () => {
     // Simulates fetch rejecting before a Response is received — e.g. the
     // operator's phone went offline mid-upload. The toast should call out

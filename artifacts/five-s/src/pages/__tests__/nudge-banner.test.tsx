@@ -73,10 +73,21 @@ vi.mock("@workspace/api-client-react", () => {
       isRefetching: false,
       refetch: vi.fn(),
     }),
+    useListAreas: () => ({
+      data: [],
+      isLoading: false,
+      isError: false,
+      isSuccess: true,
+    }),
     useGetOperatorStatus: stub("statuses"),
     useListAreas: () => ({ data: [], isLoading: false, isError: false }),
     useGetNextChecks: stub("nextChecks"),
-    useListAreas: () => ({ data: [], isLoading: false, isError: false }),
+    useListAreas: () => ({
+      data: [],
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    }),
     getListAreasQueryKey: () => ["areas"],
     useGetOperatorRecent: stub("recent"),
     useGetActiveNudges: stub("nudges"),
@@ -85,12 +96,18 @@ vi.mock("@workspace/api-client-react", () => {
     useGetSubmission: stub("submission"),
     useGetOperatorThresholds: () => ({ data: undefined, isLoading: false }),
     getGetOperatorThresholdsQueryKey: () => ["operator-thresholds"],
-    useListAreas: () => ({ data: [], isLoading: false }),
-    getListAreasQueryKey: () => ["areas"],
-    // The operator page subscribes to facility settings to react to
+    // The operator page subscribes to facility settings (via a listener
+    // that mounts a useQuery on the facility-settings key) to react to
     // server-side changes; the dismiss/undo flow under test doesn't care
-    // about its contents, so a no-op stub keeps the render tree alive.
-    useGetFacilitySettings: () => ({ data: undefined, isLoading: false }),
+    // about its contents, so a no-op stub keeps the listener inert and
+    // the render tree alive. The query-key getter is also stubbed
+    // because the listener references it inside its useQuery options.
+    useGetFacilitySettings: () => ({
+      data: undefined,
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    }),
     getGetFacilitySettingsQueryKey: () => ["facility-settings"],
     useGetShiftConfig: () => ({
       data: mockState.shiftConfig,

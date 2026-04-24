@@ -153,6 +153,62 @@ export function buildUploadErrorToast(err: unknown, fallbackTitle: string): Uplo
     };
   }
 
+  // Structured pipeline failures from /submissions (Task #203). Each maps to
+  // an actionable next step so the operator knows whether to re-shoot the
+  // capture (VIDEO_UNREADABLE / FRAMES_TOO_DARK) or just wait and retry the
+  // same capture (AI_RATE_LIMITED / AI_TIMEOUT / AI_MALFORMED). The
+  // server-supplied `hint` always wins so copy can be tuned without a
+  // client release.
+  if (code === "VIDEO_UNREADABLE") {
+    return {
+      variant: "destructive",
+      title: "We couldn't read this video",
+      description:
+        hint ??
+        "The video appears unreadable. Try recording again as a short MP4, or capture a still photo instead.",
+    };
+  }
+
+  if (code === "FRAMES_TOO_DARK") {
+    return {
+      variant: "destructive",
+      title: "Capture is too dark",
+      description:
+        hint ??
+        "Every frame came out too dark to analyse. Turn on more light (or your phone's torch) and capture again.",
+    };
+  }
+
+  if (code === "AI_RATE_LIMITED") {
+    return {
+      variant: "destructive",
+      title: "AI is busy right now",
+      description:
+        hint ??
+        "Too many audits hit the model at once. Wait about a minute and try again — your capture is fine.",
+    };
+  }
+
+  if (code === "AI_TIMEOUT") {
+    return {
+      variant: "destructive",
+      title: "AI scoring timed out",
+      description:
+        hint ??
+        "The model didn't respond in time. Try once more — if it keeps timing out, try a smaller capture.",
+    };
+  }
+
+  if (code === "AI_MALFORMED") {
+    return {
+      variant: "destructive",
+      title: "AI returned an unusable response",
+      description:
+        hint ??
+        "The model couldn't structure its answer. Try the same capture again — this is usually transient.",
+    };
+  }
+
   if (code === "MEDIA_REQUIRED") {
     return {
       variant: "destructive",

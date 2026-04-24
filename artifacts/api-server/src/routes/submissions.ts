@@ -17,6 +17,8 @@ import { getCurrentShift, getISTShiftRange, getISTDayRange, getShiftConfig } fro
 import { loadEffectiveShiftConfig } from "../lib/facility-settings.js";
 import {
   scoreSubmission,
+  ScoringError,
+  type ScoringErrorCode,
   type ScoringOutput,
   AI_UNAVAILABLE_FALLBACK_ACTION,
   isNoOpFallbackSuggestion,
@@ -230,6 +232,79 @@ function extractFile(req: any) {
   const files = (req.files ?? {}) as Record<string, Express.Multer.File[]>;
   const f = files.media?.[0] ?? files.photo?.[0] ?? req.file;
   return f as Express.Multer.File | undefined;
+}
+
+/**
+ * Map a `ScoringError.code` to a JSON response body the operator UI
+ * (`buildUploadErrorToast`) can convert into an actionable toast. The
+ * structure mirrors the existing `SCORING_FAILED` body — `code`, `error`,
+ * `hint`, `retryable` — so a client that doesn't recognise a new code
+ * still gets a usable message via the `hint` field.
+ *
+ * Status codes:
+ *  - 502 for upstream model issues (rate limit / timeout / malformed JSON)
+ *    so they're indistinguishable from any other "AI provider misbehaved"
+ *    case from a plain HTTP-status perspective.
+ *  - 422 for client-correctable capture issues (too dark, video unreadable)
+ *    because re-trying the same capture won't help; the operator must
+ *    re-shoot.
+ */
+function buildScoringErrorResponse(err: ScoringError): {
+  status: number;
+  body: { error: string; code: ScoringErrorCode; hint: string; retryable: boolean };
+} {
+  switch (err.code) {
+    case "VIDEO_UNREADABLE":
+      return {
+        status: 422,
+        body: {
+          error: "We couldn't read this video.",
+          code: err.code,
+          hint: "The video appears unreadable. Try recording again as a short MP4 or capture a still photo instead.",
+          retryable: true,
+        },
+      };
+    case "FRAMES_TOO_DARK":
+      return {
+        status: 422,
+        body: {
+          error: "Capture is too dark to score.",
+          code: err.code,
+          hint: "Turn on more light (or your phone's torch) and capture again — every frame came out too dark to analyse.",
+          retryable: true,
+        },
+      };
+    case "AI_RATE_LIMITED":
+      return {
+        status: 502,
+        body: {
+          error: "Our AI is rate-limited right now.",
+          code: err.code,
+          hint: "Too many audits hit the model at once. Wait about a minute and try again — your capture is fine.",
+          retryable: true,
+        },
+      };
+    case "AI_TIMEOUT":
+      return {
+        status: 502,
+        body: {
+          error: "AI scoring timed out.",
+          code: err.code,
+          hint: "The model didn't respond in time. Try once more — if it keeps timing out, try a smaller capture.",
+          retryable: true,
+        },
+      };
+    case "AI_MALFORMED":
+      return {
+        status: 502,
+        body: {
+          error: "AI returned an unusable response.",
+          code: err.code,
+          hint: "The model couldn't structure its answer. Try the same capture again — this is usually transient.",
+          retryable: true,
+        },
+      };
+  }
 }
 
 async function runScoringPipeline(opts: {
@@ -469,11 +544,17 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
   try {
     pipeline = await runScoringPipeline({ areaId, areaName: area.name, environmentType: area.environmentType, file, machineTag });
   } catch (err) {
-    // Pipeline only throws on infrastructure-level problems (e.g. profile load
-    // fails); the VLM itself falls back to an empty result instead of
-    // throwing. We mark this as SCORING_FAILED so the operator UI knows the
-    // upload didn't land — they should retry — and we suggest checking the
-    // capture quality, which is the only knob they actually control.
+    // The pipeline now distinguishes structured `ScoringError`s (rate-limit,
+    // timeout, malformed JSON, dark frames, unreadable video) from generic
+    // infrastructure failures. Map the structured ones to their distinct
+    // operator-actionable codes; everything else stays as the catch-all
+    // SCORING_FAILED so the existing operator UI fallback still applies.
+    if (err instanceof ScoringError) {
+      logger.warn({ err, code: err.code }, "Scoring pipeline raised structured error");
+      const { status, body } = buildScoringErrorResponse(err);
+      res.status(status).json(body);
+      return;
+    }
     logger.error({ err }, "Scoring pipeline failed");
     res.status(502).json({
       error: "Failed to score submission",
@@ -671,8 +752,15 @@ router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req
   try {
     pipeline = await runScoringPipeline({ areaId: existing.areaId, areaName: area?.name ?? "Unknown", environmentType: area?.environmentType ?? "factory", file, machineTag });
   } catch (err) {
-    // See create handler — same SCORING_FAILED contract so the operator UI
-    // can present an actionable retry hint instead of a generic toast.
+    // See create handler — same structured/SCORING_FAILED branching so the
+    // operator UI can present an actionable retry hint instead of a generic
+    // toast on reupload too.
+    if (err instanceof ScoringError) {
+      logger.warn({ err, code: err.code }, "Scoring pipeline raised structured error on reupload");
+      const { status, body } = buildScoringErrorResponse(err);
+      res.status(status).json(body);
+      return;
+    }
     logger.error({ err }, "Scoring pipeline failed on reupload");
     res.status(502).json({
       error: "Failed to score submission",

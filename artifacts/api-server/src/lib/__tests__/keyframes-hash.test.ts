@@ -308,23 +308,75 @@ describe("extractKeyframes ffmpeg timeout", () => {
     fs.chmodSync(fakeBin, 0o755);
 
     process.env.FFMPEG_BIN = fakeBin;
-    // Two ffmpeg passes (scene + fallback) each get this budget, so total
-    // wall time is ~2x. Keep small enough to stay well under the 20s suite
-    // timeout but large enough to dwarf process-spawn jitter.
+    // All three ffmpeg passes (scene + fallback + last-ditch) each get this
+    // budget, so total wall time is ~3x. Keep small enough to stay well
+    // under the suite timeout but large enough to dwarf process-spawn
+    // jitter.
     process.env.FFMPEG_TIMEOUT_MS = "300";
 
     const start = Date.now();
     const result = await extractKeyframes("/tmp/does-not-matter.mp4", { maxFrames: 3 });
     const elapsed = Date.now() - start;
 
-    // Both ffmpeg passes should have timed out and the function should have
+    // All ffmpeg passes should have timed out and the function should have
     // fallen through to the documented empty-result path — no throw, no
     // forever-hang waiting on the child.
     expect(result.frameUrls).toEqual([]);
     expect(result.frameAbsPaths).toEqual([]);
-    // Generous upper bound: 2 timeouts (~600ms) + spawn/teardown overhead.
+    // Generous upper bound: 3 timeouts (~900ms) + spawn/teardown overhead.
     // If the SIGKILL path regresses, this would balloon to the full suite
     // timeout instead.
     expect(elapsed).toBeLessThan(5_000);
+  });
+
+  it("sweeps any partial JPEGs ffmpeg flushed before the SIGKILL fired", async () => {
+    // Reproduces the failure mode the code review flagged: a real ffmpeg
+    // (or a malformed input) sometimes flushes one or more partial frames
+    // to disk before the wall-clock timeout fires and we kill it. Without
+    // the cleanup pass in runFfmpeg those partials would accumulate in
+    // uploads/ across a string of failures and never be reaped. Here a
+    // fake binary writes two real JPEGs that match the per-call prefix
+    // pattern then hangs, simulating exactly that race.
+    const uploadsDir = path.resolve(process.cwd(), "uploads");
+    fs.mkdirSync(uploadsDir, { recursive: true });
+
+    // Capture the existing uploads/ contents so the assertion can ignore
+    // anything that was already in there (other tests, dev artifacts).
+    const before = new Set(fs.readdirSync(uploadsDir));
+
+    const fakeBin = path.join(tmpDir, "fake-ffmpeg-partial.mjs");
+    // The fake binary is invoked with the standard runFfmpeg arg list; the
+    // last arg is the output pattern (e.g. .../<id>_s_%03d.jpg). We
+    // substitute the %03d placeholder for "001" / "002", write two real
+    // JPEG bytes (sharp doesn't have to decode them — the cleanup pass
+    // matches by filename), then hang so the timeout has to SIGKILL us.
+    fs.writeFileSync(
+      fakeBin,
+      [
+        "#!/usr/bin/env node",
+        "import fs from 'node:fs';",
+        "const pattern = process.argv[process.argv.length - 1];",
+        "const minimalJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);",
+        "fs.writeFileSync(pattern.replace('%03d', '001'), minimalJpeg);",
+        "fs.writeFileSync(pattern.replace('%03d', '002'), minimalJpeg);",
+        "setInterval(() => {}, 60_000);",
+      ].join("\n"),
+    );
+    fs.chmodSync(fakeBin, 0o755);
+
+    process.env.FFMPEG_BIN = fakeBin;
+    process.env.FFMPEG_TIMEOUT_MS = "200";
+
+    const result = await extractKeyframes("/tmp/whatever.mp4", { maxFrames: 3 });
+
+    // Function returned cleanly (empty result); now verify that none of
+    // the partial JPEGs the fake binary wrote survived the cleanup. Match
+    // by the .jpg suffix to ignore any non-frame upload artifacts.
+    const after = fs.readdirSync(uploadsDir);
+    const newJpegs = after.filter(
+      (f) => !before.has(f) && f.endsWith(".jpg"),
+    );
+    expect(result.frameAbsPaths).toEqual([]);
+    expect(newJpegs).toEqual([]);
   });
 });

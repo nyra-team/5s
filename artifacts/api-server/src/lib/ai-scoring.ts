@@ -3,7 +3,7 @@ import { openai } from "@workspace/integrations-openai-ai-server";
 // don't need to import the openai package directly (it lives behind
 // @workspace/integrations-openai-ai-server). chat.completions.create returns
 // a union including streaming responses; the non-streaming branch carries
-// the typed `usage` field we accumulate.
+// the typed `usage` field we accumulate across retry attempts.
 type ChatCompletionUsage = NonNullable<
   Extract<
     Awaited<ReturnType<typeof openai.chat.completions.create>>,
@@ -13,9 +13,48 @@ type ChatCompletionUsage = NonNullable<
 import { logger } from "./logger.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { extractKeyframes, compressForVLM, type KeyframeMetrics } from "./keyframes.js";
+import {
+  extractKeyframes,
+  compressForVLM,
+  areAllFramesTooDark,
+  type KeyframeMetrics,
+} from "./keyframes.js";
 import { db, aiScoringMetricsTable, type EnvironmentType } from "@workspace/db";
 import { loadEffectiveVlmModel } from "./ai-settings.js";
+
+/**
+ * Distinct, operator-actionable error codes raised when the scoring pipeline
+ * cannot produce a result. These map 1:1 to the toast copy in
+ * `artifacts/five-s/src/pages/operator.tsx → buildUploadErrorToast` so the
+ * operator sees a hint they can act on (re-aim the camera, retry in a
+ * minute, capture more light) instead of a generic "submission failed".
+ *
+ * The route handler in `submissions.ts` catches `ScoringError` and maps
+ * `code` to the response body's `code` field; older clients that don't
+ * recognise a new code fall back to the API's `hint` string.
+ */
+export type ScoringErrorCode =
+  | "VIDEO_UNREADABLE"
+  | "AI_RATE_LIMITED"
+  | "AI_TIMEOUT"
+  | "AI_MALFORMED"
+  | "FRAMES_TOO_DARK";
+
+export class ScoringError extends Error {
+  readonly code: ScoringErrorCode;
+  /**
+   * Whether the operator should retry the same capture (true: transient
+   * upstream issue) or fix the capture itself first (false: dark frames,
+   * unreadable video, model wouldn't yield JSON).
+   */
+  readonly retryable: boolean;
+  constructor(code: ScoringErrorCode, message: string, retryable: boolean) {
+    super(message);
+    this.name = "ScoringError";
+    this.code = code;
+    this.retryable = retryable;
+  }
+}
 
 type Severity = "high" | "medium" | "low";
 
@@ -404,38 +443,304 @@ interface ScoringMetricExtras {
 }
 
 /**
+ * Final state of a single callVLM() invocation. Persisted on the
+ * ai_scoring_metrics row so the dashboard / on-call can group failures by
+ * cause without joining against the audit log.
+ *
+ * - "success": JSON validated cleanly (possibly after JSON-shape retries).
+ * - "malformed": JSON-validation retries exhausted; ScoringError thrown.
+ * - "rate_limited": OpenAI 429 surfaced after transient retries exhausted.
+ * - "timeout": per-attempt AbortController timeout fired and transient
+ *              retries exhausted, OR the SDK reported a request timeout.
+ * - "transient_failure": connection error / 5xx persisted past all
+ *              transient retries (and wasn't a clear rate-limit/timeout).
+ */
+type ScoringOutcome =
+  | "success"
+  | "malformed"
+  | "rate_limited"
+  | "timeout"
+  | "transient_failure";
+
+interface ScoringMetricRecord {
+  modelVersion: string;
+  retried: boolean;
+  validationError: string | null;
+  jsonAttempts: number;
+  transientAttempts: number;
+  outcome: ScoringOutcome;
+  elapsedMs: number;
+  // Cost / latency fields (Task #166). Summed across every chat.completions
+  // attempt the call made (transient retries + JSON-validation retries).
+  // Nullable when the proxy didn't surface usage / when the call threw
+  // before the first response landed.
+  latencyMs: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+}
+
+/**
  * Append one row to `ai_scoring_metrics` describing the outcome of a VLM
  * call. Logging the metric is best-effort: a DB hiccup must never break
  * scoring, so we swallow errors and emit a warning instead.
  *
- * `extras` carries the wall-clock duration of the model call (summed across
- * the optional one-shot retry) plus the token-usage figures the proxy
- * reported. They live on the same row as `retried` so the dashboard can
- * group cost/latency by `modelVersion` against the same denominator the
- * retry-rate panel already uses.
+ * The row carries both the reliability counters (jsonAttempts /
+ * transientAttempts / outcome from Task #203) and the cost/latency figures
+ * (latencyMs / *Tokens from Task #166) so the dashboard can group both
+ * "did this call cost us extra retries" and "what did this call cost in
+ * tokens/time" by `modelVersion` against the same denominator.
  */
-async function recordScoringMetric(
-  modelVersion: string,
-  retried: boolean,
-  validationError: string | null,
-  extras: ScoringMetricExtras,
-): Promise<void> {
+async function recordScoringMetric(rec: ScoringMetricRecord): Promise<void> {
   try {
     await db.insert(aiScoringMetricsTable).values({
-      modelVersion,
-      retried,
-      validationError: validationError
-        ? validationError.slice(0, VALIDATION_ERROR_MAX)
+      modelVersion: rec.modelVersion,
+      retried: rec.retried,
+      validationError: rec.validationError
+        ? rec.validationError.slice(0, VALIDATION_ERROR_MAX)
         : null,
+      jsonAttempts: rec.jsonAttempts,
+      transientAttempts: rec.transientAttempts,
+      outcome: rec.outcome,
+      elapsedMs: rec.elapsedMs,
       callKind: "scoring",
-      latencyMs: extras.latencyMs,
-      promptTokens: extras.promptTokens,
-      completionTokens: extras.completionTokens,
-      totalTokens: extras.totalTokens,
+      latencyMs: rec.latencyMs,
+      promptTokens: rec.promptTokens,
+      completionTokens: rec.completionTokens,
+      totalTokens: rec.totalTokens,
     });
   } catch (err) {
     logger.warn({ err }, "failed to record AI scoring metric");
   }
+}
+
+/**
+ * Maximum number of JSON-validation attempts. Each attempt is a fresh
+ * round-trip whose response is parsed and validated against the schema; on
+ * failure the prior turns are appended to the message history (with the
+ * skeleton spelled out) and the next attempt runs. After this many shots
+ * we give up and surface AI_MALFORMED to the operator.
+ */
+const MAX_JSON_ATTEMPTS = 3;
+
+/**
+ * Maximum number of *transient-error* retries per single API call (counted
+ * separately from JSON-validation retries). A 429, 5xx, network error, or
+ * per-attempt timeout triggers a backoff retry up to this many times.
+ *
+ * Total upper bound on calls per scoring is roughly
+ * MAX_JSON_ATTEMPTS * (1 + MAX_TRANSIENT_RETRIES); paired with the
+ * per-attempt timeout below it caps worst-case latency.
+ */
+const MAX_TRANSIENT_RETRIES = 3;
+
+/**
+ * Backoff schedule (ms) between transient retries. Indexed by retry attempt
+ * number — the first retry sleeps TRANSIENT_BACKOFF_MS[0], etc. Picked to
+ * match the task spec (1s/2s/4s) while staying inside the per-attempt
+ * timeout so a slow recovery doesn't compound.
+ */
+const TRANSIENT_BACKOFF_MS = [1_000, 2_000, 4_000];
+
+/**
+ * Per-attempt wall-clock budget for a single OpenAI request. We pass an
+ * AbortSignal as the second arg to `chat.completions.create` so this stays
+ * out of the request body (the gpt-5 EXPECTED_REQUEST_KEYS allowlist is
+ * locked by the vlm-request unit test).
+ *
+ * Override via `VLM_TIMEOUT_MS` for environments with chronically slow
+ * upstream paths.
+ */
+function getVlmTimeoutMs(): number {
+  const raw = Number(process.env.VLM_TIMEOUT_MS);
+  // Tightened from 40s → 20s per attempt. Combined with MAX_TRANSIENT_RETRIES=3
+  // and the overall VLM deadline below, this caps the worst-case time we
+  // can spend on a single VLM call (across all transient retries) at well
+  // under 90s, so a hung upstream surfaces as AI_TIMEOUT to the operator
+  // quickly rather than wedging a request.
+  return Number.isFinite(raw) && raw > 0 ? raw : 20_000;
+}
+
+/**
+ * Hard ceiling on total wall-clock for the transient-retry loop in
+ * `callOpenAIWithTransientRetries`, including backoff sleeps. If exceeded
+ * we stop retrying and surface AI_TIMEOUT — better to give the operator a
+ * fast failure they can re-shoot than to keep the request open while we
+ * chain attempts past the latency budget.
+ *
+ * Override via `VLM_OVERALL_DEADLINE_MS`.
+ */
+function getVlmOverallDeadlineMs(): number {
+  const raw = Number(process.env.VLM_OVERALL_DEADLINE_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 50_000;
+}
+
+// We deliberately classify OpenAI SDK errors by structural duck-typing
+// (name + status) rather than `instanceof RateLimitError` etc. The api-server
+// package doesn't directly depend on `openai` — it goes through the
+// `@workspace/integrations-openai-ai-server` re-export — so importing the
+// SDK's error classes here would be a brittle cross-package coupling.
+// The shape we read (.name, .status) is part of the SDK's public contract.
+function readStatus(err: unknown): number | undefined {
+  const s = (err as { status?: unknown } | null)?.status;
+  return typeof s === "number" ? s : undefined;
+}
+function readName(err: unknown): string | undefined {
+  const n = (err as { name?: unknown } | null)?.name;
+  return typeof n === "string" ? n : undefined;
+}
+
+function isRateLimitError(err: unknown): boolean {
+  if (readName(err) === "RateLimitError") return true;
+  if (readStatus(err) === 429) return true;
+  return false;
+}
+
+function isServerError(err: unknown): boolean {
+  const status = readStatus(err);
+  return typeof status === "number" && status >= 500 && status < 600;
+}
+
+function isConnectionError(err: unknown): boolean {
+  const name = readName(err);
+  if (name === "APIConnectionError" || name === "APIConnectionTimeoutError") return true;
+  // Node's fetch sometimes surfaces a generic TypeError("fetch failed") when
+  // the socket dies mid-request. Match by name + message so we don't depend
+  // on a specific node-fetch internal.
+  if (name === "TypeError" || name === "FetchError") {
+    const msg = (err as { message?: unknown } | null)?.message;
+    if (typeof msg === "string" && /fetch|network|ECONN|socket/i.test(msg)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isAbortError(err: unknown): boolean {
+  const name = readName(err);
+  return name === "AbortError" || name === "APIUserAbortError" || name === "TimeoutError";
+}
+
+/**
+ * Sleep with `unref()` so a pending backoff doesn't hold the event loop
+ * open if the worker is being torn down. Kept inline so the retry loop is
+ * self-contained.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    t.unref?.();
+  });
+}
+
+/**
+ * Issue one OpenAI request with transient-error backoff and a per-attempt
+ * AbortController timeout. Returns the response and the number of attempts
+ * actually made (1 = first try succeeded; 4 = exhausted MAX_TRANSIENT_RETRIES).
+ *
+ * Throws `ScoringError("AI_RATE_LIMITED" | "AI_TIMEOUT" | …)` when retries
+ * exhaust without a successful response. Permanent errors (4xx other than
+ * 429, JSON-shape errors raised by us, etc) bubble up unchanged so the
+ * caller can decide whether to fail-fast or wrap them differently.
+ */
+async function callOpenAIWithTransientRetries(
+  body: Record<string, unknown>,
+  opts: { timeoutMs: number; counter?: { attempts: number }; overallDeadlineMs?: number },
+): Promise<{ resp: any; attempts: number; firstError: unknown | null }> {
+  let lastErr: unknown = null;
+  let firstError: unknown = null;
+  const overallDeadlineMs = opts.overallDeadlineMs ?? getVlmOverallDeadlineMs();
+  const startedAt = Date.now();
+  // External counter lets the caller observe attempt count even when this
+  // function throws (otherwise the metric row would record 0 transient
+  // attempts on a rate-limit/timeout failure, masking the very upstream
+  // instability the dashboard should surface).
+  if (opts.counter) opts.counter.attempts = 0;
+  for (let attempt = 0; attempt <= MAX_TRANSIENT_RETRIES; attempt++) {
+    if (opts.counter) opts.counter.attempts = attempt + 1;
+    // Per-attempt deadline: shrink the AbortController timeout so an
+    // attempt can never push us past the overall deadline. If we've
+    // already exceeded the deadline, don't even start a new request.
+    const remaining = overallDeadlineMs - (Date.now() - startedAt);
+    if (remaining <= 0) {
+      // Synthesize a TimeoutError so the classification below funnels into
+      // AI_TIMEOUT rather than a generic transient_failure.
+      lastErr = Object.assign(new Error("VLM overall deadline exceeded before next attempt"), { name: "TimeoutError" });
+      break;
+    }
+    const perAttemptTimeoutMs = Math.min(opts.timeoutMs, remaining);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), perAttemptTimeoutMs);
+    timer.unref?.();
+    try {
+      const resp = await openai.chat.completions.create(body as any, {
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      return { resp, attempts: attempt + 1, firstError };
+    } catch (err) {
+      clearTimeout(timer);
+      lastErr = err;
+      if (firstError === null) firstError = err;
+      const aborted = controller.signal.aborted;
+      const transient =
+        aborted ||
+        isAbortError(err) ||
+        isRateLimitError(err) ||
+        isServerError(err) ||
+        isConnectionError(err);
+      if (!transient) {
+        // Permanent error (e.g. 400 bad request from us). Don't retry —
+        // bubble up so the caller's catch sees the real reason.
+        throw err;
+      }
+      if (attempt >= MAX_TRANSIENT_RETRIES) break;
+      const backoff = TRANSIENT_BACKOFF_MS[Math.min(attempt, TRANSIENT_BACKOFF_MS.length - 1)];
+      // Don't sleep past the overall deadline either — bail straight into
+      // the structured AI_TIMEOUT rather than burning the budget on a
+      // backoff we can't honor.
+      if (Date.now() - startedAt + backoff >= overallDeadlineMs) {
+        logger.warn(
+          { attempt: attempt + 1, elapsedMs: Date.now() - startedAt, overallDeadlineMs },
+          "VLM overall deadline reached during backoff; giving up",
+        );
+        break;
+      }
+      logger.warn(
+        {
+          attempt: attempt + 1,
+          backoffMs: backoff,
+          aborted,
+          errName: readName(err),
+          errStatus: readStatus(err),
+        },
+        "VLM transient error; backing off and retrying",
+      );
+      await sleep(backoff);
+    }
+  }
+  // Out of retries — classify and rethrow as a structured ScoringError.
+  if (isRateLimitError(lastErr)) {
+    throw new ScoringError(
+      "AI_RATE_LIMITED",
+      `OpenAI rate-limited after ${MAX_TRANSIENT_RETRIES + 1} attempts`,
+      true,
+    );
+  }
+  // AbortError from our timeout, or a generic timeout reported by the SDK.
+  if (isAbortError(lastErr)) {
+    throw new ScoringError(
+      "AI_TIMEOUT",
+      `VLM call timed out after ${MAX_TRANSIENT_RETRIES + 1} attempts (${opts.timeoutMs}ms each)`,
+      true,
+    );
+  }
+  // Connection / 5xx persisted — also user-recoverable on retry.
+  throw new ScoringError(
+    "AI_TIMEOUT",
+    `VLM upstream failure persisted after ${MAX_TRANSIENT_RETRIES + 1} attempts: ${(lastErr as Error)?.message ?? "unknown error"}`,
+    true,
+  );
 }
 
 export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
@@ -486,7 +791,7 @@ export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
   // ~6k tokens of headroom for the full reasoning + 5 per-pillar reasonings
   // + up to 8 issues + 8 recommendations + the profile block, with margin
   // for complex scenes that need extra reasoning. gpt-5-mini reasons less
-  // than flagship gpt-5, so the headroom is comfortable.
+  // than flagship gpt-5, so the headroom is comfortable. (Task #124.)
   const baseRequest = {
     model,
     response_format: { type: "json_object" as const },
@@ -500,18 +805,43 @@ export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
     { role: "user", content: baseContent },
   ];
 
-  // Wall-clock + token usage are accumulated across the optional retry so
-  // the metric row reflects the FULL cost/latency of the audit, not just
-  // the first attempt. recordScoringMetric persists one row per callVLM().
-  let totalLatencyMs = 0;
+  // Skeleton appended to every corrective turn so the model has the exact
+  // shape in front of it — repeating it is cheap and avoids the model
+  // re-inventing keys between attempts. Kept verbatim from the
+  // single-shot retry copy that shipped originally so a future reader can
+  // diff the two cleanly.
+  const JSON_SKELETON = `Re-emit the COMPLETE response as valid JSON in exactly this shape (no prose outside the JSON object):
+{
+  "reasoning": { "sort": string, "set": string, "shine": string, "standardize": string, "sustain": string },
+  "pillar_scores": { "sort": 0-5, "set": 0-5, "shine": 0-5, "standardize": 0-5, "sustain": 0-5 },
+  "issues": [...],
+  "recommendations": [...],
+  "profile": { "items": [...], "machines": [...], "layout": [...], "observedIssues": [...], "summary": "..." }
+}`;
+
+  const startedAt = Date.now();
+  const timeoutMs = getVlmTimeoutMs();
+
+  let parsed: any = null;
+  let validationError: string | null = null;
+  // First validation error we observed; mirrors the dashboard's prior
+  // semantics ("retried" + the original failure message).
+  let firstValidationError: string | null = null;
+  let jsonAttempts = 0;
+  let transientAttemptsTotal = 0;
+  let outcome: ScoringOutcome = "success";
+
+  // Cost / latency accumulators (Task #166). `latencyMs` here is the
+  // time the model proxy held our chat.completions requests, summed across
+  // every transient + JSON-retry attempt. The token totals come from the
+  // proxy's `response.usage`; we guard with Number.isFinite so a missing
+  // field becomes "we don't know" instead of poisoning the running totals
+  // with NaN.
+  let latencyMs = 0;
   let promptTokens: number | null = null;
   let completionTokens: number | null = null;
   let totalTokens: number | null = null;
-  // The proxy is allowed to drop usage fields (e.g. on stream-style
-  // responses or when the upstream gateway didn't surface them); guard with
-  // Number.isFinite so a missing field becomes "we don't know" instead of
-  // poisoning the running totals with NaN.
-  function accumulateUsage(usage: ChatCompletionUsage | undefined): void {
+  const accumulateUsage = (usage: ChatCompletionUsage | undefined): void => {
     if (!usage) return;
     const p = Number(usage.prompt_tokens);
     const c = Number(usage.completion_tokens);
@@ -519,92 +849,105 @@ export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
     if (Number.isFinite(p)) promptTokens = (promptTokens ?? 0) + p;
     if (Number.isFinite(c)) completionTokens = (completionTokens ?? 0) + c;
     if (Number.isFinite(t)) totalTokens = (totalTokens ?? 0) + t;
-  }
+  };
 
-  const t0 = Date.now();
-  const firstResp = await openai.chat.completions.create({ ...baseRequest, messages });
-  totalLatencyMs += Date.now() - t0;
-  accumulateUsage(firstResp.usage);
-  const firstText = firstResp.choices[0]?.message?.content || "{}";
-
-  let parsed: any;
-  let validationError: string | null;
   try {
-    parsed = JSON.parse(firstText);
-    validationError = validateVlmJson(parsed);
-  } catch (err) {
-    parsed = null;
-    validationError = `response was not valid JSON: ${(err as Error).message}`;
-  }
-
-  // Capture whether the first attempt was clean BEFORE the retry mutates
-  // `validationError`. We persist a single metric row per callVLM at the
-  // bottom of this function reflecting first-attempt outcome — that's what
-  // the dashboard's retry-rate stat reads from.
-  const firstAttemptError = validationError;
-  // Use try/finally so the metric row is written even if the retry HTTP call
-  // itself throws (network error, upstream 5xx, etc). Otherwise the dashboard
-  // would silently undercount retries during exactly the kind of upstream
-  // instability we want it to surface.
-  let metricRecorded = false;
-  try {
-    // One automatic retry with a stricter prompt naming exactly what was wrong.
-    // We keep the original user content/images so the model isn't asked to
-    // re-imagine anything — only to re-emit valid JSON.
-    if (validationError) {
-      logger.warn({ validationError, modelVersion }, "VLM JSON validation failed; retrying once");
-      const retryMessages: any[] = [
-        ...messages,
-        { role: "assistant", content: firstText },
-        {
-          role: "user",
-          content:
-`Your previous JSON failed validation: ${validationError}.
-
-Re-emit the COMPLETE response as valid JSON in exactly the documented shape. The required fields are:
-- "reasoning": { "sort": string, "set": string, "shine": string, "standardize": string, "sustain": string }
-- "pillar_scores": { "sort": 0-5, "set": 0-5, "shine": 0-5, "standardize": 0-5, "sustain": 0-5 }
-- "issues": array (may be empty)
-- "recommendations": array (may be empty)
-- "profile": object
-
-Do not include any prose outside the JSON object.`,
-        },
-      ];
-
-      const tRetry = Date.now();
-      const retryResp = await openai.chat.completions.create({ ...baseRequest, messages: retryMessages });
-      totalLatencyMs += Date.now() - tRetry;
-      accumulateUsage(retryResp.usage);
-      const retryText = retryResp.choices[0]?.message?.content || "{}";
+    for (let i = 0; i < MAX_JSON_ATTEMPTS; i++) {
+      jsonAttempts++;
+      // External counter so we can charge transient attempts to the metric
+      // row even when the helper throws (rate-limit/timeout exhaustion).
+      const counter = { attempts: 0 };
+      let resp: any;
+      const tCall = Date.now();
       try {
-        parsed = JSON.parse(retryText);
+        // Clone `messages` per call so each captured request body keeps its
+        // own snapshot of the conversation. Without this, the JSON-retry
+        // path would mutate the array reference held by previous mock
+        // .calls[i] entries — a subtle source of confusion for tests
+        // that inspect prior payloads after a retry.
+        ({ resp } = await callOpenAIWithTransientRetries(
+          { ...baseRequest, messages: [...messages] },
+          { timeoutMs, counter },
+        ));
+      } finally {
+        transientAttemptsTotal += counter.attempts;
+        // Charge wall-clock for this JSON attempt to the latency total
+        // even when the transient helper threw — a request we sent and
+        // waited on still cost time, and the dashboard panel is most
+        // useful when failures show up in latency too.
+        latencyMs += Date.now() - tCall;
+      }
+      accumulateUsage(resp?.usage);
+      const text = resp.choices[0]?.message?.content || "{}";
+
+      try {
+        parsed = JSON.parse(text);
         validationError = validateVlmJson(parsed);
       } catch (err) {
-        validationError = `retry was not valid JSON: ${(err as Error).message}`;
+        parsed = null;
+        validationError = `response was not valid JSON: ${(err as Error).message}`;
       }
-      if (validationError) {
-        await recordScoringMetric(modelVersion, true, firstAttemptError, {
-          latencyMs: totalLatencyMs,
-          promptTokens,
-          completionTokens,
-          totalTokens,
-        });
-        metricRecorded = true;
-        throw new Error(`VLM returned invalid JSON after one retry: ${validationError}`);
-      }
-    }
-  } finally {
-    if (!metricRecorded) {
-      // One row per callVLM. We don't block on this — failing to log a metric
-      // must never break scoring (recordScoringMetric swallows its own errors).
-      await recordScoringMetric(modelVersion, firstAttemptError !== null, firstAttemptError, {
-        latencyMs: totalLatencyMs,
-        promptTokens,
-        completionTokens,
-        totalTokens,
+
+      if (i === 0) firstValidationError = validationError;
+      if (!validationError) break;
+
+      logger.warn(
+        { validationError, attempt: i + 1, modelVersion },
+        "VLM JSON validation failed; will retry",
+      );
+
+      // Append a corrective turn that names exactly what was wrong AND
+      // includes the full skeleton so each subsequent attempt has the
+      // contract in front of it (some models drop fields after several
+      // turns when only the prior assistant reply is visible).
+      messages.push({ role: "assistant", content: text });
+      messages.push({
+        role: "user",
+        content: `Your previous JSON failed validation: ${validationError}.\n\n${JSON_SKELETON}`,
       });
     }
+
+    if (validationError) {
+      outcome = "malformed";
+      throw new ScoringError(
+        "AI_MALFORMED",
+        `VLM returned invalid JSON after ${MAX_JSON_ATTEMPTS} attempts: ${validationError}`,
+        false,
+      );
+    }
+  } catch (err) {
+    if (err instanceof ScoringError) {
+      // Outcome was set above (malformed) or by the transient helper —
+      // map by code so the metric row reflects the operator-visible bucket.
+      if (outcome === "success") {
+        outcome =
+          err.code === "AI_RATE_LIMITED" ? "rate_limited" :
+          err.code === "AI_TIMEOUT" ? "timeout" :
+          err.code === "AI_MALFORMED" ? "malformed" :
+          "transient_failure";
+      }
+    } else {
+      outcome = "transient_failure";
+    }
+    throw err;
+  } finally {
+    const elapsedMs = Date.now() - startedAt;
+    // One row per callVLM, regardless of success/failure path — keeps the
+    // dashboard's denominator honest during the exact upstream instability
+    // we want it to surface.
+    await recordScoringMetric({
+      modelVersion,
+      retried: jsonAttempts > 1 || transientAttemptsTotal > 1,
+      validationError: firstValidationError,
+      jsonAttempts,
+      transientAttempts: transientAttemptsTotal,
+      outcome,
+      elapsedMs,
+      latencyMs: latencyMs > 0 ? latencyMs : null,
+      promptTokens,
+      completionTokens,
+      totalTokens,
+    });
   }
 
   const ps = parsed.pillar_scores || {};
@@ -684,75 +1027,94 @@ async function scoreSubmissionDefault(input: ScoringInput): Promise<ScoringOutpu
     ? input.mediaAbsPath
     : path.join(uploadsDir, path.basename(input.mediaAbsPath));
 
-  let framePaths: string[];
-  let frameUrls: string[];
+  let framePaths: string[] = [];
+  let frameUrls: string[] = [];
   let keyframeMetrics: KeyframeMetrics | undefined;
+  // Tracks every temp/derivative file the pipeline writes so the `finally`
+  // can sweep them when scoring throws (otherwise a long string of
+  // unscoreable submissions would leak inspector frames into uploads/).
+  // For successful video submissions the survivors are intentionally kept
+  // because we persist them as evidence URLs on the submission row.
+  const ephemeralPaths = new Set<string>();
+  let succeeded = false;
 
-  if (input.mediaType === "video") {
-    try {
-      const kf = await extractKeyframes(fullMediaPath, { maxFrames: 6 });
-      framePaths = kf.frameAbsPaths;
-      frameUrls = kf.frameUrls;
-      keyframeMetrics = kf.metrics;
+  try {
+    if (input.mediaType === "video") {
+      try {
+        const kf = await extractKeyframes(fullMediaPath, { maxFrames: 6 });
+        framePaths = kf.frameAbsPaths;
+        frameUrls = kf.frameUrls;
+        keyframeMetrics = kf.metrics;
+        for (const p of framePaths) ephemeralPaths.add(p);
+      } catch (err) {
+        logger.error({ err }, "Keyframe extraction threw");
+        throw new ScoringError(
+          "VIDEO_UNREADABLE",
+          err instanceof Error ? err.message : "Keyframe extraction failed.",
+          false,
+        );
+      }
       if (framePaths.length === 0) {
-        // Fall back to the raw video file as a single still won't work; bail to fallback.
-        const fb = emptyResult("No keyframes could be extracted from the video.");
-        return { ...fb, keyframeUrls: [], keyframeMetrics, vlmMs: null };
+        // Aggressive 3-level fallback inside extractKeyframes already ran —
+        // if we still have nothing the file genuinely cannot be decoded.
+        throw new ScoringError(
+          "VIDEO_UNREADABLE",
+          "No frames could be decoded from the video.",
+          false,
+        );
       }
-    } catch (err) {
-      logger.error({ err }, "Keyframe extraction failed");
-      const fb = emptyResult("Keyframe extraction failed.");
-      return { ...fb, keyframeUrls: [], vlmMs: null };
-    }
-  } else {
-    // Image submissions: shrink + recompress before the VLM call so the
-    // base64 payload stays small. We MUST NOT rewrite the original upload in
-    // place — uploads can be PNG/HEIC/WebP and the file URL we hand back to
-    // operators uses the original extension/MIME. Always write a sibling
-    // `.vlm.jpg` derivative used solely for the VLM call and clean it up
-    // afterwards.
-    const ext = path.extname(fullMediaPath).toLowerCase();
-    const isJpeg = ext === ".jpg" || ext === ".jpeg";
-    let vlmDerivative: string | null = null;
-    let vlmPath = fullMediaPath;
-    try {
-      if (isJpeg) {
-        // Already a JPEG — safe to compress in place; the served URL stays valid.
-        vlmPath = await compressForVLM(fullMediaPath);
-      } else {
-        vlmDerivative = fullMediaPath + ".vlm.jpg";
-        vlmPath = await compressForVLM(fullMediaPath, vlmDerivative);
+
+      const { allDark, perFrame } = await areAllFramesTooDark(framePaths);
+      if (allDark) {
+        logger.warn(
+          { perFrame, framePaths },
+          "All extracted keyframes are below the luminance threshold",
+        );
+        throw new ScoringError(
+          "FRAMES_TOO_DARK",
+          "Every extracted frame is too dark for the model to score.",
+          false,
+        );
       }
-    } catch (err) {
-      logger.warn({ err }, "image compress failed; sending original");
+    } else {
+      // Image submissions: shrink + recompress before the VLM call so the
+      // base64 payload stays small. We MUST NOT rewrite the original upload
+      // in place — uploads can be PNG/HEIC/WebP and the file URL we hand
+      // back to operators uses the original extension/MIME. Always write a
+      // sibling `.vlm.jpg` derivative used solely for the VLM call and
+      // clean it up afterwards.
+      const ext = path.extname(fullMediaPath).toLowerCase();
+      const isJpeg = ext === ".jpg" || ext === ".jpeg";
+      let vlmPath = fullMediaPath;
+      try {
+        if (isJpeg) {
+          vlmPath = await compressForVLM(fullMediaPath);
+        } else {
+          const derivative = fullMediaPath + ".vlm.jpg";
+          vlmPath = await compressForVLM(fullMediaPath, derivative);
+          if (vlmPath === derivative) ephemeralPaths.add(derivative);
+        }
+      } catch (err) {
+        logger.warn({ err }, "image compress failed; sending original");
+      }
+      framePaths = [vlmPath];
+      frameUrls = [];
+
+      const { allDark, perFrame } = await areAllFramesTooDark(framePaths);
+      if (allDark) {
+        logger.warn(
+          { perFrame, framePaths },
+          "Image is below the luminance threshold",
+        );
+        throw new ScoringError(
+          "FRAMES_TOO_DARK",
+          "The image is too dark for the model to score.",
+          false,
+        );
+      }
     }
-    framePaths = [vlmPath];
-    frameUrls = [];
 
     const tVlm = Date.now();
-    try {
-      const result = await callVLM({
-        framePaths,
-        areaName: input.areaName,
-        machineTag: input.machineTag,
-        learnedProfile: input.learnedProfile,
-        environmentType: input.environmentType,
-      });
-      const vlmMs = Date.now() - tVlm;
-      return { ...result, keyframeUrls: frameUrls, vlmMs };
-    } catch (err) {
-      logger.error({ err }, "VLM scoring failed");
-      const fb = emptyResult(err instanceof Error ? err.message : "VLM error");
-      return { ...fb, keyframeUrls: frameUrls, vlmMs: null };
-    } finally {
-      if (vlmDerivative && fs.existsSync(vlmDerivative)) {
-        try { fs.unlinkSync(vlmDerivative); } catch { /* best-effort */ }
-      }
-    }
-  }
-
-  const tVlm = Date.now();
-  try {
     const result = await callVLM({
       framePaths,
       areaName: input.areaName,
@@ -761,10 +1123,9 @@ async function scoreSubmissionDefault(input: ScoringInput): Promise<ScoringOutpu
       environmentType: input.environmentType,
     });
     const vlmMs = Date.now() - tVlm;
-    // For video submissions, fold the VLM call time into the same structured
-    // event as the keyframe metrics so an operator/manager sees one combined
-    // line per audit covering ffmpeg → dedup → compress → VLM.
+
     if (keyframeMetrics) {
+      // Combined per-audit structured event: ffmpeg → dedup → compress → VLM.
       logger.info(
         {
           event: "video_analysis",
@@ -776,11 +1137,21 @@ async function scoreSubmissionDefault(input: ScoringInput): Promise<ScoringOutpu
         "video analysis completed",
       );
     }
+
+    succeeded = true;
     return { ...result, keyframeUrls: frameUrls, keyframeMetrics, vlmMs };
-  } catch (err) {
-    logger.error({ err }, "VLM scoring failed");
-    const fb = emptyResult(err instanceof Error ? err.message : "VLM error");
-    return { ...fb, keyframeUrls: frameUrls, keyframeMetrics, vlmMs: null };
+  } finally {
+    // For video: only sweep the keyframes we extracted if the pipeline
+    // failed (so we don't leak evidence frames into uploads/). For images:
+    // always sweep the .vlm.jpg derivative — it never appears as evidence.
+    for (const p of ephemeralPaths) {
+      const isImageDerivative = p.endsWith(".vlm.jpg");
+      if (!succeeded || isImageDerivative) {
+        if (fs.existsSync(p)) {
+          try { fs.unlinkSync(p); } catch { /* best-effort */ }
+        }
+      }
+    }
   }
 }
 

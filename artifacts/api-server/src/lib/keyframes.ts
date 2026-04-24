@@ -217,7 +217,29 @@ export async function compressForVLM(
  */
 function getFfmpegTimeoutMs(): number {
   const raw = Number(process.env.FFMPEG_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : 60_000;
+  // Tightened from the original 60s → 30s → 12s. Operators see "your
+  // submission failed" at a request-level granularity, so a single
+  // hung ffmpeg pass that holds an API worker for ≥30s blows past the
+  // perceived-latency budget even before VLM runs. With three sequential
+  // passes (scene → interval → last-ditch) capped at 12s each, plus the
+  // overall keyframes deadline below, worst-case wall-clock for the whole
+  // extraction stays under ~36s. Tests/operators can still bump this via
+  // the env var on especially slow CI hardware.
+  return Number.isFinite(raw) && raw > 0 ? raw : 12_000;
+}
+
+/**
+ * Hard ceiling on total wall-clock for `extractKeyframes` across all three
+ * fallback passes. Keeps the request-level latency bounded even when each
+ * individual pass finishes just under its own timeout. If exceeded between
+ * passes we stop trying and let the caller surface VIDEO_UNREADABLE rather
+ * than chaining timeouts indefinitely.
+ *
+ * Override via `KEYFRAMES_OVERALL_DEADLINE_MS`.
+ */
+function getKeyframesOverallDeadlineMs(): number {
+  const raw = Number(process.env.KEYFRAMES_OVERALL_DEADLINE_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 35_000;
 }
 
 /**
@@ -235,55 +257,92 @@ function getFfmpegBin(): string {
  * produced (sorted). Throws on non-zero exit OR on timeout (so callers can
  * fall back to a different sampling strategy or to single-frame mode).
  */
+/**
+ * Sweep any files under UPLOAD_DIR whose name starts with `${idPrefix}_` and
+ * ends with `.jpg`. Used in two places:
+ *
+ *  1. As a `finally` cleanup inside `runFfmpeg` when the spawn throws or
+ *     times out — ffmpeg may have flushed N partial frames before SIGKILL,
+ *     and we never want those to leak into uploads/.
+ *  2. As a defensive pass inside `extractKeyframes` if the overall pipeline
+ *     throws after ffmpeg succeeded but before survivors were promoted to
+ *     evidence (e.g. dedup or compress crashed).
+ *
+ * Best-effort: a missing UPLOAD_DIR or transient EBUSY on a single file
+ * never propagates — we don't want cleanup to mask the real underlying
+ * error from the caller.
+ */
+function sweepIdPrefix(idPrefix: string): void {
+  let files: string[] = [];
+  try {
+    files = fs.readdirSync(UPLOAD_DIR);
+  } catch {
+    return;
+  }
+  for (const f of files) {
+    if (f.startsWith(`${idPrefix}_`) && f.endsWith(".jpg")) {
+      try { fs.unlinkSync(path.join(UPLOAD_DIR, f)); } catch { /* best-effort */ }
+    }
+  }
+}
+
 async function runFfmpeg(videoAbsPath: string, vfilter: string, maxCandidates: number, idPrefix: string): Promise<string[]> {
   const pattern = path.join(UPLOAD_DIR, `${idPrefix}_%03d.jpg`);
   const timeoutMs = getFfmpegTimeoutMs();
-  await new Promise<void>((resolve, reject) => {
-    const args = [
-      "-y",
-      "-i", videoAbsPath,
-      "-vf", vfilter,
-      "-vsync", "vfr",
-      // Cap raw candidate frames so ffmpeg short-circuits on long videos and
-      // the dedup pass never has to hash more than this many frames.
-      "-frames:v", String(maxCandidates),
-      "-q:v", "3",
-      pattern,
-    ];
-    const proc = spawn(getFfmpegBin(), args, { stdio: ["ignore", "ignore", "pipe"] });
-    let stderr = "";
-    let settled = false;
-    proc.stderr.on("data", (b) => { stderr += b.toString(); });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const args = [
+        "-y",
+        "-i", videoAbsPath,
+        "-vf", vfilter,
+        "-vsync", "vfr",
+        // Cap raw candidate frames so ffmpeg short-circuits on long videos and
+        // the dedup pass never has to hash more than this many frames.
+        "-frames:v", String(maxCandidates),
+        "-q:v", "3",
+        pattern,
+      ];
+      const proc = spawn(getFfmpegBin(), args, { stdio: ["ignore", "ignore", "pipe"] });
+      let stderr = "";
+      let settled = false;
+      proc.stderr.on("data", (b) => { stderr += b.toString(); });
 
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      logger.warn(
-        { videoAbsPath, vfilter, timeoutMs },
-        "ffmpeg invocation exceeded timeout; killing",
-      );
-      try { proc.kill("SIGKILL"); } catch { /* best-effort */ }
-      reject(new Error(`ffmpeg timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    timer.unref?.();
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        logger.warn(
+          { videoAbsPath, vfilter, timeoutMs },
+          "ffmpeg invocation exceeded timeout; killing",
+        );
+        try { proc.kill("SIGKILL"); } catch { /* best-effort */ }
+        reject(new Error(`ffmpeg timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      timer.unref?.();
 
-    proc.on("error", (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(err);
+      proc.on("error", (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      });
+      proc.on("close", (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-500)}`));
+      });
     });
-    proc.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-500)}`));
-    });
-  });
-  return fs.readdirSync(UPLOAD_DIR)
-    .filter((f) => f.startsWith(`${idPrefix}_`) && f.endsWith(".jpg"))
-    .sort();
+    return fs.readdirSync(UPLOAD_DIR)
+      .filter((f) => f.startsWith(`${idPrefix}_`) && f.endsWith(".jpg"))
+      .sort();
+  } catch (err) {
+    // ffmpeg may have flushed one or more partial JPEGs to disk before we
+    // SIGKILL'd it (or before it errored). Sweep them so a string of
+    // failures doesn't accumulate orphaned inspector frames in uploads/.
+    sweepIdPrefix(idPrefix);
+    throw err;
+  }
 }
 
 /**
@@ -361,6 +420,7 @@ export async function extractKeyframes(
   const fallbackInterval = opts.fallbackIntervalSec ?? 2;
   const maxCandidates = resolveCandidateCap(maxFrames, opts.maxCandidates);
   const id = crypto.randomUUID();
+  const overallDeadlineMs = getKeyframesOverallDeadlineMs();
 
   // Per-step timings let operators (and on-call) see exactly where a slow
   // walk-through went: scene detection vs. fallback sample vs. dedup vs.
@@ -371,30 +431,67 @@ export async function extractKeyframes(
   let fallbackSampleMs: number | undefined;
   let dedupMs = 0;
   let compressMs = 0;
+  // Track every ffmpeg-prefix used by this call so the outer `finally` can
+  // sweep any orphaned output if a later step (dedup/compress) throws after
+  // ffmpeg succeeded. Without this, a crash between ffmpeg-success and the
+  // explicit per-frame unlink loop further down would leak files.
+  const usedPrefixes: string[] = [];
+  let success = false;
 
+  try {
   // 1. Scene-change selection. Pre-scale to keep ffmpeg cheap.
   const sceneFilter = `select='gt(scene\\,${sceneThreshold})',scale=720:-2`;
   let candidates: string[] = [];
   const tScene = Date.now();
   try {
+    usedPrefixes.push(`${id}_s`);
     candidates = await runFfmpeg(videoAbsPath, sceneFilter, maxCandidates, `${id}_s`);
   } catch (err) {
     logger.warn({ err, videoAbsPath }, "scene-change ffmpeg pass failed");
   }
   sceneDetectMs = Date.now() - tScene;
 
-  // 2. Fallback to fixed interval if scene detection found nothing.
+  // 2. Fallback to fixed interval if scene detection found nothing AND we
+  //    still have headroom under the overall keyframes deadline. Otherwise
+  //    fail fast so the operator gets VIDEO_UNREADABLE instead of waiting
+  //    out another full per-pass timeout.
   let usedFallback = false;
-  if (candidates.length === 0) {
+  if (candidates.length === 0 && Date.now() - t0 < overallDeadlineMs) {
     usedFallback = true;
     const intervalFilter = `fps=1/${fallbackInterval},scale=720:-2`;
     const tFallback = Date.now();
     try {
+      usedPrefixes.push(`${id}_i`);
       candidates = await runFfmpeg(videoAbsPath, intervalFilter, maxCandidates, `${id}_i`);
     } catch (err) {
       logger.warn({ err, videoAbsPath }, "fallback interval ffmpeg pass failed");
     }
     fallbackSampleMs = Date.now() - tFallback;
+  }
+
+  // 3. Last-ditch fallback: same deadline guard — if we've already burned
+  //    the budget on the first two passes we don't start a third.
+  if (candidates.length === 0 && Date.now() - t0 < overallDeadlineMs) {
+    const lastDitchFilter = `scale=720:-2`;
+    const tLastDitch = Date.now();
+    try {
+      usedPrefixes.push(`${id}_l`);
+      // Cap raw output to maxFrames here — we don't need 18 candidates from
+      // an unfiltered grab, just *anything* the model can look at.
+      candidates = await runFfmpeg(
+        videoAbsPath,
+        lastDitchFilter,
+        maxFrames,
+        `${id}_l`,
+      );
+    } catch (err) {
+      logger.warn({ err, videoAbsPath }, "last-ditch ffmpeg pass failed");
+    }
+    // Fold this into fallbackSampleMs so the metric still reports total
+    // fallback wall-clock without inventing a new field. The ordering is
+    // documented above so an operator reading the structured log knows
+    // which pass took how long.
+    fallbackSampleMs = (fallbackSampleMs ?? 0) + (Date.now() - tLastDitch);
   }
 
   if (candidates.length === 0) {
@@ -414,6 +511,11 @@ export async function extractKeyframes(
       { event: KEYFRAME_LOG_EVENT, videoAbsPath, ...metrics },
       "Keyframe extraction produced no frames",
     );
+    // Treated as a successful "we tried, nothing to score" — runFfmpeg
+    // already swept its own partials on each pass failure, so there's
+    // nothing to clean up. Mark success so the outer finally doesn't
+    // re-sweep (no-op either way, but documents intent).
+    success = true;
     return { frameUrls: [], frameAbsPaths: [], metrics };
   }
 
@@ -478,11 +580,88 @@ export async function extractKeyframes(
     "keyframe extraction completed",
   );
 
+  success = true;
   return {
     frameUrls: survivors.map((f) => `/uploads/${f}`),
     frameAbsPaths: survivors.map((f) => path.join(UPLOAD_DIR, f)),
     metrics,
   };
+  } finally {
+    // If anything between ffmpeg-success and the return above threw (a
+    // sharp dHash crash, an unexpected fs error, etc.), sweep every
+    // prefix this call wrote to so partial outputs don't leak into the
+    // uploads directory. runFfmpeg already cleans on its own failure,
+    // so this is purely the post-ffmpeg crash path.
+    if (!success) {
+      for (const prefix of usedPrefixes) sweepIdPrefix(prefix);
+    }
+  }
+}
+
+/**
+ * Default minimum mean luminance (0–255) below which we declare a frame
+ * "too dark to score". Photos of an unlit room or lens-cap-on captures
+ * sit in the 0–10 range; a dim warehouse aisle is typically 40+. The
+ * threshold is conservative — we only flag captures the model could not
+ * meaningfully score, never marginal ones.
+ *
+ * Override via `FRAME_MIN_LUMINANCE` for site-specific calibration; the
+ * default is picked to err on the side of letting the call through.
+ */
+const DEFAULT_FRAME_MIN_LUMINANCE = 18;
+
+function getFrameMinLuminance(): number {
+  const raw = Number(process.env.FRAME_MIN_LUMINANCE);
+  return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_FRAME_MIN_LUMINANCE;
+}
+
+/**
+ * Compute the mean luminance (0–255) of an image by averaging sharp's
+ * per-channel mean stats. Returned as a number so callers can either
+ * threshold it or surface it in a structured log alongside the decision.
+ *
+ * Throws on unreadable input — the caller decides whether that's fatal
+ * (decoder error) or recoverable (skip this one frame).
+ */
+export async function computeMeanLuminance(absPath: string): Promise<number> {
+  const stats = await sharp(absPath).stats();
+  if (!stats.channels.length) return 0;
+  const sum = stats.channels.reduce((s, c) => s + c.mean, 0);
+  return sum / stats.channels.length;
+}
+
+/**
+ * Return true if EVERY supplied frame is below the luminance threshold.
+ * Caller passes already-extracted/compressed frames; the helper opens
+ * each to compute its mean and short-circuits as soon as any frame
+ * passes the threshold (so a single bright frame in a video keeps the
+ * submission scoreable).
+ *
+ * On a per-frame decode failure we treat that frame as "bright enough"
+ * — losing the brightness signal must never block a submission that
+ * the rest of the pipeline can still score.
+ */
+export async function areAllFramesTooDark(
+  framePaths: string[],
+  threshold: number = getFrameMinLuminance(),
+): Promise<{ allDark: boolean; perFrame: number[] }> {
+  if (framePaths.length === 0) return { allDark: false, perFrame: [] };
+  const perFrame: number[] = [];
+  let allDark = true;
+  for (const p of framePaths) {
+    let mean: number;
+    try {
+      mean = await computeMeanLuminance(p);
+    } catch (err) {
+      logger.warn({ err, framePath: p }, "luminance probe failed; treating as bright");
+      perFrame.push(NaN);
+      allDark = false;
+      continue;
+    }
+    perFrame.push(mean);
+    if (mean >= threshold) allDark = false;
+  }
+  return { allDark, perFrame };
 }
 
 // Exposed for tests.
