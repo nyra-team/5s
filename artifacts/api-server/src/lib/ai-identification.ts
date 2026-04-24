@@ -88,7 +88,7 @@ function buildProfileBlock(profiles: IdentificationAreaProfile[]): string {
     .join("\n\n");
 }
 
-async function callIdentificationVLM(
+export async function callIdentificationVLM(
   framePaths: string[],
   profiles: IdentificationAreaProfile[],
 ): Promise<IdentificationResult> {
