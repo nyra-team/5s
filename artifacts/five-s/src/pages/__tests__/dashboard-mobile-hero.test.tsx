@@ -82,6 +82,17 @@ vi.mock("@workspace/api-client-react", () => {
     }),
     useGetDashboardAiCost: noopQuery(undefined),
     useGetAreaDetectionAgreement: noopQuery(undefined),
+    useGetDashboardOperatorCoverage: noopQuery({ operators: [] }),
+    useGetBackfillReasoningStatus: noopQuery({ remaining: 0 }),
+    useBackfillReasoning: () => ({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(async () => undefined),
+      isPending: false,
+      isSuccess: false,
+      isError: false,
+      reset: vi.fn(),
+    }),
+    getGetBackfillReasoningStatusQueryKey: () => ["backfill-reasoning-status"],
     getGetDashboardOperatorDismissesDetailQueryKey: () => ["dismisses-detail"],
     getGetAreaProfileQueryKey: () => ["area-profile"],
   };

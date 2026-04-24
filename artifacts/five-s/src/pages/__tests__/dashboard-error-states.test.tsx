@@ -86,6 +86,7 @@ vi.mock("@workspace/api-client-react", () => {
     useGetDashboardOperatorDismissesDetail: () => ({ data: undefined, isLoading: false, isError: false }),
     getGetDashboardOperatorDismissesDetailQueryKey: () => ["dismisses-detail"],
     useGetAreaDetectionAgreement: () => ({ ...mockState.agreement, refetch: refetchAgreement }),
+    useGetDashboardOperatorCoverage: () => ({ data: { operators: [] }, isLoading: false, isError: false }),
     useGetBackfillReasoningStatus: () => ({ data: undefined, isLoading: false, isError: false }),
     useBackfillReasoning: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, isError: false, isSuccess: false, reset: vi.fn() }),
     getGetBackfillReasoningStatusQueryKey: () => ["backfill-reasoning-status"],

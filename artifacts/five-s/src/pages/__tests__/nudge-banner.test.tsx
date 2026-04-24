@@ -75,6 +75,8 @@ vi.mock("@workspace/api-client-react", () => {
     }),
     useGetOperatorStatus: stub("statuses"),
     useGetNextChecks: stub("nextChecks"),
+    useListAreas: () => ({ data: [], isLoading: false, isError: false }),
+    getListAreasQueryKey: () => ["areas"],
     useGetOperatorRecent: stub("recent"),
     useGetActiveNudges: stub("nudges"),
     useGetActiveNudgesByArea: stub("nudgesByArea"),

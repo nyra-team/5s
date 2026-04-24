@@ -69,6 +69,9 @@ vi.mock("@workspace/api-client-react", () => {
     useResolveEscalation: noopMutation,
     getListEscalationsQueryKey: () => ["escalations"],
     getGetEscalationCountQueryKey: () => ["escalation-count"],
+    // Sort enum used by the escalations page header. Mirrors the values in
+    // the generated client so component code can reference them by key.
+    ListEscalationsSort: { recent: "recent", mostReminded: "mostReminded" },
   };
 });
 

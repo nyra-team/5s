@@ -48,10 +48,7 @@ router.get(
   authMiddleware,
   requireRole("MANAGER"),
   async (_req, res): Promise<void> => {
-    const [{ remaining }] = await db
-      .select({ remaining: sql<number>`count(*)::int` })
-      .from(submissionsTable)
-      .where(isNull(submissionsTable.aiReasoningJson));
+    const remaining = await countBackfillReasoningRemaining();
     res.json({ remaining });
   },
 );
