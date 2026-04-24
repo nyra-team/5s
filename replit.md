@@ -89,7 +89,7 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 
 - See `artifacts/api-server/src/routes/README.md` for route conventions (notably: never use `sql\`... = ANY(${jsArray})\`` — use drizzle's `inArray()` helper, which handles single-element arrays correctly)
 - OpenAPI spec at `lib/api-spec/openapi.yaml` is single source of truth
-- Codegen produces React Query hooks (`lib/api-client-react`) and Zod schemas (`lib/api-zod`)
+- Codegen produces React Query hooks (`lib/api-client-react`) and Zod schemas (`lib/api-zod`). Both packages export from `./src` directly (no built `dist/` is committed); regenerate via `pnpm --filter @workspace/api-spec run codegen`.
 - Static file serving for uploads at `/api/uploads/`
 - Image uploads stored in `uploads/` directory at project root
 - ML Service (Python FastAPI, port 8100): CLIP embeddings, similarity computation, Ridge regression training/prediction
