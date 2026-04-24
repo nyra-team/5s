@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Bell, Mail, MessageSquare, AlertCircle, CheckCircle2, MoonStar } from "lucide-react";
+import { QuietHoursStatusBadge } from "@/components/quiet-hours-status-badge";
 
 type Channel = "email" | "slack";
 
@@ -23,7 +24,14 @@ const WEEKDAYS: Array<{ label: string; bit: number }> = [
 ];
 
 export default function NotificationsPage() {
-  const { data, isLoading } = useGetMyNotificationPreferences();
+  const { data, isLoading } = useGetMyNotificationPreferences({
+    query: {
+      // Recompute the live "muted right now" status without waiting for a
+      // page refresh. 60s is granular enough for HH:MM windows.
+      refetchInterval: 60_000,
+      refetchOnWindowFocus: true,
+    },
+  });
   const update = useUpdateMyNotificationPreferences();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -152,6 +160,15 @@ export default function NotificationsPage() {
           Get notified the moment a failed audit (below 60%) is auto-escalated, so
           you can respond across shifts without keeping the app open.
         </p>
+        <div className="pt-1">
+          <QuietHoursStatusBadge
+            active={data.quietHoursActive}
+            activeUntil={data.quietHoursActiveUntil}
+            nextStart={data.quietHoursNextStart}
+            quietHoursEnabled={data.quietHoursEnabled}
+            variant="inline"
+          />
+        </div>
       </header>
 
       <div className="bg-card rounded-2xl shadow-soft hairline divide-y divide-border">

@@ -867,6 +867,19 @@ components:
           minimum: 0
           maximum: 127
           description: 7-bit mask of weekdays the window applies to. Bit 0 = Sunday … bit 6 = Saturday. 127 = every day.
+        quietHoursActive:
+          type: boolean
+          description: True when the user's quiet-hours window is currently muting their alerts.
+        quietHoursActiveUntil:
+          type: string
+          format: date-time
+          nullable: true
+          description: When `quietHoursActive` is true, the absolute moment the current window ends. Null otherwise.
+        quietHoursNextStart:
+          type: string
+          format: date-time
+          nullable: true
+          description: When `quietHoursActive` is false, the absolute moment the next quiet-hours window begins. Null when quiet hours are off or the weekday mask is empty.
       required:
         - notifyEmailEnabled
         - notifySlackEnabled
@@ -877,6 +890,9 @@ components:
         - quietHoursStart
         - quietHoursEnd
         - quietHoursWeekdayMask
+        - quietHoursActive
+        - quietHoursActiveUntil
+        - quietHoursNextStart
 
     UpdateNotificationPreferencesBody:
       type: object

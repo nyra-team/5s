@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
 import { authMiddleware, requireRole } from "../lib/auth";
-import { notificationProviderStatus } from "../lib/notifications.js";
+import { notificationProviderStatus, quietHoursStatus } from "../lib/notifications.js";
 
 const router: IRouter = Router();
 
@@ -16,6 +16,9 @@ interface PreferencesShape {
   quietHoursStart: string;
   quietHoursEnd: string;
   quietHoursWeekdayMask: number;
+  quietHoursActive: boolean;
+  quietHoursActiveUntil: string | null;
+  quietHoursNextStart: string | null;
 }
 
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -48,6 +51,7 @@ async function loadPreferences(userId: number): Promise<PreferencesShape | null>
     .where(eq(usersTable.id, userId));
   if (!user) return null;
   const status = notificationProviderStatus();
+  const live = quietHoursStatus(user);
   return {
     email: user.email,
     notifyEmailEnabled: user.notifyEmailEnabled,
@@ -56,6 +60,9 @@ async function loadPreferences(userId: number): Promise<PreferencesShape | null>
     quietHoursStart: normalizeTimeOfDay(user.quietHoursStart) ?? "22:00",
     quietHoursEnd: normalizeTimeOfDay(user.quietHoursEnd) ?? "07:00",
     quietHoursWeekdayMask: user.quietHoursWeekdayMask,
+    quietHoursActive: live.active,
+    quietHoursActiveUntil: live.activeUntil,
+    quietHoursNextStart: live.nextStart,
     emailConfigured: status.emailConfigured,
     slackConfigured: status.slackConfigured,
   };

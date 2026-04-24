@@ -1,10 +1,11 @@
 import { useAuth } from "@/lib/auth";
 import { Link, useLocation } from "wouter";
 import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List, Inbox, Activity, Bell } from "lucide-react";
-import { useGetEscalationCount } from "@workspace/api-client-react";
+import { useGetEscalationCount, useGetMyNotificationPreferences } from "@workspace/api-client-react";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { QuietHoursStatusBadge } from "@/components/quiet-hours-status-badge";
 
 function useISTClock() {
   const [time, setTime] = useState(() =>
@@ -47,6 +48,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
   });
   const openCount = escalationCount?.open ?? 0;
 
+  // Live "alerts muted" status for managers — drives the always-on header
+  // badge so they see at a glance that escalations are being suppressed.
+  const { data: notifyPrefs } = useGetMyNotificationPreferences({
+    query: { enabled: !isOperator, refetchInterval: 60_000, refetchOnWindowFocus: true },
+  });
+
   const tabs = [
     { href: "/live", label: "Live shift", icon: Activity, badge: 0 },
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, badge: 0 },
@@ -68,6 +75,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-3">
+            {!isOperator && notifyPrefs && (
+              <QuietHoursStatusBadge
+                active={notifyPrefs.quietHoursActive}
+                activeUntil={notifyPrefs.quietHoursActiveUntil}
+                nextStart={notifyPrefs.quietHoursNextStart}
+                quietHoursEnabled={notifyPrefs.quietHoursEnabled}
+                variant="compact"
+              />
+            )}
             <span className="text-[13px] tabular-nums text-muted-foreground">
               {istTime} <span className="opacity-60">IST</span>
             </span>

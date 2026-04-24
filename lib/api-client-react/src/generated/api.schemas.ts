@@ -63,6 +63,12 @@ export interface NotificationPreferences {
    * @maximum 127
    */
   quietHoursWeekdayMask: number;
+  /** True when the user's quiet-hours window is currently muting their alerts. */
+  quietHoursActive: boolean;
+  /** When `quietHoursActive` is true, the absolute moment the current window ends. Null otherwise. */
+  quietHoursActiveUntil: string | null;
+  /** When `quietHoursActive` is false, the absolute moment the next quiet-hours window begins. Null when quiet hours are off or the weekday mask is empty. */
+  quietHoursNextStart: string | null;
 }
 
 export interface UpdateNotificationPreferencesBody {

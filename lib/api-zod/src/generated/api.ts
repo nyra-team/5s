@@ -965,6 +965,23 @@ export const GetMyNotificationPreferencesResponse = zod.object({
     .describe(
       "7-bit mask of weekdays the window applies to. Bit 0 = Sunday … bit 6 = Saturday. 127 = every day.",
     ),
+  quietHoursActive: zod
+    .boolean()
+    .describe(
+      "True when the user's quiet-hours window is currently muting their alerts.",
+    ),
+  quietHoursActiveUntil: zod.coerce
+    .date()
+    .nullable()
+    .describe(
+      "When `quietHoursActive` is true, the absolute moment the current window ends. Null otherwise.",
+    ),
+  quietHoursNextStart: zod.coerce
+    .date()
+    .nullable()
+    .describe(
+      "When `quietHoursActive` is false, the absolute moment the next quiet-hours window begins. Null when quiet hours are off or the weekday mask is empty.",
+    ),
 });
 
 /**
@@ -1040,6 +1057,23 @@ export const UpdateMyNotificationPreferencesResponse = zod.object({
     .max(updateMyNotificationPreferencesResponseQuietHoursWeekdayMaskMax)
     .describe(
       "7-bit mask of weekdays the window applies to. Bit 0 = Sunday … bit 6 = Saturday. 127 = every day.",
+    ),
+  quietHoursActive: zod
+    .boolean()
+    .describe(
+      "True when the user's quiet-hours window is currently muting their alerts.",
+    ),
+  quietHoursActiveUntil: zod.coerce
+    .date()
+    .nullable()
+    .describe(
+      "When `quietHoursActive` is true, the absolute moment the current window ends. Null otherwise.",
+    ),
+  quietHoursNextStart: zod.coerce
+    .date()
+    .nullable()
+    .describe(
+      "When `quietHoursActive` is false, the absolute moment the next quiet-hours window begins. Null when quiet hours are off or the weekday mask is empty.",
     ),
 });
 

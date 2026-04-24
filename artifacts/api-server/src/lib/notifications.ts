@@ -79,13 +79,36 @@ function inboxLink(): string {
 
 function parseHHMM(s: string | null | undefined): number | null {
   if (!s) return null;
-  const m = /^(\d{1,2}):(\d{2})$/.exec(s);
+  // Accept "HH:MM" as written by the form, but also "HH:MM:SS" — Postgres
+  // `time` columns serialize back with a trailing seconds component, so DB
+  // round-trips can land here in either shape.
+  const m = /^(\d{1,2}):(\d{2})(?::\d{2})?$/.exec(s);
   if (!m) return null;
   const h = parseInt(m[1], 10);
   const mn = parseInt(m[2], 10);
   if (!Number.isFinite(h) || !Number.isFinite(mn)) return null;
   if (h < 0 || h > 23 || mn < 0 || mn > 59) return null;
   return h * 60 + mn;
+}
+
+const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
+
+function toIstShifted(now: Date): Date {
+  // Shift "now" by +5:30 and read UTC fields to get IST clock values.
+  return new Date(now.getTime() + IST_OFFSET_MS);
+}
+
+function istClockToUtcDate(istToday: Date, dayOffset: number, minuteOfDay: number): Date {
+  // istToday is the +5:30-shifted Date so its UTC fields read as IST clock values.
+  const year = istToday.getUTCFullYear();
+  const month = istToday.getUTCMonth();
+  const day = istToday.getUTCDate() + dayOffset;
+  const h = Math.floor(minuteOfDay / 60);
+  const m = minuteOfDay % 60;
+  // Treat (year, month, day, h, m) as IST clock values, then subtract the IST
+  // offset to get the absolute UTC moment.
+  const istUtcMs = Date.UTC(year, month, day, h, m, 0, 0);
+  return new Date(istUtcMs - IST_OFFSET_MS);
 }
 
 /**
@@ -106,9 +129,7 @@ export function isInQuietHours(prefs: QuietHoursPrefs, now: Date = new Date()): 
   const mask = prefs.quietHoursWeekdayMask;
   if (!Number.isFinite(mask) || mask <= 0) return false;
 
-  // Shift "now" by +5:30 and read UTC fields to get IST clock values.
-  const istMs = now.getTime() + (5 * 60 + 30) * 60 * 1000;
-  const ist = new Date(istMs);
+  const ist = toIstShifted(now);
   const istDay = ist.getUTCDay(); // 0 = Sun … 6 = Sat
   const istMin = ist.getUTCHours() * 60 + ist.getUTCMinutes();
 
@@ -129,6 +150,75 @@ export function isInQuietHours(prefs: QuietHoursPrefs, now: Date = new Date()): 
     return (mask & (1 << prevDay)) !== 0;
   }
   return false;
+}
+
+export interface QuietHoursStatus {
+  /** True when `now` falls inside the recipient's quiet-hours window. */
+  active: boolean;
+  /**
+   * When `active` is true, the absolute moment the current window ends
+   * (ISO 8601). Null otherwise.
+   */
+  activeUntil: string | null;
+  /**
+   * When `active` is false, the absolute moment the next quiet-hours window
+   * begins (ISO 8601). Null otherwise — including when quiet hours are off
+   * entirely or the weekday mask is empty.
+   */
+  nextStart: string | null;
+}
+
+/**
+ * Computes the live status of a recipient's quiet-hours window relative to
+ * `now`. Used by the client-side "muted right now" badge so the manager can
+ * see at a glance that escalations are being suppressed for them.
+ *
+ * Exported for tests.
+ */
+export function quietHoursStatus(prefs: QuietHoursPrefs, now: Date = new Date()): QuietHoursStatus {
+  const off: QuietHoursStatus = { active: false, activeUntil: null, nextStart: null };
+
+  if (!prefs.quietHoursEnabled) return off;
+  const startM = parseHHMM(prefs.quietHoursStart);
+  const endM = parseHHMM(prefs.quietHoursEnd);
+  if (startM == null || endM == null) return off;
+  if (startM === endM) return off;
+
+  const mask = prefs.quietHoursWeekdayMask;
+  if (!Number.isFinite(mask) || mask <= 0) return off;
+
+  const ist = toIstShifted(now);
+  const istDay = ist.getUTCDay();
+  const istMin = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  const wraps = startM >= endM;
+
+  if (isInQuietHours(prefs, now)) {
+    let endDate: Date;
+    if (!wraps) {
+      // Same-day window — ends today.
+      endDate = istClockToUtcDate(ist, 0, endM);
+    } else if (istMin >= startM) {
+      // Evening half of a wrapping window — ends tomorrow morning.
+      endDate = istClockToUtcDate(ist, 1, endM);
+    } else {
+      // Early-morning half of a wrapping window — ends today.
+      endDate = istClockToUtcDate(ist, 0, endM);
+    }
+    return { active: true, activeUntil: endDate.toISOString(), nextStart: null };
+  }
+
+  // Not currently muted — find the soonest future window start. The window
+  // applies on a given day iff that day's bit is set in the mask. We scan up
+  // to 8 days forward (one extra to handle today's start being in the past).
+  for (let offset = 0; offset < 8; offset++) {
+    const dayBit = (istDay + offset) % 7;
+    if ((mask & (1 << dayBit)) === 0) continue;
+    const candidate = istClockToUtcDate(ist, offset, startM);
+    if (candidate.getTime() > now.getTime()) {
+      return { active: false, activeUntil: null, nextStart: candidate.toISOString() };
+    }
+  }
+  return off;
 }
 
 interface PendingBucket {
