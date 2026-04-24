@@ -9,6 +9,7 @@ import {
   useGetSubmission,
   useGetActiveNudges,
   useGetActiveNudgesByArea,
+  useDismissNudge,
   getGetSubmissionQueryKey,
   getGetAreaProfileQueryKey,
   AreaStatus,
@@ -39,6 +40,7 @@ import {
   Tag,
   Plus,
   Sparkles,
+  X,
   TrendingUp,
   TrendingDown,
   Minus,
@@ -1087,7 +1089,11 @@ function AreaCard({
         </div>
 
         {hasNudge && (
-          <NudgeBanner nudges={activeNudges} areaId={status.areaId} />
+          <NudgeBanner
+            nudges={activeNudges}
+            areaId={status.areaId}
+            selectedShift={selectedShift}
+          />
         )}
 
         <div className="mt-auto pt-8">
@@ -1165,8 +1171,20 @@ function useMinuteTick() {
 // recent active nudge as the primary message; if there are multiple (rare —
 // area-level + machine-specific), shows a compact "+N more" hint instead of
 // stacking full banners.
-function NudgeBanner({ nudges, areaId }: { nudges: Nudge[]; areaId: number }) {
+function NudgeBanner({
+  nudges,
+  areaId,
+  selectedShift,
+}: {
+  nudges: Nudge[];
+  areaId: number;
+  selectedShift: "A" | "B" | "C";
+}) {
   useMinuteTick();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const dismissMutation = useDismissNudge();
+
   if (nudges.length === 0) return null;
   // nudges are returned newest-first by fetchByIds; pick index 0 as primary.
   const primary = nudges[0];
@@ -1174,6 +1192,29 @@ function NudgeBanner({ nudges, areaId }: { nudges: Nudge[]; areaId: number }) {
   const createdAt = new Date(primary.createdAt);
   const relative = formatDistanceToNowStrict(createdAt, { addSuffix: true });
   const absolute = format(createdAt, "MMM d, yyyy h:mm a");
+
+  const handleDismiss = () => {
+    dismissMutation.mutate(
+      { id: primary.id },
+      {
+        onSuccess: () => {
+          // Refetch persistent badges so the banner clears immediately rather
+          // than after the 60s poll. The toast endpoint is per-recipient and
+          // doesn't reflect server-side dismissal, so we don't invalidate it.
+          queryClient.invalidateQueries({
+            queryKey: getGetActiveNudgesByAreaQueryKey({ shift: selectedShift }),
+          });
+        },
+        onError: () =>
+          toast({
+            variant: "destructive",
+            title: "Couldn't dismiss nudge",
+            description: "Please try again.",
+          }),
+      },
+    );
+  };
+
   return (
     <div
       className="mt-3 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-100 dark:border-indigo-500/20 p-3 space-y-1"
@@ -1181,7 +1222,7 @@ function NudgeBanner({ nudges, areaId }: { nudges: Nudge[]; areaId: number }) {
     >
       <div className="flex items-center gap-1.5 text-[12px] font-semibold text-indigo-700 dark:text-indigo-200">
         <Bell className="w-3.5 h-3.5" />
-        <span>
+        <span className="flex-1">
           {primary.machine
             ? `Manager flagged ${primary.machine}`
             : "Manager flagged this area"}
@@ -1195,6 +1236,17 @@ function NudgeBanner({ nudges, areaId }: { nudges: Nudge[]; areaId: number }) {
         >
           · {relative}
         </time>
+        <button
+          type="button"
+          onClick={handleDismiss}
+          disabled={dismissMutation.isPending}
+          aria-label="Dismiss nudge"
+          title="Dismiss"
+          className="-mr-1 -my-1 p-1 rounded-md text-indigo-500/80 hover:text-indigo-700 hover:bg-indigo-100/70 dark:text-indigo-300/80 dark:hover:text-indigo-100 dark:hover:bg-indigo-500/20 transition-colors disabled:opacity-50"
+          data-testid={`button-dismiss-nudge-${primary.id}`}
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
       </div>
       {primary.message && (
         <p className="text-[12.5px] text-indigo-900/85 dark:text-indigo-100/90 leading-snug">

@@ -658,6 +658,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/Nudge"
 
+  /nudges/{id}/dismiss:
+    post:
+      operationId: dismissNudge
+      tags: [nudges]
+      summary: Operator dismisses a specific active nudge they have already addressed
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Nudge dismissed (or already dismissed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Nudge"
+        "404":
+          description: Nudge not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /nudges/active-by-area:
     get:
       operationId: getActiveNudgesByArea

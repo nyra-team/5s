@@ -131,3 +131,70 @@ describe("GET /api/nudges (per-operator atomic dismissal)", () => {
     assert.equal(r.status, 401);
   });
 });
+
+describe("POST /api/nudges/:id/dismiss (operator dismisses an addressed nudge)", () => {
+  let world: TestWorld;
+  beforeEach(() => { world = new TestWorld(); });
+  afterEach(async () => { await world.cleanup(); });
+
+  test("operator dismisses an active nudge so the persistent badge clears", async () => {
+    const manager = await world.createUser("MANAGER");
+    const operator = await world.createUser("OPERATOR");
+    const area = await world.createArea();
+    const created = await api<NudgeShape>(manager.token, "POST", "/api/nudges", {
+      areaId: area.id, shift: "A", message: "tidy up",
+    });
+    assert.equal(created.status, 201);
+
+    // Sanity: the persistent endpoint sees the nudge before dismiss.
+    const before = await api<NudgeShape[]>(operator.token, "GET", "/api/nudges/active-by-area?shift=A");
+    assert.ok(before.body.some((n) => n.id === created.body.id));
+
+    const dismissed = await api<NudgeShape & { dismissedAt: string | null }>(
+      operator.token,
+      "POST",
+      `/api/nudges/${created.body.id}/dismiss`,
+    );
+    assert.equal(dismissed.status, 200);
+    assert.equal(dismissed.body.id, created.body.id);
+    assert.ok(dismissed.body.dismissedAt, "response should reflect dismissedAt set");
+
+    // After dismiss, persistent endpoint must no longer return it.
+    const after = await api<NudgeShape[]>(operator.token, "GET", "/api/nudges/active-by-area?shift=A");
+    assert.ok(!after.body.some((n) => n.id === created.body.id), "dismissed nudge must drop from persistent list");
+  });
+
+  test("dismissing an already-dismissed nudge is idempotent (still 200)", async () => {
+    const manager = await world.createUser("MANAGER");
+    const operator = await world.createUser("OPERATOR");
+    const area = await world.createArea();
+    const created = await api<NudgeShape>(manager.token, "POST", "/api/nudges", {
+      areaId: area.id, shift: "A",
+    });
+    const r1 = await api(operator.token, "POST", `/api/nudges/${created.body.id}/dismiss`);
+    const r2 = await api(operator.token, "POST", `/api/nudges/${created.body.id}/dismiss`);
+    assert.equal(r1.status, 200);
+    assert.equal(r2.status, 200);
+  });
+
+  test("returns 404 for an unknown nudge id", async () => {
+    const operator = await world.createUser("OPERATOR");
+    const r = await api(operator.token, "POST", "/api/nudges/999999999/dismiss");
+    assert.equal(r.status, 404);
+  });
+
+  test("rejects managers (operator-only)", async () => {
+    const manager = await world.createUser("MANAGER");
+    const area = await world.createArea();
+    const created = await api<NudgeShape>(manager.token, "POST", "/api/nudges", {
+      areaId: area.id, shift: "A",
+    });
+    const r = await api(manager.token, "POST", `/api/nudges/${created.body.id}/dismiss`);
+    assert.equal(r.status, 403);
+  });
+
+  test("requires authentication", async () => {
+    const r = await api(null, "POST", "/api/nudges/1/dismiss");
+    assert.equal(r.status, 401);
+  });
+});

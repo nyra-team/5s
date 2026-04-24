@@ -28,6 +28,7 @@ import type {
   CreateSubmissionBody,
   CurrentShift,
   DashboardSummary,
+  ErrorResponse,
   Escalation,
   EscalationCount,
   GetActiveNudgesByAreaParams,
@@ -2633,6 +2634,90 @@ export const useCreateNudge = <
   TContext
 > => {
   return useMutation(getCreateNudgeMutationOptions(options));
+};
+
+/**
+ * @summary Operator dismisses a specific active nudge they have already addressed
+ */
+export const getDismissNudgeUrl = (id: number) => {
+  return `/api/nudges/${id}/dismiss`;
+};
+
+export const dismissNudge = async (
+  id: number,
+  options?: RequestInit,
+): Promise<Nudge> => {
+  return customFetch<Nudge>(getDismissNudgeUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getDismissNudgeMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof dismissNudge>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof dismissNudge>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["dismissNudge"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof dismissNudge>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return dismissNudge(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DismissNudgeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof dismissNudge>>
+>;
+
+export type DismissNudgeMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Operator dismisses a specific active nudge they have already addressed
+ */
+export const useDismissNudge = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof dismissNudge>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof dismissNudge>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDismissNudgeMutationOptions(options));
 };
 
 /**

@@ -113,6 +113,45 @@ router.get(
   },
 );
 
+// Operators can dismiss a specific active nudge they've already addressed
+// (e.g. handled offline, or it no longer applies because the area was already
+// submitted earlier this shift). Idempotent: dismissing an already-dismissed
+// nudge returns the existing row so concurrent taps don't 404. The implicit
+// dismissal on submission (dismissNudgesForSubmission) still owns the
+// "submitted new evidence" path.
+router.post(
+  "/nudges/:id/dismiss",
+  authMiddleware,
+  requireRole("OPERATOR"),
+  async (req, res): Promise<void> => {
+    const id = Number.parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+
+    const [existing] = await db
+      .select({ id: nudgesTable.id, dismissedAt: nudgesTable.dismissedAt })
+      .from(nudgesTable)
+      .where(eq(nudgesTable.id, id));
+
+    if (!existing) {
+      res.status(404).json({ error: "Nudge not found" });
+      return;
+    }
+
+    if (existing.dismissedAt == null) {
+      await db
+        .update(nudgesTable)
+        .set({ dismissedAt: new Date() })
+        .where(and(eq(nudgesTable.id, id), isNull(nudgesTable.dismissedAt)));
+    }
+
+    const [shaped] = await fetchByIds([id]);
+    res.json(shaped);
+  },
+);
+
 router.post("/nudges", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
   const { userId } = (req as any).user as { userId: number };
   const areaId = Number(req.body?.areaId);
