@@ -194,6 +194,22 @@ async function maybeCreateEscalation(args: {
   evidenceUrls: string[];
 }) {
   if (args.scorePercent >= ESCALATION_THRESHOLD_PERCENT) return;
+
+  // Dedupe: if there's already a non-RESOLVED escalation for this submission
+  // (e.g. the operator re-uploaded media for the same submission), don't
+  // create a second row or fire another notification.
+  const [existing] = await db
+    .select({ id: escalationsTable.id })
+    .from(escalationsTable)
+    .where(
+      and(
+        eq(escalationsTable.submissionId, args.submissionId),
+        sql`${escalationsTable.status} <> 'RESOLVED'`,
+      ),
+    )
+    .limit(1);
+  if (existing) return;
+
   const [created] = await db
     .insert(escalationsTable)
     .values({
