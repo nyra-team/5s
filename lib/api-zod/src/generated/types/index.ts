@@ -70,6 +70,7 @@ export * from "./nextCheckType";
 export * from "./notificationPreferencesType";
 export * from "./nudgeType";
 export * from "./nudgeTypeShift";
+export * from "./operatorThresholdAuditEntryType";
 export * from "./operatorThresholdSourcesType";
 export * from "./operatorThresholdsType";
 export * from "./operatorThresholdsTypeDefaults";

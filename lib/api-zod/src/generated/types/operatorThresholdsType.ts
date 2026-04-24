@@ -5,6 +5,7 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { OperatorThresholdAuditEntryType } from "./operatorThresholdAuditEntryType";
 import type { OperatorThresholdSourcesType } from "./operatorThresholdSourcesType";
 import type { OperatorThresholdsTypeDefaults } from "./operatorThresholdsTypeDefaults";
 
@@ -40,4 +41,15 @@ export interface OperatorThresholdsType {
   updatedAt?: Date | null;
   /** Manager who last touched the DB override row. */
   updatedByUserId?: number | null;
+  /** Email of the manager who last touched the DB override row.
+Resolved server-side so the admin UI can show "last changed
+by Alice" without a second round-trip.
+ */
+  updatedByUserEmail?: string | null;
+  /** Most recent per-field changes (newest first), capped at 5.
+Each entry corresponds to a single field changed in a single
+PUT — a manager who tweaks two dials at once produces two
+entries with the same `changedAt` timestamp.
+ */
+  auditHistory: OperatorThresholdAuditEntryType[];
 }

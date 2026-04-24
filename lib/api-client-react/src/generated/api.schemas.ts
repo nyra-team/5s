@@ -116,6 +116,27 @@ export type OperatorThresholdsDefaults = {
   dueSoonThresholdMinutes: number;
 };
 
+export interface OperatorThresholdAuditEntry {
+  id: number;
+  changedAt: string;
+  /** Manager who made the change. Goes null if that user is later
+deleted (the FK uses ON DELETE SET NULL so the rest of the
+audit row — what moved, when, from/to — is preserved).
+ */
+  changedByUserId?: number | null;
+  /** Resolved at read time; null if the user was deleted. */
+  changedByUserEmail?: string | null;
+  /** The threshold key that moved. One of:
+encouragementMinPercent, priorBestWindowDays,
+dueSoonThresholdMinutes.
+ */
+  field: string;
+  /** Previous DB override (null = no override / fell back to env or default). */
+  oldValue?: number | null;
+  /** New DB override (null = override cleared). */
+  newValue?: number | null;
+}
+
 /**
  * Effective operator-facing thresholds (env > DB > default), plus the
 per-layer overrides so the admin UI can show provenance.
@@ -148,6 +169,17 @@ export interface OperatorThresholds {
   updatedAt?: string | null;
   /** Manager who last touched the DB override row. */
   updatedByUserId?: number | null;
+  /** Email of the manager who last touched the DB override row.
+Resolved server-side so the admin UI can show "last changed
+by Alice" without a second round-trip.
+ */
+  updatedByUserEmail?: string | null;
+  /** Most recent per-field changes (newest first), capped at 5.
+Each entry corresponds to a single field changed in a single
+PUT — a manager who tweaks two dials at once produces two
+entries with the same `changedAt` timestamp.
+ */
+  auditHistory: OperatorThresholdAuditEntry[];
 }
 
 /**

@@ -1046,6 +1046,22 @@ components:
           type: integer
           nullable: true
           description: Manager who last touched the DB override row.
+        updatedByUserEmail:
+          type: string
+          nullable: true
+          description: |
+            Email of the manager who last touched the DB override row.
+            Resolved server-side so the admin UI can show "last changed
+            by Alice" without a second round-trip.
+        auditHistory:
+          type: array
+          description: |
+            Most recent per-field changes (newest first), capped at 5.
+            Each entry corresponds to a single field changed in a single
+            PUT — a manager who tweaks two dials at once produces two
+            entries with the same `changedAt` timestamp.
+          items:
+            $ref: "#/components/schemas/OperatorThresholdAuditEntry"
       required:
         - encouragementMinPercent
         - priorBestWindowDays
@@ -1053,6 +1069,45 @@ components:
         - defaults
         - envOverrides
         - dbOverrides
+        - auditHistory
+
+    OperatorThresholdAuditEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        changedAt:
+          type: string
+          format: date-time
+        changedByUserId:
+          type: integer
+          nullable: true
+          description: |
+            Manager who made the change. Goes null if that user is later
+            deleted (the FK uses ON DELETE SET NULL so the rest of the
+            audit row — what moved, when, from/to — is preserved).
+        changedByUserEmail:
+          type: string
+          nullable: true
+          description: Resolved at read time; null if the user was deleted.
+        field:
+          type: string
+          description: |
+            The threshold key that moved. One of:
+            encouragementMinPercent, priorBestWindowDays,
+            dueSoonThresholdMinutes.
+        oldValue:
+          type: integer
+          nullable: true
+          description: Previous DB override (null = no override / fell back to env or default).
+        newValue:
+          type: integer
+          nullable: true
+          description: New DB override (null = override cleared).
+      required:
+        - id
+        - changedAt
+        - field
 
     UpdateOperatorThresholdsBody:
       type: object

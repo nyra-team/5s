@@ -2,161 +2,57 @@
 
 ## Overview
 
-Full-stack 5S Compliance web app for manufacturing. Operators photograph workstations per shift, receive AI-powered 5S scores (0-25) based on CLIP embedding similarity to ideal reference photos, and get VLM-generated improvement suggestions with specific location references. Managers track compliance rates, score trends, label submissions for model calibration, and manage reference photos.
+This project is a full-stack web application designed to enhance 5S compliance in manufacturing environments. It enables operators to photograph workstations, receiving AI-powered 5S scores and VLM-generated improvement suggestions. Managers can track compliance, analyze score trends, manage reference photos, and label submissions for AI model calibration. The core purpose is to improve workplace organization and efficiency through AI-driven insights and streamlined management tools.
 
-## Stack
+## User Preferences
 
-- **Monorepo tool**: pnpm workspaces
-- **Node.js version**: 24
-- **Package manager**: pnpm
-- **TypeScript version**: 5.9
-- **Frontend**: React + Vite + Tailwind CSS (artifacts/five-s)
-- **Backend**: Express 5 (artifacts/api-server)
-- **Database**: PostgreSQL + Drizzle ORM
-- **Auth**: JWT (email/password, bcryptjs)
-- **Validation**: Zod (`zod/v4`), `drizzle-zod`
-- **API codegen**: Orval (from OpenAPI spec)
-- **File uploads**: Multer → local /uploads directory
-- **Build**: esbuild (CJS bundle)
-- **AI/ML**: Python FastAPI service with CLIP ViT-B/32 (open_clip_torch) + scikit-learn
-- **VLM**: OpenAI-compatible API via Replit AI Integrations (gpt-5-mini)
+The user has not specified any preferences.
 
-## Login Credentials
+## System Architecture
 
-- **Manager**: manager@5s.com / manager123
-- **Operator**: operator@5s.com / operator123
+The application is built as a monorepo using pnpm workspaces, with Node.js 24 and TypeScript 5.9.
 
-## Key Features
+**Frontend:**
+-   Developed with React, Vite, and Tailwind CSS.
 
-- **Operator view**: Auto-detect shift (A/B/C), photograph areas, get AI-powered 5S scores + location-specific suggestions
-- **Manager view**: Dashboard with compliance %, score charts, submission browser, ideal photo management, submission labeling for AI calibration
-- **Roles**: OPERATOR, MANAGER with JWT-based auth
-- **Shifts**: A (6am-2pm), B (2pm-10pm), C (10pm-6am)
-- **AI Scoring Pipeline**:
-  - CLIP ViT-B/32 embeddings computed for submission and ideal photos
-  - Cosine similarity between submission embedding and ideal centroid
-  - Scoring modes: CALIBRATED (Ridge regression from labels), VLM_BLENDED (70% VLM + 30% CLIP), SIMILARITY_ONLY (cosine→score), FALLBACK (conservative zeros)
-  - CLIP similarity rescaled: 0.75–0.98 range maps to 0–25 score range for meaningful differentiation
-  - VLM (gpt-5-mini) provides per-pillar scores (0-5) alongside issues/recommendations with location references
-  - VLM scores are blended with CLIP similarity as primary signal; CLIP acts as weighting/adjustment factor
-- **Manager Labeling**: Rate submissions with ground-truth pillar scores (0-5 each) for model calibration
-- **Model Training**: Ridge regression per pillar using labeled CLIP embeddings (min 5 labels to train)
+**Backend:**
+-   Uses Express 5.
+-   Authentication is handled via JWT with email/password and bcryptjs.
+-   Data validation uses Zod and drizzle-zod.
+-   API client code generation is performed using Orval from an OpenAPI specification.
+-   File uploads (images) are managed by Multer and stored locally in an `uploads/` directory.
 
-## Key Commands
+**Database:**
+-   PostgreSQL is used as the database, interfaced with Drizzle ORM.
 
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes. **Dev/staging only — destructive.** Runs non-interactively and uses `--force` (will drop columns/tables removed from the schema). Do NOT run against production. A `prepare-push` step first drops legacy tables/columns that drizzle-kit would otherwise prompt to rename (currently `ideal_photos` table and `submissions.similarity_to_ideal` column), then `drizzle-kit push --force` applies the diff. Add new legacy entries to `lib/db/scripts/prepare-push.mjs` whenever a table/column is removed from `lib/db/src/schema/*` so future schema changes stay non-interactive.
-- `pnpm --filter @workspace/api-server run dev` — run API server locally
-- `pnpm --filter @workspace/api-server run test` — run API integration tests (vitest + supertest, hits the dev DB; isolates by tagging fixtures with a per-run prefix)
-- `pnpm --filter @workspace/five-s run test` — run frontend component tests (vitest + jsdom + @testing-library/react)
-- `pnpm --filter @workspace/scripts run seed` — seed database with default data
-- `python ml_service/app.py` — start CLIP ML service on port 8100
+**AI/ML Services:**
+-   A dedicated Python FastAPI service (internal only) handles CLIP ViT-B/32 embeddings, similarity computations, and Ridge regression for AI scoring and model training.
+-   An OpenAI-compatible API (via Replit AI Integrations, specifically gpt-5-mini) provides VLM capabilities for generating detailed improvement suggestions and per-pillar scores.
+-   AI scoring involves computing CLIP embeddings, comparing them via cosine similarity to ideal reference photos, and applying various scoring modes (CALIBRATED, VLM_BLENDED, SIMILARITY_ONLY, FALLBACK).
+-   VLM provides per-pillar scores (0-5) and location-specific issues/recommendations, which are blended with CLIP similarity.
+-   Managers can label submissions with ground-truth pillar scores to calibrate the AI model using Ridge regression.
 
-## Data Models
+**Key Features:**
+-   **Role-Based Access:** OPERATOR and MANAGER roles with JWT-based authentication.
+-   **Automated Shift Detection:** Operators' views adjust based on auto-detected shifts (A, B, C).
+-   **AI-Powered Scoring & Suggestions:** Provides 0-25 5S scores and VLM-generated, location-specific improvement suggestions.
+-   **Manager Dashboard:** Offers compliance tracking, score trends, submission browsing, ideal photo management, and AI calibration tools.
+-   **Escalation Management:** Automatically escalates low-scoring submissions, with configurable notification channels (email, Slack) and re-ping reminders for open escalations.
+-   **Operator Threshold Tuning:** Runtime-tunable parameters for operator-facing cutoffs (e.g., encouragement thresholds, prior best lookback window, due soon lead time) with precedence for environment variables, database overrides, and shipped defaults.
+-   **Theming:** Dynamic light/dark theme switching based on configured night shift hours and timezone.
 
-- **users**: id, email, password_hash, role (OPERATOR/MANAGER)
-- **areas**: id, name (6 manufacturing areas)
-- **submissions**: id, area_id, user_id, shift, score_total, score_json, suggestions_json, image_url, media_type, keyframes_json, machine_tag, failing_pillars_json, embedding_hash, ai_total_score, ai_pillars_json, ai_recommendations_json, ai_issues_json, model_version, scoring_mode, created_at
-- **labels**: id, submission_id, labeled_by_user_id, pillars_json, total_score, created_at
-- **escalations**: id, submission_id, area_id, operator_id, score_total, score_percent, failing_pillars_json, recommended_actions_json, evidence_urls_json, status (OPEN/ACKNOWLEDGED/RESOLVED), acknowledged/resolved metadata
-- **nudges**: id, area_id, machine, shift, operator_id, manager_id, dismissed_at, created_at — manager-to-operator pings de-duped per area+machine+shift while undismissed
-- **area_profiles**: id, area_id (unique), status (LEARNING/ACTIVE), submissions_count, summary, items_json, machines_json, layout_json, common_issues_json, updated_at — one row per area, learned metadata about the workspace
-- **area_schedules**: per-machine cadence learned alongside `area_profiles`
+**UI/UX Decisions:**
+-   Frontend built with React and Tailwind CSS for a modern, responsive interface.
+-   Manager views include dashboards with charts for compliance and score trends, a submission browser, and an interface for managing ideal photos and labeling submissions.
+-   Keyboard shortcuts are implemented for managers in submission lists for efficient navigation and action.
+-   Notifications UI allows managers to configure preferences for email and Slack.
+-   Operator thresholds are managed via a dedicated manager admin UI with sliders for easy adjustment.
 
-## Manager triage flow (Task 20)
+## External Dependencies
 
-- `/live` is the manager landing page. Shows pending areas, overdue checks (per-machine when learned), low-scoring submissions (<60%), and open escalations for the current IST shift. Auto-refreshes every 30s.
-- Inline quick-label on the audit log: `Approve` (1-click, copies AI pillar scores via `POST /labels/quick-approve`) and `Needs work` (opens detail with the label form auto-scrolled into view).
-- Submissions list supports `q` (operator email / machine tag / area name), `minScorePercent`, `maxScorePercent` query params (debounced 250ms client-side).
-- Keyboard shortcuts on submissions list (manager only, suppressed on touch-only devices via `(pointer: coarse)` && `!(any-pointer: fine)`): `j`/`↓` next row, `k`/`↑` previous, `Enter` open, `g` approve, `r` resolve the open escalation on the active row (toast if none), `?` cheat sheet, `Esc` close. The `Needs work` button stays mouse-accessible on every row.
-- `GET /submissions` returns `openEscalationId` per row (max non-RESOLVED escalation id), which `r` uses to call `useResolveEscalation` and invalidate submissions / escalations / count queries.
-- Escalations supports multi-select with a sticky bottom action bar (Acknowledge / Resolve / Clear).
-- Operator clients pull active nudges every 60s via `GET /nudges` (OPERATOR-only — managers receive HTTP 403). The endpoint appends the caller's userId to `nudges.seen_by_user_ids_json` so each operator sees a nudge exactly once; the row stays alive (and the per-area/machine/shift dedupe stays active) until a manager explicitly resolves it.
-
-## Escalation notifications (Task 14)
-
-- Auto-escalation (score < 60%) fires-and-forgets `notifyEscalationCreated()` from `artifacts/api-server/src/lib/notifications.ts` after the escalation row is inserted. Failures are logged, never thrown back into the request path.
-- Per-manager toggles live on `users.notify_email_enabled` (default true) and `users.notify_slack_enabled` (default false). All MANAGER rows with the relevant flag receive the notification.
-- Email channel uses Resend (`RESEND_API_KEY` + `NOTIFICATION_FROM_EMAIL`). Sent per-recipient. No-op when env vars are missing.
-- Slack channel uses a single channel webhook (`SLACK_WEBHOOK_URL`); we post once if at least one manager has Slack enabled (the channel is shared). No-op when env var is missing.
-- Notification body includes area name, score %, failing pillars, operator email, and a deep link to `/escalations` (built from `APP_BASE_URL` or `REPLIT_DEV_DOMAIN`).
-- Manager UI: `/notifications` page (Bell icon nav link) backed by `GET/PUT /api/me/notification-preferences`. Server response also returns `emailConfigured`/`slackConfigured` so the UI can warn when toggles will be no-ops.
-- **Grouping (Task 36):** Multiple escalations in the same area within `ESCALATION_NOTIFICATION_WINDOW_MS` (default 300000 = 5 min) are batched into a single digest message ("N new escalations on Area X — lowest score Y%"). Each per-event link still resolves to the focused escalation in `/escalations`, plus a header link to the inbox. Set the env var to `0` to disable grouping (fire one message per event, like the original behavior). `flushPendingEscalationNotifications()` is exported for tests / graceful shutdown.
-
-## Escalation re-pings (Task 41)
-
-- A background sweep started in `index.ts` (`startRepingScheduler()` from `artifacts/api-server/src/lib/reping-scheduler.ts`) re-notifies managers when an escalation has been sitting in `OPEN` for too long.
-- Schema: `escalations.reping_count` (int, default 0) and `escalations.last_reping_at` (timestamptz, nullable) track delivery state per row.
-- An escalation re-pings when `status = 'OPEN'`, `repingCount < ESCALATION_REPING_MAX_COUNT`, and the most recent activity (`lastRepingAt` or `createdAt`) is older than `ESCALATION_REPING_THRESHOLD_MINUTES`. Acknowledging or resolving flips status away from `OPEN`, which silences future re-pings without touching the counter.
-- The counter is bumped via a guarded `UPDATE … WHERE status='OPEN' AND reping_count = <observed>` so concurrent sweeps (or status changes) don't double-send.
-- Re-ping notifications go out through the same email/Slack channels as the initial notify, but with an "Aging X min — reminder N/M" banner/headline.
-- Env knobs (all optional): `ESCALATION_REPING_THRESHOLD_MINUTES` (default 15), `ESCALATION_REPING_MAX_COUNT` (default 2; set to `0` to disable the scheduler), `ESCALATION_REPING_CHECK_INTERVAL_MS` (default 60000).
-- The interval is `unref()`-ed so it never blocks process exit. The scheduler is wired in `index.ts` only — tests load `app.ts` directly and therefore never start it.
-
-## Operator threshold tuning (Task 69)
-
-- Three operator-facing cutoffs are runtime-tunable without a redeploy:
-  `encouragementMinPercent` (display % at which a submission is "good"),
-  `priorBestWindowDays` (lookback for prior-best per area), and
-  `dueSoonThresholdMinutes` ("due soon" lead time for area checks).
-- Precedence: **env var > DB override > shipped default**. Defaults live in
-  `artifacts/api-server/src/lib/operator-thresholds.ts` and the parallel
-  frontend file `artifacts/five-s/src/lib/operator-thresholds.ts`.
-- Env-var overrides (read once per process): `ENCOURAGEMENT_MIN_PERCENT`,
-  `PRIOR_BEST_WINDOW_DAYS`, `DUE_SOON_THRESHOLD_MS` (note: ms, not minutes —
-  legacy name preserved). Invalid values fall through to the next layer.
-- DB overrides live in the singleton `operator_settings` row (id=1) with
-  three nullable int columns + `updated_by_user_id` / `updated_at`.
-- Endpoints: `GET /api/operator-thresholds` (any auth) returns the effective
-  values plus full provenance (`defaults`, `envOverrides`, `dbOverrides`).
-  `PUT /api/operator-thresholds` (manager-only) accepts a partial body —
-  omitted = leave untouched, `null` = clear the override, integer = set.
-  Out-of-range values are silently dropped (matches the permissive style of
-  `/me/notification-preferences`).
-- The operator UI (`useEffectiveOperatorThresholds`) polls every 60s; the
-  server-side `/operator/recent` route reloads thresholds per request, so
-  admin tweaks pick up on the next call without a process restart.
-- Manager admin UI lives at `/operator-thresholds` (Sliders icon nav tab,
-  manager-only route). Draft state syncs from server only when the saved
-  override values change (content fingerprint), so polling refetches don't
-  wipe in-flight edits.
-
-## Architecture
-
-- See `artifacts/api-server/src/routes/README.md` for route conventions (notably: never use `sql\`... = ANY(${jsArray})\`` — use drizzle's `inArray()` helper, which handles single-element arrays correctly)
-- OpenAPI spec at `lib/api-spec/openapi.yaml` is single source of truth
-- Codegen produces React Query hooks (`lib/api-client-react`) and Zod schemas (`lib/api-zod`). Both packages export from `./src` directly (no built `dist/` is committed); regenerate via `pnpm --filter @workspace/api-spec run codegen`.
-- Static file serving for uploads at `/api/uploads/`
-- Image uploads stored in `uploads/` directory at project root
-- ML Service (Python FastAPI, port 8100): CLIP embeddings, similarity computation, Ridge regression training/prediction
-- VLM Service: OpenAI-compatible API via `@workspace/integrations-openai-ai-server` for structured issue/recommendation generation
-- AI scoring is called on every submission creation; falls back to conservative zero defaults (not random) if AI pipeline is unavailable
-
-## Services
-
-- **API Server**: Express 5 on port 8080, proxied to /api
-- **Frontend**: Vite dev server (dynamic port), proxied to /
-- **ML Service**: Python FastAPI on port 8100, internal only
-- **Mockup Sandbox**: Vite on port 8081, for component previews
-
-## Frontend Config (Vite env)
-
-- `VITE_NIGHT_SHIFT_START_HOUR` — hour (0-23) the "Auto" theme should switch to dark. Default `22`.
-- `VITE_NIGHT_SHIFT_END_HOUR` — hour (0-23) the "Auto" theme should switch back to light. Default `6`. May be less than the start hour to wrap across midnight.
-- `VITE_NIGHT_SHIFT_TZ` — IANA timezone the night-shift window is evaluated in. Default `Asia/Kolkata`.
-
-## Backend Shift Config (api-server env)
-
-The API server's notion of "current shift", per-shift dashboard windows, the
-`/shift/current` and `/shift/live` endpoints, and shift-anchored due dates all
-read from these per-facility env vars at startup. Defaults match the legacy
-06/14/22 IST schedule so existing deployments need no changes.
-
-- `SHIFT_TIMEZONE` — IANA timezone the shift clock is anchored to. Default `Asia/Kolkata`.
-- `SHIFT_A_START_HOUR` — hour (0-23) shift A starts. Default `6`.
-- `SHIFT_B_START_HOUR` — hour (0-23) shift B starts. Default `14`.
-- `SHIFT_C_START_HOUR` — hour (0-23) shift C starts. Default `22`. Shift C wraps across midnight up to the next day's `SHIFT_A_START_HOUR`.
-
-Constraints: must satisfy `SHIFT_A_START_HOUR < SHIFT_B_START_HOUR < SHIFT_C_START_HOUR`. Invalid values silently fall back to the defaults.
+-   **PostgreSQL**: Primary database.
+-   **OpenAI-compatible API (Replit AI Integrations)**: For VLM (gpt-5-mini) capabilities.
+-   **Resend**: For sending email notifications.
+-   **Slack Webhooks**: For sending Slack notifications.
+-   **CLIP ViT-B/32 (open_clip_torch)**: Used in the ML service for image embedding.
+-   **scikit-learn**: Used in the ML service for Ridge regression.

@@ -6,6 +6,7 @@ import {
   pool,
   usersTable,
   operatorSettingsTable,
+  operatorSettingsAuditTable,
 } from "@workspace/db";
 import app from "../../app";
 import { signToken } from "../../lib/auth";
@@ -23,6 +24,7 @@ let managerToken: string;
 let operatorToken: string;
 
 async function clearOverrides() {
+  await db.delete(operatorSettingsAuditTable);
   await db.delete(operatorSettingsTable);
 }
 
@@ -199,5 +201,138 @@ describe("PUT /operator-thresholds", () => {
     expect(patched.body.dbOverrides.encouragementMinPercent).toBe(70);
     expect(patched.body.dbOverrides.priorBestWindowDays).toBe(10);
     expect(patched.body.dbOverrides.dueSoonThresholdMinutes).toBe(30);
+  });
+});
+
+describe("operator-thresholds audit trail", () => {
+  it("returns an empty audit history when nothing has changed yet", async () => {
+    const res = await request(app)
+      .get("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.auditHistory).toEqual([]);
+    expect(res.body.updatedByUserEmail).toBeNull();
+  });
+
+  it("resolves the manager email for the latest change", async () => {
+    await request(app)
+      .put("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ encouragementMinPercent: 65 });
+
+    const get = await request(app)
+      .get("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${operatorToken}`);
+    expect(get.status).toBe(200);
+    expect(get.body.updatedByUserId).toBe(managerId);
+    expect(get.body.updatedByUserEmail).toBe(`${RUN_TAG}-mgr@test.local`);
+  });
+
+  it("emits one audit row per field that actually moved on a single PUT", async () => {
+    const res = await request(app)
+      .put("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ encouragementMinPercent: 80, priorBestWindowDays: 21 });
+    expect(res.status).toBe(200);
+
+    expect(res.body.auditHistory).toHaveLength(2);
+    const fields = res.body.auditHistory.map(
+      (e: { field: string }) => e.field,
+    );
+    expect(fields.sort()).toEqual([
+      "encouragementMinPercent",
+      "priorBestWindowDays",
+    ]);
+    for (const entry of res.body.auditHistory) {
+      expect(entry.changedByUserId).toBe(managerId);
+      expect(entry.changedByUserEmail).toBe(`${RUN_TAG}-mgr@test.local`);
+      expect(entry.oldValue).toBeNull();
+      if (entry.field === "encouragementMinPercent") {
+        expect(entry.newValue).toBe(80);
+      } else {
+        expect(entry.newValue).toBe(21);
+      }
+    }
+  });
+
+  it("records old → new transitions and clears (set to null)", async () => {
+    await request(app)
+      .put("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ encouragementMinPercent: 70 });
+
+    await request(app)
+      .put("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ encouragementMinPercent: 85 });
+
+    const cleared = await request(app)
+      .put("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ encouragementMinPercent: null });
+
+    // Newest first.
+    expect(cleared.body.auditHistory[0]).toMatchObject({
+      field: "encouragementMinPercent",
+      oldValue: 85,
+      newValue: null,
+    });
+    expect(cleared.body.auditHistory[1]).toMatchObject({
+      field: "encouragementMinPercent",
+      oldValue: 70,
+      newValue: 85,
+    });
+    expect(cleared.body.auditHistory[2]).toMatchObject({
+      field: "encouragementMinPercent",
+      oldValue: null,
+      newValue: 70,
+    });
+  });
+
+  it("does not emit audit rows when the field value did not actually change", async () => {
+    await request(app)
+      .put("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 14 });
+
+    // Saving the same number again must not create a second audit row.
+    const noop = await request(app)
+      .put("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 14 });
+    expect(noop.body.auditHistory).toHaveLength(1);
+  });
+
+  it("ignores invalid values and records no audit row for them", async () => {
+    const res = await request(app)
+      .put("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({
+        encouragementMinPercent: 9999, // invalid → ignored
+        priorBestWindowDays: 12, // valid
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.auditHistory).toHaveLength(1);
+    expect(res.body.auditHistory[0]).toMatchObject({
+      field: "priorBestWindowDays",
+      newValue: 12,
+    });
+  });
+
+  it("caps the surfaced history at 5 entries (newest first)", async () => {
+    for (const v of [10, 11, 12, 13, 14, 15, 16]) {
+      await request(app)
+        .put("/api/operator-thresholds")
+        .set("Authorization", `Bearer ${managerToken}`)
+        .send({ priorBestWindowDays: v });
+    }
+    const get = await request(app)
+      .get("/api/operator-thresholds")
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(get.body.auditHistory).toHaveLength(5);
+    const newValues = get.body.auditHistory.map(
+      (e: { newValue: number }) => e.newValue,
+    );
+    expect(newValues).toEqual([16, 15, 14, 13, 12]);
   });
 });

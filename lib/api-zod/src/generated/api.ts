@@ -1342,6 +1342,47 @@ export const GetOperatorThresholdsResponse = zod
       .number()
       .nullish()
       .describe("Manager who last touched the DB override row."),
+    updatedByUserEmail: zod
+      .string()
+      .nullish()
+      .describe(
+        'Email of the manager who last touched the DB override row.\nResolved server-side so the admin UI can show \"last changed\nby Alice\" without a second round-trip.\n',
+      ),
+    auditHistory: zod
+      .array(
+        zod.object({
+          id: zod.number(),
+          changedAt: zod.coerce.date(),
+          changedByUserId: zod
+            .number()
+            .nullish()
+            .describe(
+              "Manager who made the change. Goes null if that user is later\ndeleted (the FK uses ON DELETE SET NULL so the rest of the\naudit row — what moved, when, from\/to — is preserved).\n",
+            ),
+          changedByUserEmail: zod
+            .string()
+            .nullish()
+            .describe("Resolved at read time; null if the user was deleted."),
+          field: zod
+            .string()
+            .describe(
+              "The threshold key that moved. One of:\nencouragementMinPercent, priorBestWindowDays,\ndueSoonThresholdMinutes.\n",
+            ),
+          oldValue: zod
+            .number()
+            .nullish()
+            .describe(
+              "Previous DB override (null = no override \/ fell back to env or default).",
+            ),
+          newValue: zod
+            .number()
+            .nullish()
+            .describe("New DB override (null = override cleared)."),
+        }),
+      )
+      .describe(
+        "Most recent per-field changes (newest first), capped at 5.\nEach entry corresponds to a single field changed in a single\nPUT — a manager who tweaks two dials at once produces two\nentries with the same `changedAt` timestamp.\n",
+      ),
   })
   .describe(
     "Effective operator-facing thresholds (env > DB > default), plus the\nper-layer overrides so the admin UI can show provenance.\n",
@@ -1502,6 +1543,47 @@ export const UpdateOperatorThresholdsResponse = zod
       .number()
       .nullish()
       .describe("Manager who last touched the DB override row."),
+    updatedByUserEmail: zod
+      .string()
+      .nullish()
+      .describe(
+        'Email of the manager who last touched the DB override row.\nResolved server-side so the admin UI can show \"last changed\nby Alice\" without a second round-trip.\n',
+      ),
+    auditHistory: zod
+      .array(
+        zod.object({
+          id: zod.number(),
+          changedAt: zod.coerce.date(),
+          changedByUserId: zod
+            .number()
+            .nullish()
+            .describe(
+              "Manager who made the change. Goes null if that user is later\ndeleted (the FK uses ON DELETE SET NULL so the rest of the\naudit row — what moved, when, from\/to — is preserved).\n",
+            ),
+          changedByUserEmail: zod
+            .string()
+            .nullish()
+            .describe("Resolved at read time; null if the user was deleted."),
+          field: zod
+            .string()
+            .describe(
+              "The threshold key that moved. One of:\nencouragementMinPercent, priorBestWindowDays,\ndueSoonThresholdMinutes.\n",
+            ),
+          oldValue: zod
+            .number()
+            .nullish()
+            .describe(
+              "Previous DB override (null = no override \/ fell back to env or default).",
+            ),
+          newValue: zod
+            .number()
+            .nullish()
+            .describe("New DB override (null = override cleared)."),
+        }),
+      )
+      .describe(
+        "Most recent per-field changes (newest first), capped at 5.\nEach entry corresponds to a single field changed in a single\nPUT — a manager who tweaks two dials at once produces two\nentries with the same `changedAt` timestamp.\n",
+      ),
   })
   .describe(
     "Effective operator-facing thresholds (env > DB > default), plus the\nper-layer overrides so the admin UI can show provenance.\n",

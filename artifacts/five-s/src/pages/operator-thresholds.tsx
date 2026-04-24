@@ -3,6 +3,7 @@ import {
   useUpdateOperatorThresholds,
   getGetOperatorThresholdsQueryKey,
   OperatorThresholds,
+  OperatorThresholdAuditEntry,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -15,6 +16,8 @@ import {
   Database,
   CheckCircle2,
   AlertTriangle,
+  History,
+  User,
 } from "lucide-react";
 
 type FieldKey =
@@ -315,16 +318,121 @@ export default function OperatorThresholdsPage() {
 }
 
 function FootNote({ data }: { data: OperatorThresholds }) {
-  const updated = data.updatedAt
-    ? new Date(data.updatedAt).toLocaleString()
-    : null;
   return (
-    <p className="text-[12px] text-muted-foreground" data-testid="thresholds-footnote">
-      Precedence: <span className="font-medium">env var</span> &gt;{" "}
-      <span className="font-medium">DB override</span> &gt;{" "}
-      <span className="font-medium">default</span>. The operator UI and the
-      /operator/recent endpoint pick up changes on their next request.
-      {updated ? ` Last DB change: ${updated}.` : ""}
+    <div className="space-y-3" data-testid="thresholds-footnote">
+      <LastChangeLine data={data} />
+      <AuditHistory entries={data.auditHistory} />
+      <p className="text-[12px] text-muted-foreground">
+        Precedence: <span className="font-medium">env var</span> &gt;{" "}
+        <span className="font-medium">DB override</span> &gt;{" "}
+        <span className="font-medium">default</span>. The operator UI and the
+        /operator/recent endpoint pick up changes on their next request.
+      </p>
+    </div>
+  );
+}
+
+function LastChangeLine({ data }: { data: OperatorThresholds }) {
+  if (!data.updatedAt) {
+    return (
+      <p className="text-[12px] text-muted-foreground" data-testid="thresholds-last-change">
+        No DB overrides have been saved yet.
+      </p>
+    );
+  }
+  const when = new Date(data.updatedAt).toLocaleString();
+  // Prefer the resolved email; fall back to a numeric id only if the user
+  // record is gone (e.g. deactivated manager).
+  const who =
+    data.updatedByUserEmail ??
+    (data.updatedByUserId != null ? `user #${data.updatedByUserId}` : null);
+  return (
+    <p
+      className="text-[12.5px] text-muted-foreground inline-flex items-center gap-1.5"
+      data-testid="thresholds-last-change"
+    >
+      <User className="w-3.5 h-3.5" />
+      Last changed by{" "}
+      <span className="font-medium text-foreground" data-testid="thresholds-last-change-who">
+        {who ?? "an unknown manager"}
+      </span>{" "}
+      on{" "}
+      <span className="font-medium text-foreground" data-testid="thresholds-last-change-when">
+        {when}
+      </span>
+      .
     </p>
+  );
+}
+
+const FIELD_LABEL: Record<string, string> = {
+  encouragementMinPercent: "Encouragement chip cutoff",
+  priorBestWindowDays: "Prior-best lookback window",
+  dueSoonThresholdMinutes: "\"Due soon\" lead time",
+};
+
+const FIELD_UNIT: Record<string, string> = {
+  encouragementMinPercent: "%",
+  priorBestWindowDays: "days",
+  dueSoonThresholdMinutes: "minutes",
+};
+
+function formatAuditValue(field: string, v: number | null | undefined): string {
+  if (v == null) return "default";
+  const unit = FIELD_UNIT[field];
+  return unit ? `${v} ${unit}` : String(v);
+}
+
+function AuditHistory({
+  entries,
+}: {
+  entries: OperatorThresholdAuditEntry[];
+}) {
+  if (entries.length === 0) {
+    return null;
+  }
+  return (
+    <div
+      className="bg-card rounded-2xl shadow-soft hairline px-5 py-4"
+      data-testid="thresholds-audit-history"
+    >
+      <p className="eyebrow inline-flex items-center gap-1.5">
+        <History className="w-3 h-3" /> Recent changes
+      </p>
+      <ul className="mt-3 divide-y divide-border">
+        {entries.map((entry) => {
+          const label = FIELD_LABEL[entry.field] ?? entry.field;
+          const oldText = formatAuditValue(entry.field, entry.oldValue);
+          const newText = formatAuditValue(entry.field, entry.newValue);
+          const who =
+            entry.changedByUserEmail ?? `user #${entry.changedByUserId}`;
+          const when = new Date(entry.changedAt).toLocaleString();
+          return (
+            <li
+              key={entry.id}
+              className="py-2 text-[12.5px] text-muted-foreground flex flex-wrap items-baseline gap-x-2"
+              data-testid={`audit-entry-${entry.id}`}
+            >
+              <span className="font-medium text-foreground">{label}</span>
+              <span className="tabular-nums">
+                <span data-testid={`audit-entry-${entry.id}-old`}>{oldText}</span>
+                {" → "}
+                <span
+                  className="font-medium text-foreground"
+                  data-testid={`audit-entry-${entry.id}-new`}
+                >
+                  {newText}
+                </span>
+              </span>
+              <span className="ml-auto text-[11.5px]">
+                <span data-testid={`audit-entry-${entry.id}-who`}>{who}</span>
+                {" · "}
+                <span data-testid={`audit-entry-${entry.id}-when`}>{when}</span>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
