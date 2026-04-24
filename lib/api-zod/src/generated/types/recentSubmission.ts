@@ -24,4 +24,6 @@ export interface RecentSubmission {
   prevScoreTotal?: number | null;
   /** The operator's max scoreTotal for this area in the 7 days strictly preceding this submission's createdAt (excluding the submission itself). Null if there were no prior submissions in that window. */
   bestScoreInLastWeek?: number | null;
+  /** Up to 2 short action labels (taken from the submission's suggestionsJson) so the operator can preview outstanding actions inline without opening the detail dialog. Always present; empty when the submission has no suggestions. */
+  topActions: string[];
 }

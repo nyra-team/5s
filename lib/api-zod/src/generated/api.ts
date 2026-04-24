@@ -597,6 +597,11 @@ export const GetOperatorRecentResponseItem = zod
       .describe(
         "The operator's max scoreTotal for this area in the 7 days strictly preceding this submission's createdAt (excluding the submission itself). Null if there were no prior submissions in that window.",
       ),
+    topActions: zod
+      .array(zod.string())
+      .describe(
+        "Up to 2 short action labels (taken from the submission's suggestionsJson) so the operator can preview outstanding actions inline without opening the detail dialog. Always present; empty when the submission has no suggestions.",
+      ),
   })
   .describe(
     "A trimmed view of the operator's own submission with prior-score context for trend rendering.",

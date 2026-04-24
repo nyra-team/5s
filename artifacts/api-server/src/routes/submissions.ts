@@ -443,6 +443,7 @@ router.get("/operator/recent", authMiddleware, async (req, res): Promise<void> =
       mediaType: submissionsTable.mediaType,
       machineTag: submissionsTable.machineTag,
       createdAt: submissionsTable.createdAt,
+      suggestionsJson: submissionsTable.suggestionsJson,
     })
     .from(submissionsTable)
     .innerJoin(areasTable, eq(submissionsTable.areaId, areasTable.id))
@@ -471,11 +472,27 @@ router.get("/operator/recent", authMiddleware, async (req, res): Promise<void> =
     const best = priorWeek.length > 0
       ? priorWeek.reduce((m, r) => (r.scoreTotal > m ? r.scoreTotal : m), -Infinity)
       : null;
+    // Surface the first ≤2 action labels inline on the recent-audits strip so
+    // the operator can prioritize re-captures without opening the detail
+    // dialog. suggestionsJson is jsonb-typed and may legitimately be empty.
+    const rawSuggestions = Array.isArray(row.suggestionsJson)
+      ? (row.suggestionsJson as unknown[])
+      : [];
+    const topActions: string[] = [];
+    for (const s of rawSuggestions) {
+      if (typeof s !== "string") continue;
+      const trimmed = s.trim();
+      if (!trimmed) continue;
+      topActions.push(trimmed);
+      if (topActions.length === 2) break;
+    }
+    const { suggestionsJson: _omit, ...rest } = row;
     return {
-      ...row,
+      ...rest,
       createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
       prevScoreTotal: prior ? prior.scoreTotal : null,
       bestScoreInLastWeek: best === -Infinity || best === null ? null : best,
+      topActions,
     };
   });
 

@@ -444,6 +444,13 @@ function RecentAuditCard({
         ? "text-rose-600 dark:text-rose-400"
         : "text-muted-foreground";
 
+  // Show up to 2 outstanding actions inline so the operator can prioritize
+  // re-captures while walking the floor. The trend line stays directly under
+  // the score; actions sit between the trend line and the timestamp footer
+  // (which is pinned to the bottom via mt-auto so a long action label can
+  // never push the trend off-card).
+  const topActions = recent.topActions ?? [];
+
   return (
     <button
       type="button"
@@ -465,6 +472,27 @@ function RecentAuditCard({
         {trendIcon}
         <span>{trendLabel}</span>
       </div>
+      {topActions.length > 0 && (
+        <ul
+          className="space-y-1"
+          aria-label="Top action items"
+          data-testid={`recent-card-actions-${recent.id}`}
+        >
+          {topActions.map((action, i) => (
+            <li
+              key={i}
+              className="flex items-start gap-1.5 text-[11.5px] text-foreground/80 leading-snug"
+            >
+              <ArrowRight className="w-3 h-3 text-primary shrink-0 mt-0.5" aria-hidden="true" />
+              {/* min-w-0 lets the flex child shrink below its intrinsic width
+                  so the truncate/ellipsis actually kicks in on long labels. */}
+              <span className="truncate min-w-0" title={action}>
+                {action}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
       <p className="text-[11px] text-muted-foreground mt-auto">
         Shift {recent.shift} · {format(new Date(recent.createdAt), "MMM d, h:mm a")}
       </p>
