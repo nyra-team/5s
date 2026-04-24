@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from "react";
 
-export type ThemeMode = "system" | "light" | "dark";
+export type ThemeMode = "system" | "light" | "dark" | "auto";
 
 interface ThemeContextValue {
   mode: ThemeMode;
@@ -17,10 +17,23 @@ function getSystemPref(): "light" | "dark" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function getShiftPref(): "light" | "dark" {
+  const nowUtcMs = Date.now();
+  const istMs = nowUtcMs + 5.5 * 60 * 60 * 1000;
+  const istHour = new Date(istMs).getUTCHours();
+  return istHour >= 22 || istHour < 6 ? "dark" : "light";
+}
+
+function resolveMode(mode: ThemeMode): "light" | "dark" {
+  if (mode === "system") return getSystemPref();
+  if (mode === "auto") return getShiftPref();
+  return mode;
+}
+
 function readStored(): ThemeMode {
   if (typeof window === "undefined") return "system";
   const v = localStorage.getItem(STORAGE_KEY);
-  return v === "light" || v === "dark" || v === "system" ? v : "system";
+  return v === "light" || v === "dark" || v === "system" || v === "auto" ? v : "system";
 }
 
 function applyTheme(resolved: "light" | "dark") {
@@ -32,12 +45,10 @@ function applyTheme(resolved: "light" | "dark") {
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [mode, setModeState] = useState<ThemeMode>(() => readStored());
-  const [resolved, setResolved] = useState<"light" | "dark">(() =>
-    readStored() === "system" ? getSystemPref() : (readStored() as "light" | "dark")
-  );
+  const [resolved, setResolved] = useState<"light" | "dark">(() => resolveMode(readStored()));
 
   useEffect(() => {
-    const next = mode === "system" ? getSystemPref() : mode;
+    const next = resolveMode(mode);
     setResolved(next);
     applyTheme(next);
   }, [mode]);
@@ -52,6 +63,20 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     };
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== "auto") return;
+    const tick = () => {
+      const next = getShiftPref();
+      setResolved((prev) => {
+        if (prev !== next) applyTheme(next);
+        return next;
+      });
+    };
+    tick();
+    const interval = window.setInterval(tick, 60 * 1000);
+    return () => window.clearInterval(interval);
   }, [mode]);
 
   const setMode = (m: ThemeMode) => {

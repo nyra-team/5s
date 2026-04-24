@@ -1,4 +1,4 @@
-import { Sun, Moon, Monitor } from "lucide-react";
+import { Sun, Moon, Monitor, Clock } from "lucide-react";
 import { useTheme, ThemeMode } from "@/lib/theme";
 import {
   DropdownMenu,
@@ -16,6 +16,7 @@ export function ThemeToggle() {
     { value: "light", label: "Light", icon: Sun },
     { value: "dark", label: "Dark", icon: Moon },
     { value: "system", label: "System", icon: Monitor },
+    { value: "auto", label: "Auto (shift-based)", icon: Clock },
   ];
 
   return (
