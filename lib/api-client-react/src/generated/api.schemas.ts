@@ -579,7 +579,20 @@ export type GetDashboardTrendsParams = {
    * @maximum 60
    */
   days?: number;
+  /**
+   * Restrict each day's average to submissions from a single shift.
+   */
+  shift?: GetDashboardTrendsShift;
 };
+
+export type GetDashboardTrendsShift =
+  (typeof GetDashboardTrendsShift)[keyof typeof GetDashboardTrendsShift];
+
+export const GetDashboardTrendsShift = {
+  A: "A",
+  B: "B",
+  C: "C",
+} as const;
 
 export type GetOperatorStatusParams = {
   shift?: GetOperatorStatusShift;

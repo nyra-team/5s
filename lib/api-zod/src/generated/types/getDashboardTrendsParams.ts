@@ -5,6 +5,7 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { GetDashboardTrendsShift } from "./getDashboardTrendsShift";
 
 export type GetDashboardTrendsParams = {
   /**
@@ -12,4 +13,8 @@ export type GetDashboardTrendsParams = {
    * @maximum 60
    */
   days?: number;
+  /**
+   * Restrict each day's average to submissions from a single shift.
+   */
+  shift?: GetDashboardTrendsShift;
 };

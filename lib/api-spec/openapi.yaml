@@ -427,6 +427,12 @@ paths:
             minimum: 1
             maximum: 60
             default: 14
+        - name: shift
+          in: query
+          description: Restrict each day's average to submissions from a single shift.
+          schema:
+            type: string
+            enum: [A, B, C]
       responses:
         "200":
           description: Trend per area

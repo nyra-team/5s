@@ -469,6 +469,12 @@ export const GetDashboardTrendsQueryParams = zod.object({
     .min(1)
     .max(getDashboardTrendsQueryDaysMax)
     .default(getDashboardTrendsQueryDaysDefault),
+  shift: zod
+    .enum(["A", "B", "C"])
+    .optional()
+    .describe(
+      "Restrict each day's average to submissions from a single shift.",
+    ),
 });
 
 export const GetDashboardTrendsResponseItem = zod.object({

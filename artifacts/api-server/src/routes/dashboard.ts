@@ -205,6 +205,7 @@ router.get("/dashboard/summary", authMiddleware, requireRole("MANAGER"), async (
 router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
   const parsed = GetDashboardTrendsQueryParams.safeParse(req.query);
   const days = parsed.success ? parsed.data.days : 14;
+  const shift = parsed.success ? parsed.data.shift : undefined;
 
   // Window end = end of today (IST), window start = start of the day (today - days + 1).
   const todayRange = getISTDayRange();
@@ -225,6 +226,19 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
 
   const istDayExpr = sql<string>`to_char(${submissionsTable.createdAt} at time zone 'Asia/Kolkata', 'YYYY-MM-DD')`;
 
+  // When a shift filter is provided, every day's average reflects only that
+  // shift's submissions; the date window itself is unchanged.
+  const dailyWhere = shift
+    ? and(
+        gte(submissionsTable.createdAt, windowStart),
+        lt(submissionsTable.createdAt, windowEnd),
+        eq(submissionsTable.shift, shift)
+      )
+    : and(
+        gte(submissionsTable.createdAt, windowStart),
+        lt(submissionsTable.createdAt, windowEnd)
+      );
+
   const dailyRows = await db
     .select({
       areaId: submissionsTable.areaId,
@@ -233,12 +247,7 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
       count: count(),
     })
     .from(submissionsTable)
-    .where(
-      and(
-        gte(submissionsTable.createdAt, windowStart),
-        lt(submissionsTable.createdAt, windowEnd)
-      )
-    )
+    .where(dailyWhere)
     .groupBy(submissionsTable.areaId, istDayExpr);
 
   const byArea = new Map<number, Map<string, { avgScore: number; count: number }>>();

@@ -1,8 +1,10 @@
-import { useGetDashboardCompliance, useGetDashboardScores, useGetDashboardSummary, useListAreas, useGetAreaProfile, useGetDashboardTrends, type AreaTrend } from "@workspace/api-client-react";
+import { useGetDashboardCompliance, useGetDashboardScores, useGetDashboardSummary, useListAreas, useGetAreaProfile, useGetDashboardTrends, type AreaTrend, type GetDashboardTrendsShift } from "@workspace/api-client-react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from "recharts";
 import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { useState } from "react";
 import { Link } from "wouter";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 function HeroStat({
   label,
@@ -274,10 +276,27 @@ function LearningChip({ areaId, areaName }: { areaId: number; areaName: string }
   );
 }
 
-function LearningTrendPanel() {
-  const { data: trends, isLoading } = useGetDashboardTrends({ days: 14 });
+type TrendDays = 7 | 14 | 30;
+type TrendShiftFilter = "ALL" | GetDashboardTrendsShift;
 
-  if (isLoading) {
+const DAYS_OPTIONS: TrendDays[] = [7, 14, 30];
+const SHIFT_OPTIONS: { value: TrendShiftFilter; label: string }[] = [
+  { value: "ALL", label: "All" },
+  { value: "A", label: "A" },
+  { value: "B", label: "B" },
+  { value: "C", label: "C" },
+];
+
+function LearningTrendPanel() {
+  const [days, setDays] = useState<TrendDays>(14);
+  const [shiftFilter, setShiftFilter] = useState<TrendShiftFilter>("ALL");
+
+  const { data: trends, isLoading } = useGetDashboardTrends({
+    days,
+    ...(shiftFilter === "ALL" ? {} : { shift: shiftFilter }),
+  });
+
+  if (isLoading && !trends) {
     return (
       <section className="bg-card rounded-2xl shadow-soft p-6">
         <div className="h-40 bg-secondary rounded-xl animate-pulse" />
@@ -287,18 +306,81 @@ function LearningTrendPanel() {
 
   if (!trends || trends.length === 0) return null;
 
+  const shiftSuffix = shiftFilter === "ALL" ? "" : ` · Shift ${shiftFilter}`;
+
   return (
     <section className="bg-card rounded-2xl shadow-soft p-6" data-testid="dashboard-trends">
-      <div className="flex items-start justify-between mb-5">
+      <div className="flex flex-col gap-4 mb-5 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <p className="eyebrow">AI learning</p>
-          <h2 className="text-lg font-semibold tracking-tight mt-1">Score trends (14 days)</h2>
+          <h2 className="text-lg font-semibold tracking-tight mt-1">
+            Score trends ({days} days{shiftSuffix})
+          </h2>
           <p className="text-[13px] text-muted-foreground mt-1">
             Daily average score per area. The dot marks the day the AI graduated to <span className="font-medium text-foreground">Trained</span>.
           </p>
         </div>
-        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-          <TrendingUp className="w-4 h-4 text-primary" />
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4 lg:flex-shrink-0">
+          <div className="flex items-center gap-2" data-testid="trend-days-toggle">
+            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+              Window
+            </span>
+            <ToggleGroup
+              type="single"
+              size="sm"
+              value={String(days)}
+              onValueChange={(v) => {
+                if (!v) return;
+                const next = Number(v) as TrendDays;
+                if (DAYS_OPTIONS.includes(next)) setDays(next);
+              }}
+              className="gap-0 rounded-lg border border-border bg-secondary/40 p-0.5"
+            >
+              {DAYS_OPTIONS.map((d) => (
+                <ToggleGroupItem
+                  key={d}
+                  value={String(d)}
+                  aria-label={`${d} days`}
+                  data-testid={`trend-days-${d}`}
+                  className="h-7 px-2.5 text-[12px] data-[state=on]:bg-card data-[state=on]:shadow-soft"
+                >
+                  {d}d
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+          <div className="flex items-center gap-2" data-testid="trend-shift-toggle">
+            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+              Shift
+            </span>
+            <ToggleGroup
+              type="single"
+              size="sm"
+              value={shiftFilter}
+              onValueChange={(v) => {
+                if (!v) return;
+                if (SHIFT_OPTIONS.some((o) => o.value === v)) {
+                  setShiftFilter(v as TrendShiftFilter);
+                }
+              }}
+              className="gap-0 rounded-lg border border-border bg-secondary/40 p-0.5"
+            >
+              {SHIFT_OPTIONS.map((o) => (
+                <ToggleGroupItem
+                  key={o.value}
+                  value={o.value}
+                  aria-label={o.value === "ALL" ? "All shifts" : `Shift ${o.value}`}
+                  data-testid={`trend-shift-${o.value}`}
+                  className="h-7 px-2.5 text-[12px] data-[state=on]:bg-card data-[state=on]:shadow-soft"
+                >
+                  {o.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+          <div className="hidden lg:flex w-8 h-8 rounded-full bg-primary/10 items-center justify-center">
+            <TrendingUp className="w-4 h-4 text-primary" />
+          </div>
         </div>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

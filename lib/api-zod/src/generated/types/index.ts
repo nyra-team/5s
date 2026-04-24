@@ -37,6 +37,7 @@ export * from "./getDashboardComplianceShift";
 export * from "./getDashboardScoresGroupBy";
 export * from "./getDashboardScoresParams";
 export * from "./getDashboardTrendsParams";
+export * from "./getDashboardTrendsShift";
 export * from "./getOperatorRecentParams";
 export * from "./getOperatorStatusParams";
 export * from "./getOperatorStatusShift";
