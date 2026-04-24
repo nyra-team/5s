@@ -499,7 +499,7 @@ function readPersistedTrendShift(): TrendShiftFilter {
   } catch { return "ALL"; }
 }
 
-function LearningTrendPanel() {
+export function LearningTrendPanel() {
   const [days, setDays] = useState<TrendDays>(readPersistedTrendDays);
   const [shiftFilter, setShiftFilter] = useState<TrendShiftFilter>(readPersistedTrendShift);
 
