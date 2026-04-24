@@ -73,11 +73,12 @@ import {
   purgeStaleCaptureDrafts,
 } from "@/lib/capture-drafts";
 import { getShiftLabels } from "@/lib/theme";
+import { OPERATOR_THRESHOLDS } from "@/lib/operator-thresholds";
 
 const SHIFT_OPTIONS = getShiftLabels();
 
 const RECENT_STRIP_PREF_KEY = "operator.recentStrip.collapsed";
-const DUE_SOON_THRESHOLD_MS = 60 * 60 * 1000; // 1h
+const { ENCOURAGEMENT_MIN_PERCENT, DUE_SOON_THRESHOLD_MS } = OPERATOR_THRESHOLDS;
 
 type DueState = "overdue" | "due-soon" | "ok";
 
@@ -249,7 +250,7 @@ export default function OperatorHome() {
     for (const r of recent) {
       if (m.has(r.areaId)) continue;
       const pct = Math.round(r.scoreTotal * 4);
-      if (pct >= 80) m.set(r.areaId, { scorePercent: pct, createdAt: r.createdAt });
+      if (pct >= ENCOURAGEMENT_MIN_PERCENT) m.set(r.areaId, { scorePercent: pct, createdAt: r.createdAt });
     }
     return m;
   }, [recent]);
@@ -870,7 +871,7 @@ function AreaCard({
     // "+N vs last time" when there is a prior submission but no week-best.
     const ctx = recentForSubmission;
     let encouragement: { kind: "best" | "delta"; label: string } | null = null;
-    if (ctx && ctx.scoreTotal === sub.scoreTotal && scorePercent >= 80) {
+    if (ctx && ctx.scoreTotal === sub.scoreTotal && scorePercent >= ENCOURAGEMENT_MIN_PERCENT) {
       if (
         ctx.bestScoreInLastWeek == null ||
         ctx.scoreTotal > ctx.bestScoreInLastWeek

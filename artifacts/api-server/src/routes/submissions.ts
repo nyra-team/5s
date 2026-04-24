@@ -25,6 +25,7 @@ import { recordCheck } from "../lib/schedule";
 import { dismissNudgesForSubmission } from "./nudges";
 import { logger } from "../lib/logger.js";
 import { notifyEscalationCreated } from "../lib/notifications.js";
+import { PRIOR_BEST_WINDOW_MS } from "../lib/operator-thresholds.js";
 
 const ESCALATION_THRESHOLD_PERCENT = (() => {
   const raw = parseInt(process.env.ESCALATION_THRESHOLD_PERCENT ?? "", 10);
@@ -497,20 +498,18 @@ router.get("/operator/recent", authMiddleware, async (req, res): Promise<void> =
     )
     .orderBy(sql`${submissionsTable.createdAt} DESC`);
 
-  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
   // For each submission, find the operator's prior submission for the same area
-  // (any time before this one) and the operator's best score for the area in the
-  // 7 days strictly preceding this submission's timestamp (excluding the row
-  // itself). Anchoring to each row's own timestamp keeps the encouragement chip
-  // accurate for older cards too.
+  // (any time before this one) and the operator's best score for the area in
+  // the prior-best window strictly preceding this submission's timestamp
+  // (excluding the row itself). Anchoring to each row's own timestamp keeps the
+  // encouragement chip accurate for older cards too.
   const result = rows.slice(0, limit).map((row) => {
     const rowTime = new Date(row.createdAt).getTime();
     const sameAreaPrior = rows.filter(
       (r) => r.areaId === row.areaId && r.id !== row.id && new Date(r.createdAt).getTime() < rowTime
     );
     const prior = sameAreaPrior[0]; // rows are DESC, so first match is the most recent prior
-    const priorWeek = sameAreaPrior.filter((r) => new Date(r.createdAt).getTime() >= rowTime - WEEK_MS);
+    const priorWeek = sameAreaPrior.filter((r) => new Date(r.createdAt).getTime() >= rowTime - PRIOR_BEST_WINDOW_MS);
     const best = priorWeek.length > 0
       ? priorWeek.reduce((m, r) => (r.scoreTotal > m ? r.scoreTotal : m), -Infinity)
       : null;

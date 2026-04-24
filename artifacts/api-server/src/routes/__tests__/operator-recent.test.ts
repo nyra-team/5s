@@ -10,6 +10,7 @@ import {
 } from "@workspace/db";
 import app from "../../app";
 import { signToken } from "../../lib/auth";
+import { PRIOR_BEST_WINDOW_MS } from "../../lib/operator-thresholds";
 
 // These tests exercise GET /operator/recent end-to-end against the real
 // Postgres dev database. They isolate themselves by using a unique email +
@@ -178,12 +179,13 @@ describe("GET /operator/recent", () => {
     expect(oldestA.prevScoreTotal).toBeNull();
   });
 
-  it("respects the 7-day window boundary for bestScoreInLastWeek", async () => {
+  it("respects the prior-best window boundary for bestScoreInLastWeek", async () => {
     // Anchor a target submission at "now" and create three priors:
-    //   * 2d earlier, score 15 (inside the 7d window)
-    //   * 6d 23h earlier, score 21 (just inside the 7d window)
-    //   * 7d 1h earlier, score 25 (just outside the 7d window — must be excluded)
+    //   * 2d earlier, score 15 (well inside the window)
+    //   * 1h before the window edge, score 21 (just inside the window)
+    //   * 1h past the window edge, score 25 (just outside — must be excluded)
     // Expect bestScoreInLastWeek = 21 (max of the in-window priors).
+    const HOUR_MS = 60 * 60 * 1000;
     const now = Date.now();
     const target = await insertSubmission({
       userId,
@@ -195,19 +197,19 @@ describe("GET /operator/recent", () => {
       userId,
       areaId: areaA.id,
       scoreTotal: 15,
-      createdAt: new Date(now - 2 * 24 * 60 * 60 * 1000),
+      createdAt: new Date(now - 2 * 24 * HOUR_MS),
     });
     await insertSubmission({
       userId,
       areaId: areaA.id,
       scoreTotal: 21,
-      createdAt: new Date(now - (7 * 24 * 60 * 60 * 1000 - 60 * 60 * 1000)),
+      createdAt: new Date(now - (PRIOR_BEST_WINDOW_MS - HOUR_MS)),
     });
     await insertSubmission({
       userId,
       areaId: areaA.id,
       scoreTotal: 25,
-      createdAt: new Date(now - (7 * 24 * 60 * 60 * 1000 + 60 * 60 * 1000)),
+      createdAt: new Date(now - (PRIOR_BEST_WINDOW_MS + HOUR_MS)),
     });
 
     const res = await request(app)
@@ -218,11 +220,12 @@ describe("GET /operator/recent", () => {
     const targetRow = res.body.find((r: { id: number }) => r.id === target.id);
     expect(targetRow).toBeDefined();
     expect(targetRow.bestScoreInLastWeek).toBe(21);
-    // The 25-pt submission is older than 7d → must NOT leak in as the best.
+    // The 25-pt submission is older than the window → must NOT leak in.
     expect(targetRow.bestScoreInLastWeek).not.toBe(25);
   });
 
   it("returns null bestScoreInLastWeek when there are no prior submissions in the window", async () => {
+    const HOUR_MS = 60 * 60 * 1000;
     const now = Date.now();
     const target = await insertSubmission({
       userId,
@@ -230,12 +233,12 @@ describe("GET /operator/recent", () => {
       scoreTotal: 10,
       createdAt: new Date(now),
     });
-    // Only an out-of-window prior (> 7d ago).
+    // Only an out-of-window prior — comfortably past the window edge.
     await insertSubmission({
       userId,
       areaId: areaA.id,
       scoreTotal: 20,
-      createdAt: new Date(now - 10 * 24 * 60 * 60 * 1000),
+      createdAt: new Date(now - (PRIOR_BEST_WINDOW_MS + 3 * 24 * HOUR_MS)),
     });
 
     const res = await request(app)

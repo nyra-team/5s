@@ -51,6 +51,7 @@ const mockState = {
   shift: { shift: "A" } as { shift: "A" | "B" | "C" },
   profile: undefined as unknown,
   nudges: [] as unknown[],
+  nudgesByArea: [] as unknown[],
   submission: undefined as unknown,
 };
 
@@ -65,6 +66,7 @@ vi.mock("@workspace/api-client-react", () => {
     useGetNextChecks: stub("nextChecks"),
     useGetOperatorRecent: stub("recent"),
     useGetActiveNudges: stub("nudges"),
+    useGetActiveNudgesByArea: stub("nudgesByArea"),
     useGetAreaProfile: stub("profile"),
     useGetSubmission: stub("submission"),
     useCreateSubmission: () => ({
@@ -80,6 +82,7 @@ vi.mock("@workspace/api-client-react", () => {
     getGetNextChecksQueryKey: () => ["next-checks"],
     getGetOperatorRecentQueryKey: () => ["recent"],
     getGetActiveNudgesQueryKey: () => ["nudges"],
+    getGetActiveNudgesByAreaQueryKey: () => ["nudges-by-area"],
     getGetSubmissionQueryKey: () => ["submission"],
     getGetAreaProfileQueryKey: () => ["profile"],
   };
@@ -102,6 +105,7 @@ vi.mock("@/lib/auth", () => ({
 // QueryClientProvider is needed because operator.tsx calls useQueryClient.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import OperatorHome from "../operator";
+import { OPERATOR_THRESHOLDS } from "@/lib/operator-thresholds";
 import type {
   AreaStatus,
   NextCheck,
@@ -110,6 +114,15 @@ import type {
 } from "@workspace/api-client-react";
 
 const RECENT_STRIP_PREF_KEY = "operator.recentStrip.collapsed";
+
+// Derive boundary scoreTotal values from the shared threshold so the tests
+// stay correct if the threshold is tuned. scoreTotal is 0..25 and percent is
+// scoreTotal * 4, so any scoreTotal >= ceil(MIN_PCT/4) is "good".
+const MIN_GOOD_SCORE_TOTAL = Math.ceil(
+  OPERATOR_THRESHOLDS.ENCOURAGEMENT_MIN_PERCENT / 4,
+);
+const SCORE_TOTAL_ABOVE_THRESHOLD = Math.min(25, MIN_GOOD_SCORE_TOTAL + 2);
+const SCORE_TOTAL_BELOW_THRESHOLD = Math.max(0, MIN_GOOD_SCORE_TOTAL - 1);
 
 function renderOperator() {
   const qc = new QueryClient({
@@ -279,9 +292,10 @@ describe("OperatorHome — area sort order", () => {
 });
 
 describe("OperatorHome — encouragement chip", () => {
-  it("renders 'New best this week' when score ≥80% AND beats prior week best", () => {
-    // scoreTotal 22 → 88%; beats bestScoreInLastWeek 18 (72%).
-    const submission = makeSubmission({ id: 555, areaId: 7, scoreTotal: 22 });
+  it("renders 'New best this week' when score is at/above the threshold AND beats prior week best", () => {
+    const goodScore = SCORE_TOTAL_ABOVE_THRESHOLD;
+    const priorBest = Math.max(0, goodScore - 4);
+    const submission = makeSubmission({ id: 555, areaId: 7, scoreTotal: goodScore });
     mockState.statuses = [
       makeStatus({
         areaId: 7,
@@ -294,9 +308,9 @@ describe("OperatorHome — encouragement chip", () => {
       makeRecent({
         id: submission.id,
         areaId: 7,
-        scoreTotal: 22,
-        prevScoreTotal: 18,
-        bestScoreInLastWeek: 18,
+        scoreTotal: goodScore,
+        prevScoreTotal: priorBest,
+        bestScoreInLastWeek: priorBest,
       }),
     ];
 
@@ -305,9 +319,9 @@ describe("OperatorHome — encouragement chip", () => {
     expect(chip).toHaveTextContent(/New best this week/);
   });
 
-  it("does NOT render the chip when score is below 80% even if it beats the prior best", () => {
-    // scoreTotal 19 → 76%, below the 80% threshold.
-    const submission = makeSubmission({ id: 556, areaId: 8, scoreTotal: 19 });
+  it("does NOT render the chip when score is below the threshold even if it beats the prior best", () => {
+    const lowScore = SCORE_TOTAL_BELOW_THRESHOLD;
+    const submission = makeSubmission({ id: 556, areaId: 8, scoreTotal: lowScore });
     mockState.statuses = [
       makeStatus({
         areaId: 8,
@@ -320,9 +334,9 @@ describe("OperatorHome — encouragement chip", () => {
       makeRecent({
         id: submission.id,
         areaId: 8,
-        scoreTotal: 19,
-        prevScoreTotal: 10,
-        bestScoreInLastWeek: 10,
+        scoreTotal: lowScore,
+        prevScoreTotal: Math.max(0, lowScore - 5),
+        bestScoreInLastWeek: Math.max(0, lowScore - 5),
       }),
     ];
 
@@ -333,8 +347,11 @@ describe("OperatorHome — encouragement chip", () => {
   });
 
   it("does NOT render the chip when the score does not beat prior week best", () => {
-    // scoreTotal 22 (88%) but bestScoreInLastWeek already 23 — should suppress.
-    const submission = makeSubmission({ id: 557, areaId: 9, scoreTotal: 22 });
+    const goodScore = SCORE_TOTAL_ABOVE_THRESHOLD;
+    // Cap prior best at 25 (scoreTotal max) — when the boundary is already at
+    // the ceiling we tie rather than exceed, which still suppresses the chip.
+    const priorBest = Math.min(25, goodScore + 1);
+    const submission = makeSubmission({ id: 557, areaId: 9, scoreTotal: goodScore });
     mockState.statuses = [
       makeStatus({
         areaId: 9,
@@ -347,9 +364,9 @@ describe("OperatorHome — encouragement chip", () => {
       makeRecent({
         id: submission.id,
         areaId: 9,
-        scoreTotal: 22,
-        prevScoreTotal: 22,
-        bestScoreInLastWeek: 23,
+        scoreTotal: goodScore,
+        prevScoreTotal: goodScore,
+        bestScoreInLastWeek: priorBest,
       }),
     ];
 
