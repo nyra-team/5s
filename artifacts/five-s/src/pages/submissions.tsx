@@ -22,6 +22,14 @@ import { useAuth } from "@/lib/auth";
 import {
   CheckCircle2, ArrowRight, Brain, AlertTriangle, MapPin, Tag, Video, Image as ImageIcon, Sparkles,
 } from "lucide-react";
+import { motion } from "framer-motion";
+
+const SHIFT_FILTER_OPTIONS = [
+  { value: "", label: "All" },
+  { value: "A", label: "A" },
+  { value: "B", label: "B" },
+  { value: "C", label: "C" },
+] as const;
 
 function scoreTone(percent: number) {
   if (percent >= 80) return { text: "text-emerald-700 dark:text-emerald-300", bg: "bg-emerald-50 dark:bg-emerald-500/15" };
@@ -317,15 +325,32 @@ export default function Submissions() {
         </div>
         <div className="space-y-1.5">
           <Label className="eyebrow">Shift</Label>
-          <Select value={shiftFilter} onValueChange={setShiftFilter}>
-            <SelectTrigger className="h-11 rounded-xl bg-secondary/60 border-transparent"><SelectValue placeholder="All shifts" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All shifts</SelectItem>
-              <SelectItem value="A">Shift A</SelectItem>
-              <SelectItem value="B">Shift B</SelectItem>
-              <SelectItem value="C">Shift C</SelectItem>
-            </SelectContent>
-          </Select>
+          <div role="tablist" className="inline-flex p-1 pill-track rounded-full h-11">
+            {SHIFT_FILTER_OPTIONS.map((opt) => {
+              const active = shiftFilter === opt.value;
+              return (
+                <button
+                  key={opt.value || "all"}
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setShiftFilter(opt.value)}
+                  data-testid={`button-shift-filter-${opt.value || "all"}`}
+                  className={`relative px-4 rounded-full text-[13px] font-medium whitespace-nowrap transition-colors min-w-[52px] ${
+                    active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {active && (
+                    <motion.span
+                      layoutId="submissions-shift-filter-pill"
+                      className="absolute inset-0 pill-thumb-bg rounded-full shadow-soft"
+                      transition={{ type: "spring", stiffness: 500, damping: 38 }}
+                    />
+                  )}
+                  <span className="relative z-10">{opt.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
         <div className="space-y-1.5">
           <Label className="eyebrow">Area</Label>
