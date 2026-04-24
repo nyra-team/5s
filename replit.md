@@ -73,6 +73,15 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - Escalations supports multi-select with a sticky bottom action bar (Acknowledge / Resolve / Clear).
 - Operator clients pull active nudges every 60s via `GET /nudges` (OPERATOR-only — managers receive HTTP 403). The endpoint appends the caller's userId to `nudges.seen_by_user_ids_json` so each operator sees a nudge exactly once; the row stays alive (and the per-area/machine/shift dedupe stays active) until a manager explicitly resolves it.
 
+## Escalation notifications (Task 14)
+
+- Auto-escalation (score < 60%) fires-and-forgets `notifyEscalationCreated()` from `artifacts/api-server/src/lib/notifications.ts` after the escalation row is inserted. Failures are logged, never thrown back into the request path.
+- Per-manager toggles live on `users.notify_email_enabled` (default true) and `users.notify_slack_enabled` (default false). All MANAGER rows with the relevant flag receive the notification.
+- Email channel uses Resend (`RESEND_API_KEY` + `NOTIFICATION_FROM_EMAIL`). Sent per-recipient. No-op when env vars are missing.
+- Slack channel uses a single channel webhook (`SLACK_WEBHOOK_URL`); we post once if at least one manager has Slack enabled (the channel is shared). No-op when env var is missing.
+- Notification body includes area name, score %, failing pillars, operator email, and a deep link to `/escalations` (built from `APP_BASE_URL` or `REPLIT_DEV_DOMAIN`).
+- Manager UI: `/notifications` page (Bell icon nav link) backed by `GET/PUT /api/me/notification-preferences`. Server response also returns `emailConfigured`/`slackConfigured` so the UI can warn when toggles will be no-ops.
+
 ## Architecture
 
 - OpenAPI spec at `lib/api-spec/openapi.yaml` is single source of truth

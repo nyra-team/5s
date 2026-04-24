@@ -6,7 +6,7 @@ import {
   getListEscalationsQueryKey,
   getGetEscalationCountQueryKey,
 } from "@workspace/api-client-react";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -20,14 +20,26 @@ const STATUSES = [
   { value: "ALL", label: "All" },
 ] as const;
 
+function readFocusId(): number | null {
+  if (typeof window === "undefined") return null;
+  const raw = new URLSearchParams(window.location.search).get("focus");
+  if (!raw) return null;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 export default function EscalationsPage() {
-  const [status, setStatus] = useState<(typeof STATUSES)[number]["value"]>("OPEN");
+  const [status, setStatus] = useState<(typeof STATUSES)[number]["value"]>(() =>
+    readFocusId() ? "ALL" : "OPEN",
+  );
   const { data: escalations, isLoading } = useListEscalations({ status });
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const ack = useAcknowledgeEscalation();
   const resolve = useResolveEscalation();
+  const focusId = readFocusId();
+  const focusedRef = useRef(false);
 
   // Reset selections when the visible list changes (e.g. switching tabs).
   useEffect(() => {
@@ -163,6 +175,13 @@ export default function EscalationsPage() {
               escalation={e}
               selected={selected.has(e.id)}
               onToggleSelect={() => toggleOne(e.id)}
+              focused={focusId === e.id}
+              onMounted={(node) => {
+                if (focusId === e.id && node && !focusedRef.current) {
+                  focusedRef.current = true;
+                  node.scrollIntoView({ behavior: "smooth", block: "center" });
+                }
+              }}
             />
           ))}
         </div>
@@ -221,10 +240,14 @@ function EscalationCard({
   escalation: e,
   selected,
   onToggleSelect,
+  focused,
+  onMounted,
 }: {
   escalation: Escalation;
   selected: boolean;
   onToggleSelect: () => void;
+  focused?: boolean;
+  onMounted?: (node: HTMLDivElement | null) => void;
 }) {
   const ack = useAcknowledgeEscalation();
   const resolve = useResolveEscalation();
@@ -244,7 +267,10 @@ function EscalationCard({
 
   return (
     <div
-      className={`bg-card rounded-2xl shadow-soft hover:shadow-elevated transition-shadow p-5 sm:p-6 flex flex-col gap-4 ${selected ? "ring-2 ring-primary/60" : ""}`}
+      ref={onMounted}
+      className={`bg-card rounded-2xl shadow-soft hover:shadow-elevated transition-shadow p-5 sm:p-6 flex flex-col gap-4 ${
+        selected ? "ring-2 ring-primary/60" : focused ? "ring-2 ring-amber-400 ring-offset-2 ring-offset-background" : ""
+      }`}
       data-testid={`card-escalation-${e.id}`}
     >
       <div className="flex items-start justify-between gap-3">

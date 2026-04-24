@@ -42,6 +42,7 @@ import type {
   LoginResponse,
   ModelStatus,
   NextCheck,
+  NotificationPreferences,
   Nudge,
   QuickApproveLabelBody,
   RecentSubmission,
@@ -50,6 +51,7 @@ import type {
   Submission,
   UpdateAreaBody,
   UpdateAreaProfileBody,
+  UpdateNotificationPreferencesBody,
   User,
 } from "./api.schemas";
 
@@ -2692,6 +2694,178 @@ export function useGetLabels<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Get the calling user's notification preferences (and provider config status)
+ */
+export const getGetMyNotificationPreferencesUrl = () => {
+  return `/api/me/notification-preferences`;
+};
+
+export const getMyNotificationPreferences = async (
+  options?: RequestInit,
+): Promise<NotificationPreferences> => {
+  return customFetch<NotificationPreferences>(
+    getGetMyNotificationPreferencesUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetMyNotificationPreferencesQueryKey = () => {
+  return [`/api/me/notification-preferences`] as const;
+};
+
+export const getGetMyNotificationPreferencesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMyNotificationPreferences>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getMyNotificationPreferences>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetMyNotificationPreferencesQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getMyNotificationPreferences>>
+  > = ({ signal }) =>
+    getMyNotificationPreferences({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMyNotificationPreferences>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetMyNotificationPreferencesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMyNotificationPreferences>>
+>;
+export type GetMyNotificationPreferencesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the calling user's notification preferences (and provider config status)
+ */
+
+export function useGetMyNotificationPreferences<
+  TData = Awaited<ReturnType<typeof getMyNotificationPreferences>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getMyNotificationPreferences>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetMyNotificationPreferencesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update the calling user's notification preferences
+ */
+export const getUpdateMyNotificationPreferencesUrl = () => {
+  return `/api/me/notification-preferences`;
+};
+
+export const updateMyNotificationPreferences = async (
+  updateNotificationPreferencesBody: UpdateNotificationPreferencesBody,
+  options?: RequestInit,
+): Promise<NotificationPreferences> => {
+  return customFetch<NotificationPreferences>(
+    getUpdateMyNotificationPreferencesUrl(),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(updateNotificationPreferencesBody),
+    },
+  );
+};
+
+export const getUpdateMyNotificationPreferencesMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateMyNotificationPreferences>>,
+    TError,
+    { data: BodyType<UpdateNotificationPreferencesBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateMyNotificationPreferences>>,
+  TError,
+  { data: BodyType<UpdateNotificationPreferencesBody> },
+  TContext
+> => {
+  const mutationKey = ["updateMyNotificationPreferences"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateMyNotificationPreferences>>,
+    { data: BodyType<UpdateNotificationPreferencesBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return updateMyNotificationPreferences(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateMyNotificationPreferencesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateMyNotificationPreferences>>
+>;
+export type UpdateMyNotificationPreferencesMutationBody =
+  BodyType<UpdateNotificationPreferencesBody>;
+export type UpdateMyNotificationPreferencesMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update the calling user's notification preferences
+ */
+export const useUpdateMyNotificationPreferences = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateMyNotificationPreferences>>,
+    TError,
+    { data: BodyType<UpdateNotificationPreferencesBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateMyNotificationPreferences>>,
+  TError,
+  { data: BodyType<UpdateNotificationPreferencesBody> },
+  TContext
+> => {
+  return useMutation(
+    getUpdateMyNotificationPreferencesMutationOptions(options),
+  );
+};
 
 /**
  * @summary Get learning status for an area

@@ -10,6 +10,7 @@ import escalationsRouter from "./escalations";
 import scheduleRouter from "./schedule";
 import nudgesRouter from "./nudges";
 import liveRouter from "./live";
+import preferencesRouter from "./preferences";
 
 const router: IRouter = Router();
 
@@ -24,5 +25,6 @@ router.use(escalationsRouter);
 router.use(scheduleRouter);
 router.use(nudgesRouter);
 router.use(liveRouter);
+router.use(preferencesRouter);
 
 export default router;

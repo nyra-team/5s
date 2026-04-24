@@ -36,6 +36,22 @@ export interface LoginResponse {
   user: User;
 }
 
+export interface NotificationPreferences {
+  notifyEmailEnabled: boolean;
+  notifySlackEnabled: boolean;
+  /** True when the server has the keys needed to actually send email. */
+  emailConfigured: boolean;
+  /** True when the server has a Slack webhook configured. */
+  slackConfigured: boolean;
+  /** The address email notifications would be sent to (the user's account email). */
+  email: string;
+}
+
+export interface UpdateNotificationPreferencesBody {
+  notifyEmailEnabled?: boolean;
+  notifySlackEnabled?: boolean;
+}
+
 export interface Area {
   id: number;
   name: string;

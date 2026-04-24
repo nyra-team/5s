@@ -32,6 +32,8 @@ tags:
     description: In-app reminders from managers to operators
   - name: live
     description: Live shift snapshot for managers
+  - name: preferences
+    description: Per-user preferences (notifications, etc.)
 
 paths:
   /healthz:
@@ -661,6 +663,36 @@ paths:
                 items:
                   $ref: "#/components/schemas/Label"
 
+  /me/notification-preferences:
+    get:
+      operationId: getMyNotificationPreferences
+      tags: [preferences]
+      summary: Get the calling user's notification preferences (and provider config status)
+      responses:
+        "200":
+          description: Preferences
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPreferences"
+    put:
+      operationId: updateMyNotificationPreferences
+      tags: [preferences]
+      summary: Update the calling user's notification preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateNotificationPreferencesBody"
+      responses:
+        "200":
+          description: Preferences updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPreferences"
+
   /areas/{id}/model-status:
     get:
       operationId: getAreaModelStatus
@@ -726,6 +758,37 @@ components:
           type: string
           enum: [OPERATOR, MANAGER]
       required: [id, email, role]
+
+    NotificationPreferences:
+      type: object
+      properties:
+        notifyEmailEnabled:
+          type: boolean
+        notifySlackEnabled:
+          type: boolean
+        emailConfigured:
+          type: boolean
+          description: True when the server has the keys needed to actually send email.
+        slackConfigured:
+          type: boolean
+          description: True when the server has a Slack webhook configured.
+        email:
+          type: string
+          description: The address email notifications would be sent to (the user's account email).
+      required:
+        - notifyEmailEnabled
+        - notifySlackEnabled
+        - emailConfigured
+        - slackConfigured
+        - email
+
+    UpdateNotificationPreferencesBody:
+      type: object
+      properties:
+        notifyEmailEnabled:
+          type: boolean
+        notifySlackEnabled:
+          type: boolean
 
     Area:
       type: object

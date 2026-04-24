@@ -17,6 +17,7 @@ import Submissions from "@/pages/submissions";
 import Areas from "@/pages/areas";
 import Escalations from "@/pages/escalations";
 import LiveShift from "@/pages/live";
+import Notifications from "@/pages/notifications";
 
 const queryClient = new QueryClient();
 
@@ -69,6 +70,14 @@ function Router() {
         <ProtectedRoute allowedRoles={["MANAGER"]}>
           <Layout>
             <Escalations />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+
+      <Route path="/notifications">
+        <ProtectedRoute allowedRoles={["MANAGER"]}>
+          <Layout>
+            <Notifications />
           </Layout>
         </ProtectedRoute>
       </Route>

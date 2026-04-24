@@ -18,6 +18,7 @@ import { isVideoFile } from "../lib/keyframes.js";
 import { ingestProfileExtract, getOrCreateProfile, TRAINING_THRESHOLD } from "../lib/learning";
 import { recordCheck } from "../lib/schedule";
 import { logger } from "../lib/logger.js";
+import { notifyEscalationCreated } from "../lib/notifications.js";
 
 const ESCALATION_THRESHOLD_PERCENT = (() => {
   const raw = parseInt(process.env.ESCALATION_THRESHOLD_PERCENT ?? "", 10);
@@ -182,7 +183,9 @@ async function runScoringPipeline(opts: {
 async function maybeCreateEscalation(args: {
   submissionId: number;
   areaId: number;
+  areaName: string;
   operatorId: number;
+  operatorEmail: string;
   scoreTotal: number;
   scorePercent: number;
   failingPillars: string[];
@@ -190,17 +193,34 @@ async function maybeCreateEscalation(args: {
   evidenceUrls: string[];
 }) {
   if (args.scorePercent >= ESCALATION_THRESHOLD_PERCENT) return;
-  await db.insert(escalationsTable).values({
-    submissionId: args.submissionId,
-    areaId: args.areaId,
-    operatorId: args.operatorId,
-    scoreTotal: args.scoreTotal,
-    scorePercent: args.scorePercent,
-    failingPillarsJson: args.failingPillars,
-    recommendedActionsJson: args.recommendedActions,
-    evidenceUrlsJson: args.evidenceUrls,
-    status: "OPEN",
-  });
+  const [created] = await db
+    .insert(escalationsTable)
+    .values({
+      submissionId: args.submissionId,
+      areaId: args.areaId,
+      operatorId: args.operatorId,
+      scoreTotal: args.scoreTotal,
+      scorePercent: args.scorePercent,
+      failingPillarsJson: args.failingPillars,
+      recommendedActionsJson: args.recommendedActions,
+      evidenceUrlsJson: args.evidenceUrls,
+      status: "OPEN",
+    })
+    .returning({ id: escalationsTable.id });
+
+  // Fire-and-forget so a flaky email/Slack provider can never wedge the
+  // submission response. Errors are logged inside notifyEscalationCreated.
+  if (created) {
+    void notifyEscalationCreated({
+      escalationId: created.id,
+      submissionId: args.submissionId,
+      areaName: args.areaName,
+      scorePercent: args.scorePercent,
+      failingPillars: args.failingPillars,
+      operatorEmail: args.operatorEmail,
+      recommendedActions: args.recommendedActions,
+    }).catch((err) => logger.error({ err, escalationId: created.id }, "notify: unhandled error"));
+  }
 }
 
 router.post("/submissions", authMiddleware, uploadFields, async (req, res): Promise<void> => {
@@ -269,13 +289,17 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
   // Update schedule cadence and last-check time (area baseline + per-machine if tagged)
   try { await recordCheck(areaId, machineTag ?? null, submission.createdAt); } catch (err) { logger.error({ err }, "recordCheck failed"); }
 
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+
   // Auto-escalate on failure
   const scorePercent = Math.round(finalScoreTotal * 4);
   try {
     await maybeCreateEscalation({
       submissionId: submission.id,
       areaId,
+      areaName: area.name,
       operatorId: userId,
+      operatorEmail: user?.email ?? "",
       scoreTotal: finalScoreTotal,
       scorePercent,
       failingPillars: scoring.failingPillars,
@@ -286,7 +310,6 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
     logger.error({ err }, "Failed to create escalation");
   }
 
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
   res.status(201).json({
     ...submission,
     areaName: area.name,
@@ -355,12 +378,16 @@ router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req
   try { await ingestProfileExtract(existing.areaId, scoring.profile); } catch (err) { logger.error({ err }, "ingest profile failed"); }
   try { await recordCheck(existing.areaId, machineTag ?? null, new Date()); } catch (err) { logger.error({ err }, "recordCheck failed"); }
 
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+
   const scorePercent = Math.round(finalScoreTotal * 4);
   try {
     await maybeCreateEscalation({
       submissionId: id,
       areaId: existing.areaId,
+      areaName: area?.name ?? "",
       operatorId: userId,
+      operatorEmail: user?.email ?? "",
       scoreTotal: finalScoreTotal,
       scorePercent,
       failingPillars: scoring.failingPillars,
@@ -371,7 +398,6 @@ router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req
     logger.error({ err }, "Failed to create escalation on reupload");
   }
 
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
   res.json({
     ...updated,
     areaName: area?.name ?? "",

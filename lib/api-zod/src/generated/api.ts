@@ -818,6 +818,53 @@ export const GetLabelsResponseItem = zod.object({
 export const GetLabelsResponse = zod.array(GetLabelsResponseItem);
 
 /**
+ * @summary Get the calling user's notification preferences (and provider config status)
+ */
+export const GetMyNotificationPreferencesResponse = zod.object({
+  notifyEmailEnabled: zod.boolean(),
+  notifySlackEnabled: zod.boolean(),
+  emailConfigured: zod
+    .boolean()
+    .describe(
+      "True when the server has the keys needed to actually send email.",
+    ),
+  slackConfigured: zod
+    .boolean()
+    .describe("True when the server has a Slack webhook configured."),
+  email: zod
+    .string()
+    .describe(
+      "The address email notifications would be sent to (the user's account email).",
+    ),
+});
+
+/**
+ * @summary Update the calling user's notification preferences
+ */
+export const UpdateMyNotificationPreferencesBody = zod.object({
+  notifyEmailEnabled: zod.boolean().optional(),
+  notifySlackEnabled: zod.boolean().optional(),
+});
+
+export const UpdateMyNotificationPreferencesResponse = zod.object({
+  notifyEmailEnabled: zod.boolean(),
+  notifySlackEnabled: zod.boolean(),
+  emailConfigured: zod
+    .boolean()
+    .describe(
+      "True when the server has the keys needed to actually send email.",
+    ),
+  slackConfigured: zod
+    .boolean()
+    .describe("True when the server has a Slack webhook configured."),
+  email: zod
+    .string()
+    .describe(
+      "The address email notifications would be sent to (the user's account email).",
+    ),
+});
+
+/**
  * @summary Get learning status for an area
  */
 export const GetAreaModelStatusParams = zod.object({
