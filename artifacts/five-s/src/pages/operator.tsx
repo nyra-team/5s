@@ -1450,14 +1450,17 @@ export function AreaCard({
                 </p>
               )}
               {draftSavedAt != null && (
-                <p
-                  className="inline-flex items-center gap-1.5 text-[12px] font-medium text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 px-2.5 py-1 rounded-full"
+                <button
+                  type="button"
+                  onClick={openCaptureSheet}
+                  className="inline-flex items-center gap-1.5 text-[12px] font-medium text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 active:bg-sky-200/80 dark:active:bg-sky-500/30 active:scale-[0.98] motion-reduce:active:scale-100 transition-colors motion-reduce:transition-none px-2.5 py-1 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 focus-visible:ring-offset-background cursor-pointer"
                   data-testid={`pill-draft-saved-${status.areaId}`}
-                  title={`Draft saved ${format(new Date(draftSavedAt), "MMM d, h:mm a")}`}
+                  title={`Draft saved ${format(new Date(draftSavedAt), "MMM d, h:mm a")} — tap to resume`}
+                  aria-label={`Resume draft saved ${formatDistanceToNowStrict(new Date(draftSavedAt), { addSuffix: true })}`}
                 >
                   <Save className="w-3.5 h-3.5" /> Draft saved{" "}
                   {formatDistanceToNowStrict(new Date(draftSavedAt), { addSuffix: true })}
-                </p>
+                </button>
               )}
             </div>
             {dueInfo && (overdue || dueSoon) && (
