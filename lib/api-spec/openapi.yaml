@@ -40,6 +40,8 @@ tags:
     description: User directory (manager-only)
   - name: assignments
     description: Operator → area assignments
+  - name: admin
+    description: Manager-only maintenance endpoints (backfills, etc.)
 
 paths:
   /healthz:
@@ -1344,6 +1346,52 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/backfill-reasoning:
+    get:
+      operationId: getBackfillReasoningStatus
+      tags: [admin]
+      summary: How many legacy submissions still need their AI reasoning backfilled
+      responses:
+        "200":
+          description: Outstanding backfill count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackfillReasoningStatus"
+    post:
+      operationId: backfillReasoning
+      tags: [admin]
+      summary: Re-run the VLM against legacy submissions and persist their per-pillar reasoning (manager only)
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Max submissions to process this call (default 25, cap 100)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: submissionId
+          in: query
+          required: false
+          description: Process only this one submission (overrides limit)
+          schema:
+            type: integer
+            minimum: 1
+        - name: dryRun
+          in: query
+          required: false
+          description: Report what would change without touching the DB or hitting the VLM
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Per-row outcomes plus updated outstanding count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackfillReasoningResult"
 
 components:
   schemas:
@@ -3151,3 +3199,52 @@ components:
         - overdueChecks
         - lowScoring
         - openEscalations
+
+    BackfillReasoningStatus:
+      type: object
+      properties:
+        remaining:
+          type: integer
+          description: Submissions still missing aiReasoningJson
+      required: [remaining]
+
+    BackfillReasoningRowResult:
+      type: object
+      properties:
+        submissionId:
+          type: integer
+        status:
+          type: string
+          enum: [updated, missing_media, scoring_failed, would_update]
+        reason:
+          type: string
+      required: [submissionId, status]
+
+    BackfillReasoningResult:
+      type: object
+      properties:
+        scanned:
+          type: integer
+        updated:
+          type: integer
+        missingMedia:
+          type: integer
+        scoringFailed:
+          type: integer
+        dryRun:
+          type: boolean
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/BackfillReasoningRowResult"
+        remaining:
+          type: integer
+          description: How many legacy rows are still outstanding after this batch
+      required:
+        - scanned
+        - updated
+        - missingMedia
+        - scoringFailed
+        - dryRun
+        - results
+        - remaining

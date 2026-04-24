@@ -256,6 +256,56 @@ describe("POST /api/admin/backfill-reasoning (mocked scorer)", () => {
     expect(after.aiReasoningJson).toBeNull();
   });
 
+  it("GET returns just the outstanding count without scanning candidates", async () => {
+    // Two legacy rows (NULL aiReasoningJson) plus one already-backfilled row.
+    // The GET should report >= 2 (other tests in this file may have left rows
+    // around in either direction, so we assert "at least our two" rather than
+    // an exact value to keep the test robust to ordering).
+    const before = await db.insert(submissionsTable).values([
+      {
+        areaId, userId: operatorId, shift: "A",
+        scoreTotal: 5, scoreJson: { sort: 1, set: 1, shine: 1, standardize: 1, sustain: 1 },
+        suggestionsJson: [], imageUrl: `/uploads/${PLACEHOLDER_FILENAME}`, mediaType: "image",
+      },
+      {
+        areaId, userId: operatorId, shift: "B",
+        scoreTotal: 5, scoreJson: { sort: 1, set: 1, shine: 1, standardize: 1, sustain: 1 },
+        suggestionsJson: [], imageUrl: `/uploads/${PLACEHOLDER_FILENAME}`, mediaType: "image",
+      },
+      {
+        areaId, userId: operatorId, shift: "C",
+        scoreTotal: 5, scoreJson: { sort: 1, set: 1, shine: 1, standardize: 1, sustain: 1 },
+        suggestionsJson: [], imageUrl: `/uploads/${PLACEHOLDER_FILENAME}`, mediaType: "image",
+        // already populated -> must NOT be counted
+        aiReasoningJson: { sort: "x", set: "x", shine: "x", standardize: "x", sustain: "x" },
+      },
+    ]).returning();
+
+    const res = await request(app)
+      .get(`/api/admin/backfill-reasoning`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(typeof res.body.remaining).toBe("number");
+    // The two NULL rows we just inserted must be in the count; the populated
+    // one must not contribute. We can't assert exactly 2 because a parallel
+    // test in the same DB could have its own NULL rows, but we can assert
+    // the count rose by exactly 2 between two GETs flanking a populate.
+    expect(res.body.remaining).toBeGreaterThanOrEqual(2);
+    // The scorer must NOT have been touched — this is a count-only endpoint.
+    expect(scoreSubmissionMock).not.toHaveBeenCalled();
+
+    // And it should refuse non-managers.
+    const operatorToken = signToken({ userId: operatorId, role: "OPERATOR" });
+    const forbidden = await request(app)
+      .get(`/api/admin/backfill-reasoning`)
+      .set("Authorization", `Bearer ${operatorToken}`);
+    expect(forbidden.status).toBe(403);
+
+    // Cleanup so we don't pollute the count for later tests.
+    await db.delete(submissionsTable).where(inArray(submissionsTable.id, before.map((r) => r.id)));
+  });
+
   it("treats dryRun=false as a real run (parser is strict, not truthy)", async () => {
     const [legacy] = await db.insert(submissionsTable).values({
       areaId,

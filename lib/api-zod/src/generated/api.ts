@@ -3256,3 +3256,58 @@ export const ClearAreaOperatorThresholdsResponse = zod
   .describe(
     "Effective per-area operator thresholds (env > area-DB > global-DB >\ndefault) plus every layer's source values so the admin UI can show\nprovenance per field.\n",
   );
+
+/**
+ * @summary How many legacy submissions still need their AI reasoning backfilled
+ */
+export const GetBackfillReasoningStatusResponse = zod.object({
+  remaining: zod.number().describe("Submissions still missing aiReasoningJson"),
+});
+
+/**
+ * @summary Re-run the VLM against legacy submissions and persist their per-pillar reasoning (manager only)
+ */
+export const backfillReasoningQueryLimitMax = 100;
+
+export const BackfillReasoningQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(backfillReasoningQueryLimitMax)
+    .optional()
+    .describe("Max submissions to process this call (default 25, cap 100)"),
+  submissionId: zod.coerce
+    .number()
+    .min(1)
+    .optional()
+    .describe("Process only this one submission (overrides limit)"),
+  dryRun: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Report what would change without touching the DB or hitting the VLM",
+    ),
+});
+
+export const BackfillReasoningResponse = zod.object({
+  scanned: zod.number(),
+  updated: zod.number(),
+  missingMedia: zod.number(),
+  scoringFailed: zod.number(),
+  dryRun: zod.boolean(),
+  results: zod.array(
+    zod.object({
+      submissionId: zod.number(),
+      status: zod.enum([
+        "updated",
+        "missing_media",
+        "scoring_failed",
+        "would_update",
+      ]),
+      reason: zod.string().optional(),
+    }),
+  ),
+  remaining: zod
+    .number()
+    .describe("How many legacy rows are still outstanding after this batch"),
+});

@@ -1246,6 +1246,38 @@ export interface LiveShift {
   openEscalations: Escalation[];
 }
 
+export interface BackfillReasoningStatus {
+  /** Submissions still missing aiReasoningJson */
+  remaining: number;
+}
+
+export type BackfillReasoningRowResultStatus =
+  (typeof BackfillReasoningRowResultStatus)[keyof typeof BackfillReasoningRowResultStatus];
+
+export const BackfillReasoningRowResultStatus = {
+  updated: "updated",
+  missing_media: "missing_media",
+  scoring_failed: "scoring_failed",
+  would_update: "would_update",
+} as const;
+
+export interface BackfillReasoningRowResult {
+  submissionId: number;
+  status: BackfillReasoningRowResultStatus;
+  reason?: string;
+}
+
+export interface BackfillReasoningResult {
+  scanned: number;
+  updated: number;
+  missingMedia: number;
+  scoringFailed: number;
+  dryRun: boolean;
+  results: BackfillReasoningRowResult[];
+  /** How many legacy rows are still outstanding after this batch */
+  remaining: number;
+}
+
 export type ListSubmissionsParams = {
   shift?: ListSubmissionsShift;
   areaId?: number;
@@ -1446,3 +1478,21 @@ export const GetActiveNudgesByAreaShift = {
   B: "B",
   C: "C",
 } as const;
+
+export type BackfillReasoningParams = {
+  /**
+   * Max submissions to process this call (default 25, cap 100)
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  /**
+   * Process only this one submission (overrides limit)
+   * @minimum 1
+   */
+  submissionId?: number;
+  /**
+   * Report what would change without touching the DB or hitting the VLM
+   */
+  dryRun?: string;
+};

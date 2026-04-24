@@ -25,6 +25,9 @@ import type {
   AreaProfile,
   AreaStatus,
   AreaTrend,
+  BackfillReasoningParams,
+  BackfillReasoningResult,
+  BackfillReasoningStatus,
   ComplianceData,
   CreateAreaBody,
   CreateLabelBody,
@@ -5131,4 +5134,179 @@ export const useClearAreaOperatorThresholds = <
   TContext
 > => {
   return useMutation(getClearAreaOperatorThresholdsMutationOptions(options));
+};
+
+/**
+ * @summary How many legacy submissions still need their AI reasoning backfilled
+ */
+export const getGetBackfillReasoningStatusUrl = () => {
+  return `/api/admin/backfill-reasoning`;
+};
+
+export const getBackfillReasoningStatus = async (
+  options?: RequestInit,
+): Promise<BackfillReasoningStatus> => {
+  return customFetch<BackfillReasoningStatus>(
+    getGetBackfillReasoningStatusUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetBackfillReasoningStatusQueryKey = () => {
+  return [`/api/admin/backfill-reasoning`] as const;
+};
+
+export const getGetBackfillReasoningStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBackfillReasoningStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getBackfillReasoningStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetBackfillReasoningStatusQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getBackfillReasoningStatus>>
+  > = ({ signal }) => getBackfillReasoningStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBackfillReasoningStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBackfillReasoningStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBackfillReasoningStatus>>
+>;
+export type GetBackfillReasoningStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary How many legacy submissions still need their AI reasoning backfilled
+ */
+
+export function useGetBackfillReasoningStatus<
+  TData = Awaited<ReturnType<typeof getBackfillReasoningStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getBackfillReasoningStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBackfillReasoningStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Re-run the VLM against legacy submissions and persist their per-pillar reasoning (manager only)
+ */
+export const getBackfillReasoningUrl = (params?: BackfillReasoningParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/admin/backfill-reasoning?${stringifiedParams}`
+    : `/api/admin/backfill-reasoning`;
+};
+
+export const backfillReasoning = async (
+  params?: BackfillReasoningParams,
+  options?: RequestInit,
+): Promise<BackfillReasoningResult> => {
+  return customFetch<BackfillReasoningResult>(getBackfillReasoningUrl(params), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getBackfillReasoningMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof backfillReasoning>>,
+    TError,
+    { params?: BackfillReasoningParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof backfillReasoning>>,
+  TError,
+  { params?: BackfillReasoningParams },
+  TContext
+> => {
+  const mutationKey = ["backfillReasoning"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof backfillReasoning>>,
+    { params?: BackfillReasoningParams }
+  > = (props) => {
+    const { params } = props ?? {};
+
+    return backfillReasoning(params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BackfillReasoningMutationResult = NonNullable<
+  Awaited<ReturnType<typeof backfillReasoning>>
+>;
+
+export type BackfillReasoningMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Re-run the VLM against legacy submissions and persist their per-pillar reasoning (manager only)
+ */
+export const useBackfillReasoning = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof backfillReasoning>>,
+    TError,
+    { params?: BackfillReasoningParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof backfillReasoning>>,
+  TError,
+  { params?: BackfillReasoningParams },
+  TContext
+> => {
+  return useMutation(getBackfillReasoningMutationOptions(options));
 };

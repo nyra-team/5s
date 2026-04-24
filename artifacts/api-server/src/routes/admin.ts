@@ -32,6 +32,29 @@ function parseDryRun(raw: unknown): boolean {
 }
 
 /**
+ * GET /api/admin/backfill-reasoning
+ *
+ * Lightweight read-only counterpart to the POST below: returns just how many
+ * legacy submissions still have a NULL `aiReasoningJson`. The manager
+ * dashboard polls this so the "Backfill AI explanations" panel can show the
+ * outstanding count without having to actually trigger (or even dry-run) a
+ * batch — dry-running still scans candidates and is overkill when all we need
+ * is the headline number.
+ */
+router.get(
+  "/admin/backfill-reasoning",
+  authMiddleware,
+  requireRole("MANAGER"),
+  async (_req, res): Promise<void> => {
+    const [{ remaining }] = await db
+      .select({ remaining: sql<number>`count(*)::int` })
+      .from(submissionsTable)
+      .where(isNull(submissionsTable.aiReasoningJson));
+    res.json({ remaining });
+  },
+);
+
+/**
  * POST /api/admin/backfill-reasoning
  *
  * Manager-only one-shot endpoint that drains legacy submissions whose

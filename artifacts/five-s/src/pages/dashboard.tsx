@@ -12,14 +12,18 @@ import {
   useGetDashboardAiCost,
   useGetAreaDetectionAgreement,
   useSendOperatorCoachingNudge,
+  useGetBackfillReasoningStatus,
+  useBackfillReasoning,
+  getGetBackfillReasoningStatusQueryKey,
   type AreaTrend,
   type GetDashboardTrendsShift,
   type OperatorDismissSummary,
   type OperatorCoachingNudgeResult,
   type OperatorCoachingNudgeThrottled,
 } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ResponsiveContainer, ReferenceDot } from "recharts";
-import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle, Repeat, Search, Send } from "lucide-react";
+import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle, Repeat, Search, Send, FileQuestion, Loader2 } from "lucide-react";
 import { format, parseISO, formatDistanceToNow } from "date-fns";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
@@ -157,6 +161,8 @@ export default function Dashboard() {
       <AiReliabilityPanel />
 
       <AiCostPanel />
+
+      <BackfillReasoningPanel />
 
       <LearningStatusPanel />
 
@@ -595,6 +601,162 @@ function AiCostPanel() {
           <AiCostWindowTable label="Last 30 days" rows={last30d} testId="ai-cost-30d" />
         </div>
       )}
+    </section>
+  );
+}
+
+// How many legacy submissions we re-score per click. Small enough to keep one
+// click cheap (each row triggers a fresh VLM call), big enough to actually
+// chip away at a real backlog over a handful of presses.
+const BACKFILL_BATCH_SIZE = 25;
+
+// Surfaces the "AI explanations" backfill progress so a manager can see how
+// many older audits still say "No reasoning recorded." in their detail dialog
+// and trigger a batch fill from the dashboard instead of curl-ing the admin
+// endpoint by hand.
+function BackfillReasoningPanel() {
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError: statusError } = useGetBackfillReasoningStatus();
+  const mutation = useBackfillReasoning();
+
+  // While the mutation is in flight we want both the button disabled AND the
+  // count to read as in-flight, so a manager can't double-tap and queue up
+  // ten parallel batches by accident. React Query's `isPending` already
+  // serialises clicks for us — we just have to honour it visually.
+  const isRunning = mutation.isPending;
+  const remaining = data?.remaining ?? 0;
+  // Critically: we must NOT treat "GET failed" as "0 remaining" — that would
+  // misleadingly flip the panel into the green "all caught up" state and
+  // disable the button when the backend was just briefly unreachable. We
+  // only consider ourselves caught up when the GET actually succeeded with
+  // a 0 count.
+  const hasStatus = !isLoading && !statusError && data !== undefined;
+  const isCaughtUp = hasStatus && remaining === 0;
+
+  const handleClick = () => {
+    if (isRunning) return;
+    mutation.mutate(
+      { params: { limit: BACKFILL_BATCH_SIZE } },
+      {
+        onSettled: () => {
+          // Always refresh the headline count, win or lose. Even on a partial
+          // failure (some rows missing media, some scoring_failed) the
+          // outstanding count may have shifted, so we refetch instead of
+          // trusting the response payload's `remaining` so a concurrent
+          // run/upload can't leave us with a stale number.
+          queryClient.invalidateQueries({
+            queryKey: getGetBackfillReasoningStatusQueryKey(),
+          });
+        },
+      },
+    );
+  };
+
+  const lastResult = mutation.data;
+
+  return (
+    <section
+      className="bg-card rounded-2xl shadow-soft p-6"
+      data-testid="backfill-reasoning-panel"
+    >
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-5">
+        <div className="min-w-0">
+          <p className="eyebrow">AI explanations</p>
+          <h2 className="text-lg font-semibold tracking-tight mt-1">
+            Backfill missing reasoning
+          </h2>
+          <p className="text-[13px] text-muted-foreground mt-1 max-w-xl">
+            Older audits don't have the per-pillar "why" the AI now records.
+            Run a batch to re-score them in the background so their detail
+            dialogs stop saying "No reasoning recorded."
+          </p>
+        </div>
+        <div
+          className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
+            isCaughtUp
+              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+              : "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+          }`}
+        >
+          <FileQuestion className="w-4 h-4" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-4 sm:items-end">
+        <div className="rounded-xl bg-secondary/40 px-4 py-3">
+          <p className="text-[12px] font-medium text-muted-foreground uppercase tracking-wide">
+            Audits still missing reasoning
+          </p>
+          <div className="flex items-baseline gap-2 mt-2">
+            <span
+              className="text-[26px] leading-none font-semibold tabular-nums"
+              data-testid="backfill-reasoning-remaining"
+            >
+              {isLoading || statusError ? "—" : remaining.toLocaleString()}
+            </span>
+            <span className="text-[11.5px] text-muted-foreground">
+              {statusError
+                ? "couldn't load count"
+                : isCaughtUp
+                ? "all caught up"
+                : `processing ${BACKFILL_BATCH_SIZE} per batch`}
+            </span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleClick}
+          disabled={isRunning || isLoading || statusError || isCaughtUp}
+          data-testid="backfill-reasoning-run"
+          className="inline-flex items-center justify-center gap-2 h-11 px-5 rounded-xl bg-primary text-primary-foreground text-[13px] font-medium shadow-soft hover:shadow-elevated transition-all duration-150 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:shadow-soft active:scale-[0.99] motion-reduce:active:scale-100"
+        >
+          {isRunning ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Running…
+            </>
+          ) : statusError ? (
+            "Status unavailable"
+          ) : isCaughtUp ? (
+            "Nothing to backfill"
+          ) : (
+            `Run batch of ${BACKFILL_BATCH_SIZE}`
+          )}
+        </button>
+      </div>
+
+      {statusError ? (
+        <p
+          className="text-[12.5px] text-rose-600 dark:text-rose-400 mt-3"
+          data-testid="backfill-reasoning-status-error"
+        >
+          Couldn't load the outstanding count. Reload the dashboard to retry.
+        </p>
+      ) : null}
+
+      {mutation.isError ? (
+        <p
+          className="text-[12.5px] text-rose-600 dark:text-rose-400 mt-3"
+          data-testid="backfill-reasoning-error"
+        >
+          Couldn't run the backfill. Try again in a moment.
+        </p>
+      ) : lastResult ? (
+        <p
+          className="text-[12.5px] text-muted-foreground mt-3"
+          data-testid="backfill-reasoning-last-result"
+        >
+          Last batch: scanned {lastResult.scanned}, filled in {lastResult.updated}
+          {lastResult.missingMedia > 0
+            ? `, ${lastResult.missingMedia} missing media`
+            : ""}
+          {lastResult.scoringFailed > 0
+            ? `, ${lastResult.scoringFailed} couldn't be re-scored`
+            : ""}
+          .
+        </p>
+      ) : null}
     </section>
   );
 }
