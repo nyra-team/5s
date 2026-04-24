@@ -160,6 +160,42 @@ describe("operator <AreaCard> manager-nudge surfaces", () => {
     expect(screen.queryByTestId(`nudge-banner-${baseStatus.areaId}`)).toBeNull();
   });
 
+  test("exposes the absolute timestamp via title on the overdue 'Last checked' line", () => {
+    // Ten minutes ago — far enough back that the relative label reads ">5 min".
+    const lastCheck = new Date(Date.now() - 10 * 60_000);
+    const dueAt = new Date(Date.now() - 60_000); // already past
+    render(
+      withQueryClient(
+        <AreaCard
+          status={baseStatus}
+          selectedShift="A"
+          assignedAreas={[baseStatus]}
+          dueState="overdue"
+          dueInfo={{
+            areaId: baseStatus.areaId,
+            lastCheckAt: lastCheck.toISOString(),
+            nextDueAt: dueAt.toISOString(),
+            cadenceMinutes: 60,
+          }}
+          recentForSubmission={undefined}
+          lastGood={null}
+          activeNudges={[]}
+          encouragementMinPercent={80}
+        />,
+      ),
+    );
+
+    // The relative label should render and carry a `title` containing the
+    // formatted absolute timestamp (e.g. "Last checked Apr 24, 2026 11:00 AM").
+    const line = screen.getByText(/Last checked .* ago\./);
+    expect(line).toBeInTheDocument();
+    const title = line.getAttribute("title");
+    expect(title).toMatch(/^Last checked /);
+    // Year is part of the absolute format — guards against a future swap to a
+    // relative-only string that would re-introduce the staleness bug.
+    expect(title).toMatch(/\d{4}/);
+  });
+
   test("shows a count badge on the pill when multiple nudges are open for the area", () => {
     render(
       withQueryClient(

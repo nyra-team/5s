@@ -1008,6 +1008,10 @@ export function AreaCard({
   activeNudges: Nudge[];
   encouragementMinPercent: number;
 }) {
+  // Tick once a minute so the relative-time labels this card owns
+  // ("Last checked X ago", "Next due in X", "Draft saved X ago") stay
+  // fresh without waiting for the next data refetch.
+  useMinuteTick();
   const [isCaptureOpen, setIsCaptureOpen] = useState(false);
   const [isReuploadMode, setIsReuploadMode] = useState(false);
   const [media, setMedia] = useState<File | null>(null);
@@ -1617,7 +1621,16 @@ export function AreaCard({
               )}
             </div>
             {dueInfo && (overdue || dueSoon) && (
-              <p className="text-[12px] text-muted-foreground leading-snug max-w-[34ch]">
+              <p
+                className="text-[12px] text-muted-foreground leading-snug max-w-[34ch]"
+                title={
+                  overdue
+                    ? dueInfo.lastCheckAt
+                      ? `Last checked ${format(new Date(dueInfo.lastCheckAt), "MMM d, yyyy h:mm a")}`
+                      : undefined
+                    : `Next due ${format(new Date(dueInfo.nextDueAt), "MMM d, yyyy h:mm a")}`
+                }
+              >
                 {overdue
                   ? dueInfo.lastCheckAt
                     ? `Last checked ${formatDistanceToNowStrict(new Date(dueInfo.lastCheckAt))} ago.`
@@ -1708,15 +1721,30 @@ export function AreaCard({
 
 // Forces the calling component to re-render once per minute so any
 // "x minutes ago" labels it owns stay fresh while the page is open.
-// Each caller installs its own interval; that is fine at the current
-// (single-banner) scale but would warrant a shared ticker if we ever
-// render many of these on one page.
+// All subscribers share a single module-level interval so a grid full
+// of pending area cards doesn't spin up one timer per card.
+const minuteTickListeners = new Set<() => void>();
+let minuteTickIntervalId: ReturnType<typeof setInterval> | null = null;
+
+function subscribeMinuteTick(listener: () => void) {
+  minuteTickListeners.add(listener);
+  if (minuteTickIntervalId == null) {
+    minuteTickIntervalId = setInterval(() => {
+      for (const fn of minuteTickListeners) fn();
+    }, 60_000);
+  }
+  return () => {
+    minuteTickListeners.delete(listener);
+    if (minuteTickListeners.size === 0 && minuteTickIntervalId != null) {
+      clearInterval(minuteTickIntervalId);
+      minuteTickIntervalId = null;
+    }
+  };
+}
+
 function useMinuteTick() {
   const [, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 60_000);
-    return () => clearInterval(id);
-  }, []);
+  useEffect(() => subscribeMinuteTick(() => setTick((t) => t + 1)), []);
 }
 
 // Renders the manager's prompts inline on a pending area card. Picks the most
@@ -1912,6 +1940,9 @@ function CaptureSheet({
   chosenAreaId: number;
   onChangeArea: (areaId: number) => void;
 }) {
+  // The "Resume draft saved X ago" banner stays fresh because AreaCard
+  // (this component's parent) installs useMinuteTick and re-renders us
+  // every minute — no need to subscribe again here.
   const isVideo = !!media && media.type.startsWith("video/");
   const chosenAreaName =
     assignedAreas.find((a) => a.areaId === chosenAreaId)?.areaName ?? areaName;
@@ -1939,6 +1970,7 @@ function CaptureSheet({
             <div
               className="flex items-center gap-2 rounded-xl border border-dashed border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-[12.5px] text-amber-800 dark:text-amber-200"
               data-testid="banner-resume-draft"
+              title={`Draft saved ${format(new Date(draftSavedAt), "MMM d, yyyy h:mm a")}`}
             >
               <RefreshCw className="w-3.5 h-3.5 shrink-0" />
               <span className="leading-snug flex-1">
@@ -2287,10 +2319,14 @@ function ProfileHint({
   profile: AreaProfile | undefined;
   lastGood: { scorePercent: number; createdAt: string } | null;
 }) {
+  // The "(X ago)" suffix on the Last good baseline line stays fresh
+  // because the surrounding AreaCard subscribes to useMinuteTick and
+  // re-renders this component every minute.
   const lastGoodLine = lastGood ? (
     <p
       className="text-[11.5px] text-emerald-700 dark:text-emerald-300 leading-snug"
       data-testid="profile-last-good"
+      title={`Last good baseline ${format(new Date(lastGood.createdAt), "MMM d, yyyy h:mm a")}`}
     >
       Last good: <span className="font-semibold">{lastGood.scorePercent}%</span>{" "}
       on {format(new Date(lastGood.createdAt), "MMM d")} (
