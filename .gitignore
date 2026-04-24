@@ -54,3 +54,4 @@ Thumbs.db
 # Runtime upload directory for the api-server. multer writes uploaded
 # media here at runtime; these files are never source-controlled.
 artifacts/api-server/uploads/
+artifacts/*/uploads/
