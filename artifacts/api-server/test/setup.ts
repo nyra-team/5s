@@ -2,10 +2,16 @@
  * Wrapper entry point for the integration suite. We do NOT load tests in this
  * process; instead we:
  *
- *   1. Sweep any leftover `<basename>_test_<hex>` per-run databases older
- *      than the safe threshold (orphans from previous runs that were
- *      SIGKILL'd / OOM killed / had their container torn down before the
- *      cleanup `finally` could run).
+ *   1. Sweep any leftover `<basename>_test_<hex>` per-run databases that
+ *      look like orphans from previous runs that were SIGKILL'd / OOM
+ *      killed / had their container torn down before the cleanup `finally`
+ *      could run. A db is considered orphaned when it has no active
+ *      backend connections (the previous test process is gone) — we only
+ *      skip the very-recent ones inside the startup grace window so we
+ *      don't race against a sibling run whose test child hasn't connected
+ *      yet. As a long-tail fallback, anything older than
+ *      `SWEEP_THRESHOLD_MS` is dropped even if some session is still
+ *      attached (e.g. a forgotten `psql` shell on a stale db).
  *   2. Make sure a cached "template" Postgres database exists with the current
  *      `@workspace/db` schema applied. We hash the drizzle schema source and
  *      only re-run `drizzle-kit push` when the hash has drifted from what's
@@ -52,11 +58,16 @@
  * (SIGKILL, OOM, container teardown) skips it. Postgres has no portable
  * "creation time" column on `pg_database` we can query without elevated
  * privileges, so we encode the creation time into the database name itself
- * as a fixed-width hex prefix. The sweep at startup parses that prefix and
- * drops anything older than `SWEEP_THRESHOLD_MS`. The threshold is well
- * above a normal run's wall time, so concurrent in-flight runs are never
- * touched. The cached template DB has a fixed name (`_test_template`) so it
- * doesn't match the per-run regex and is never swept.
+ * as a fixed-width hex prefix. The sweep uses that prefix to enforce a
+ * small startup grace window (`SWEEP_MIN_AGE_MS`): a sibling test run that
+ * has just minted its per-run db but whose test child hasn't yet opened
+ * its first connection would briefly look idle, so we never sweep dbs
+ * younger than the grace window regardless of backend count. Past that
+ * window, idle dbs are dropped immediately. As a backstop for stuck
+ * sessions (e.g. a forgotten `psql` on a long-dead db), anything older
+ * than `SWEEP_THRESHOLD_MS` is dropped even with backends attached. The
+ * cached template DB has a fixed name (`_test_template`) so it doesn't
+ * match the per-run regex and is never swept.
  *
  * Override knob: if `TEST_DATABASE_URL` is set, we use it as the admin
  * connection (used to issue `CREATE DATABASE`/`DROP DATABASE`) so CI can
@@ -69,6 +80,11 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import {
+  SWEEP_MIN_AGE_MS,
+  SWEEP_THRESHOLD_MS,
+  classifyOrphanCandidate,
+} from "./sweep-policy.js";
 
 const adminUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 if (!adminUrl) {
@@ -76,8 +92,6 @@ if (!adminUrl) {
     "DATABASE_URL (or TEST_DATABASE_URL) must be set to run the integration tests",
   );
 }
-
-const SWEEP_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
 
 const parsed = new URL(adminUrl);
 const baseDbName =
@@ -203,19 +217,34 @@ async function dropDatabase(client: pg.Client, name: string): Promise<void> {
 }
 
 async function sweepOrphanTestDatabases(): Promise<void> {
-  const cutoffSec = Math.floor((Date.now() - SWEEP_THRESHOLD_MS) / 1000);
+  const nowMs = Date.now();
   const thresholdMin = Math.round(SWEEP_THRESHOLD_MS / 60000);
+  const graceSec = Math.round(SWEEP_MIN_AGE_MS / 1000);
   try {
     await withAdmin(async (admin) => {
       // `_` is a single-char wildcard in LIKE; that's fine — we re-validate
       // each match against SUFFIX_RE below, and explicitly exclude the
-      // cached template DB.
-      const res = await admin.query<{ datname: string }>(
-        "SELECT datname FROM pg_database WHERE datname LIKE $1 AND datname <> $2",
+      // cached template DB. We pull the live backend count from
+      // pg_stat_activity in the same query so the decision is made on a
+      // single consistent snapshot.
+      const res = await admin.query<{
+        datname: string;
+        backend_count: number;
+      }>(
+        `SELECT d.datname,
+                (
+                  SELECT count(*)::int
+                  FROM pg_stat_activity a
+                  WHERE a.datname = d.datname
+                ) AS backend_count
+         FROM pg_database d
+         WHERE d.datname LIKE $1 AND d.datname <> $2`,
         [`${baseDbName}\\_test\\_%`, templateDbName],
       );
-      const dropped: string[] = [];
-      const skippedRecent: string[] = [];
+      const droppedIdle: string[] = [];
+      const droppedStuck: string[] = [];
+      const skippedStartup: string[] = [];
+      const skippedActive: string[] = [];
       const skippedUnparseable: string[] = [];
       for (const row of res.rows) {
         const m = SUFFIX_RE.exec(row.datname);
@@ -226,13 +255,27 @@ async function sweepOrphanTestDatabases(): Promise<void> {
           continue;
         }
         const createdSec = parseInt(m[1], 16);
-        if (Number.isNaN(createdSec) || createdSec >= cutoffSec) {
-          skippedRecent.push(row.datname);
+        if (Number.isNaN(createdSec)) {
+          skippedUnparseable.push(row.datname);
+          continue;
+        }
+        const verdict = classifyOrphanCandidate({
+          createdSec,
+          backendCount: row.backend_count,
+          nowMs,
+        });
+        if (verdict === "skip-startup-grace") {
+          skippedStartup.push(row.datname);
+          continue;
+        }
+        if (verdict === "skip-active") {
+          skippedActive.push(row.datname);
           continue;
         }
         try {
           await dropDatabase(admin, row.datname);
-          dropped.push(row.datname);
+          if (verdict === "drop-stuck") droppedStuck.push(row.datname);
+          else droppedIdle.push(row.datname);
         } catch (err) {
           console.error(
             `[test-setup] sweep: failed to drop orphan ${row.datname}:`,
@@ -240,18 +283,33 @@ async function sweepOrphanTestDatabases(): Promise<void> {
           );
         }
       }
-      if (dropped.length > 0) {
+      const totalDropped = droppedIdle.length + droppedStuck.length;
+      if (totalDropped > 0) {
+        const parts: string[] = [];
+        if (droppedIdle.length > 0) {
+          parts.push(
+            `${droppedIdle.length} idle (no active connections): ${droppedIdle.join(", ")}`,
+          );
+        }
+        if (droppedStuck.length > 0) {
+          parts.push(
+            `${droppedStuck.length} older than ${thresholdMin}m with stuck sessions: ${droppedStuck.join(", ")}`,
+          );
+        }
         console.log(
-          `[test-setup] sweep: dropped ${dropped.length} orphan test database(s) older than ${thresholdMin}m: ${dropped.join(", ")}`,
+          `[test-setup] sweep: dropped ${totalDropped} orphan test database(s) — ${parts.join("; ")}`,
         );
       } else {
+        console.log("[test-setup] sweep: no orphan test databases to drop");
+      }
+      if (skippedStartup.length > 0) {
         console.log(
-          `[test-setup] sweep: no orphan test databases older than ${thresholdMin}m`,
+          `[test-setup] sweep: left ${skippedStartup.length} test database(s) inside the ${graceSec}s startup grace window in place (sibling run likely still attaching)`,
         );
       }
-      if (skippedRecent.length > 0) {
+      if (skippedActive.length > 0) {
         console.log(
-          `[test-setup] sweep: left ${skippedRecent.length} recent test database(s) in place (likely in-flight runs)`,
+          `[test-setup] sweep: left ${skippedActive.length} test database(s) with active connections in place (in-flight runs)`,
         );
       }
       if (skippedUnparseable.length > 0) {
