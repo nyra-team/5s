@@ -603,6 +603,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/CurrentShift"
 
+  /shift/config:
+    get:
+      operationId: getShiftConfig
+      tags: [submissions]
+      summary: Get the facility's configured shift timezone and start hours
+      responses:
+        "200":
+          description: Shift timezone + start hours
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShiftConfig"
+
   /operator/status:
     get:
       operationId: getOperatorStatus
@@ -1989,6 +2002,32 @@ components:
         endTime:
           type: string
       required: [shift, startTime, endTime]
+
+    ShiftConfig:
+      type: object
+      description: Facility-wide shift timezone and the three shift start hours, sourced from server config so the UI doesn't hardcode IST.
+      properties:
+        timeZone:
+          type: string
+          description: IANA timezone the shift clock is anchored to (e.g. "America/New_York").
+        startHours:
+          type: object
+          description: Hour-of-day (0–23) each shift starts in `timeZone`.
+          properties:
+            A:
+              type: integer
+              minimum: 0
+              maximum: 23
+            B:
+              type: integer
+              minimum: 0
+              maximum: 23
+            C:
+              type: integer
+              minimum: 0
+              maximum: 23
+          required: [A, B, C]
+      required: [timeZone, startHours]
 
     AreaStatus:
       type: object

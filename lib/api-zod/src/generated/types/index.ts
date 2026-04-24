@@ -92,6 +92,8 @@ export * from "./reuploadSubmissionType";
 export * from "./reuploadSubmissionTypeShift";
 export * from "./scoreSummaryType";
 export * from "./setAreaAssignmentsBodyType";
+export * from "./shiftConfigType";
+export * from "./shiftConfigTypeStartHours";
 export * from "./submissionType";
 export * from "./submissionTypeAiPillarsJson";
 export * from "./submissionTypeAiReasoningJson";

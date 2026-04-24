@@ -55,6 +55,14 @@ const mockState = {
   nudges: [] as unknown[],
   nudgesByArea: [] as unknown[],
   submission: undefined as unknown,
+  // Default to the legacy IST 6/14/22 hours so existing tests that assert
+  // "6 AM – 2 PM" labels keep passing without explicit setup. Individual
+  // tests override this to verify the operator pills follow whatever
+  // SHIFT_*_START_HOUR the backend reports.
+  shiftConfig: {
+    timeZone: "Asia/Kolkata",
+    startHours: { A: 6, B: 14, C: 22 },
+  } as { timeZone: string; startHours: { A: number; B: number; C: number } } | undefined,
 };
 
 const refetchCurrentShiftMock = vi.fn();
@@ -87,6 +95,14 @@ vi.mock("@workspace/api-client-react", () => {
     // for the existing tests (they were written against the constants).
     useGetOperatorThresholds: () => ({ data: undefined, isLoading: false }),
     getGetOperatorThresholdsQueryKey: () => ["operator-thresholds"],
+    // useShiftConfig() drives the shift pill labels (e.g. "6 AM – 2 PM").
+    // Tests can override `mockState.shiftConfig` to assert that a non-IST
+    // backend timezone/start-hours combination flows through to the UI.
+    useGetShiftConfig: () => ({
+      data: mockState.shiftConfig,
+      isLoading: false,
+    }),
+    getGetShiftConfigQueryKey: () => ["shift-config"],
     useCreateSubmission: () => ({
       mutate: vi.fn(),
       isPending: false,
@@ -107,6 +123,7 @@ vi.mock("@workspace/api-client-react", () => {
         rationale: null,
       })),
       isPending: false,
+      reset: vi.fn(),
     }),
     useDismissNudge: () => ({
       mutate: vi.fn(),
@@ -247,6 +264,10 @@ beforeEach(() => {
   mockState.profile = undefined;
   mockState.nudges = [];
   mockState.submission = undefined;
+  mockState.shiftConfig = {
+    timeZone: "Asia/Kolkata",
+    startHours: { A: 6, B: 14, C: 22 },
+  };
   refetchCurrentShiftMock.mockReset();
   window.localStorage.clear();
 });
@@ -666,6 +687,66 @@ describe("OperatorHome — current shift state", () => {
     expect(
       screen.queryByRole("heading", { name: /assigned areas/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("renders shift pill hours from the backend /shift/config (not Vite build-time IST defaults)", () => {
+    // Simulate a US East facility: backend reports America/New_York with
+    // shifts starting at 7 AM / 3 PM / 11 PM. The pills should show those
+    // hours, NOT the legacy 6/14/22 IST hardcodes. We deliberately leave
+    // `statuses` empty so the test only exercises the pill row — the
+    // assigned-areas section and AreaCard subtree have their own deps that
+    // are out of scope for a shift-config regression check.
+    mockState.shiftConfig = {
+      timeZone: "America/New_York",
+      startHours: { A: 7, B: 15, C: 23 },
+    };
+    mockState.statuses = [];
+
+    renderOperator();
+
+    // The active-shift view renders its three pills as <button role="tab">.
+    // We resolve them by visible "Shift X" label so the assertion matches
+    // the operator's mental model: each pill should display the backend
+    // hours next to its letter.
+    const tabs = screen.getAllByRole("tab");
+    const tabA = tabs.find((t) => /Shift A/i.test(t.textContent ?? ""))!;
+    const tabB = tabs.find((t) => /Shift B/i.test(t.textContent ?? ""))!;
+    const tabC = tabs.find((t) => /Shift C/i.test(t.textContent ?? ""))!;
+    expect(tabA).toHaveTextContent(/7\s*AM\s*[–-]\s*3\s*PM/i);
+    expect(tabB).toHaveTextContent(/3\s*PM\s*[–-]\s*11\s*PM/i);
+    expect(tabC).toHaveTextContent(/11\s*PM\s*[–-]\s*7\s*AM/i);
+
+    // None of the legacy IST defaults should leak through.
+    for (const tab of [tabA, tabB, tabC]) {
+      expect(tab).not.toHaveTextContent(/6\s*AM/i);
+      expect(tab).not.toHaveTextContent(/2\s*PM/i);
+      expect(tab).not.toHaveTextContent(/10\s*PM/i);
+    }
+  });
+
+  it("renders shift pill hours from the backend even on the unknown-shift fallback view", () => {
+    // The unknown-shift view (used while the current-shift query is errored
+    // or returned no data) renders its own pill row. It must also follow the
+    // backend hours, not the legacy IST defaults.
+    mockState.shiftError = true;
+    mockState.shift = undefined;
+    mockState.shiftConfig = {
+      timeZone: "America/New_York",
+      startHours: { A: 7, B: 15, C: 23 },
+    };
+
+    renderOperator();
+
+    expect(screen.getByTestId("text-shift-error")).toBeInTheDocument();
+    expect(screen.getByTestId("button-shift-A")).toHaveTextContent(
+      /7\s*AM\s*[–-]\s*3\s*PM/i,
+    );
+    expect(screen.getByTestId("button-shift-B")).toHaveTextContent(
+      /3\s*PM\s*[–-]\s*11\s*PM/i,
+    );
+    expect(screen.getByTestId("button-shift-C")).toHaveTextContent(
+      /11\s*PM\s*[–-]\s*7\s*AM/i,
+    );
   });
 
   it("renders the normal page once the operator manually picks a shift even if the API is errored", async () => {

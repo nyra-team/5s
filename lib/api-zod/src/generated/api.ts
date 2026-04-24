@@ -713,6 +713,46 @@ export const GetCurrentShiftResponse = zod.object({
 });
 
 /**
+ * @summary Get the facility's configured shift timezone and start hours
+ */
+export const getShiftConfigResponseStartHoursAMin = 0;
+export const getShiftConfigResponseStartHoursAMax = 23;
+
+export const getShiftConfigResponseStartHoursBMin = 0;
+export const getShiftConfigResponseStartHoursBMax = 23;
+
+export const getShiftConfigResponseStartHoursCMin = 0;
+export const getShiftConfigResponseStartHoursCMax = 23;
+
+export const GetShiftConfigResponse = zod
+  .object({
+    timeZone: zod
+      .string()
+      .describe(
+        'IANA timezone the shift clock is anchored to (e.g. \"America\/New_York\").',
+      ),
+    startHours: zod
+      .object({
+        A: zod
+          .number()
+          .min(getShiftConfigResponseStartHoursAMin)
+          .max(getShiftConfigResponseStartHoursAMax),
+        B: zod
+          .number()
+          .min(getShiftConfigResponseStartHoursBMin)
+          .max(getShiftConfigResponseStartHoursBMax),
+        C: zod
+          .number()
+          .min(getShiftConfigResponseStartHoursCMin)
+          .max(getShiftConfigResponseStartHoursCMax),
+      })
+      .describe("Hour-of-day (0–23) each shift starts in `timeZone`."),
+  })
+  .describe(
+    "Facility-wide shift timezone and the three shift start hours, sourced from server config so the UI doesn't hardcode IST.",
+  );
+
+/**
  * @summary Get operator submission status for current shift
  */
 export const GetOperatorStatusQueryParams = zod.object({

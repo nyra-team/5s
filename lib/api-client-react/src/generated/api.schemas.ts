@@ -650,6 +650,37 @@ export interface CurrentShift {
 }
 
 /**
+ * Hour-of-day (0–23) each shift starts in `timeZone`.
+ */
+export type ShiftConfigStartHours = {
+  /**
+   * @minimum 0
+   * @maximum 23
+   */
+  A: number;
+  /**
+   * @minimum 0
+   * @maximum 23
+   */
+  B: number;
+  /**
+   * @minimum 0
+   * @maximum 23
+   */
+  C: number;
+};
+
+/**
+ * Facility-wide shift timezone and the three shift start hours, sourced from server config so the UI doesn't hardcode IST.
+ */
+export interface ShiftConfig {
+  /** IANA timezone the shift clock is anchored to (e.g. "America/New_York"). */
+  timeZone: string;
+  /** Hour-of-day (0–23) each shift starts in `timeZone`. */
+  startHours: ShiftConfigStartHours;
+}
+
+/**
  * Physical environment of the area. Drives the environment-specific quick-start checklist shown to operators in the capture sheet.
  */
 export type AreaStatusEnvironmentType =

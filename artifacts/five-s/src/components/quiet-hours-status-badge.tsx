@@ -1,4 +1,5 @@
 import { MoonStar, BellOff } from "lucide-react";
+import { useShiftConfig } from "@/lib/shift-config";
 
 interface Props {
   active: boolean;
@@ -15,28 +16,26 @@ interface Props {
   variant: "inline" | "compact";
 }
 
-const IST_FMT_TIME: Intl.DateTimeFormatOptions = {
-  timeZone: "Asia/Kolkata",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-};
-
-const IST_FMT_TIME_DAY: Intl.DateTimeFormatOptions = {
-  timeZone: "Asia/Kolkata",
-  weekday: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-};
-
-function formatIstMoment(iso: string, now: Date = new Date()): string {
+function formatZonedMoment(
+  iso: string,
+  timeZone: string,
+  now: Date = new Date(),
+): string {
   const when = new Date(iso);
   if (Number.isNaN(when.getTime())) return "";
-  // If the moment is within the next ~20 hours, the IST clock time alone is
+  // If the moment is within the next ~20 hours, the clock time alone is
   // unambiguous. Otherwise include the weekday so "Mon 22:00" reads cleanly.
   const diffMs = when.getTime() - now.getTime();
-  const opts = diffMs <= 20 * 60 * 60 * 1000 ? IST_FMT_TIME : IST_FMT_TIME_DAY;
+  const opts: Intl.DateTimeFormatOptions =
+    diffMs <= 20 * 60 * 60 * 1000
+      ? { timeZone, hour: "2-digit", minute: "2-digit", hour12: false }
+      : {
+          timeZone,
+          weekday: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        };
   return new Intl.DateTimeFormat("en-GB", opts).format(when);
 }
 
@@ -45,6 +44,10 @@ function formatIstMoment(iso: string, now: Date = new Date()): string {
  * currently being suppressed by quiet hours, and when that ends. When alerts
  * are not muted but quiet hours are configured, shows the next mute time so
  * the manager can plan around it.
+ *
+ * Times and the timezone label come from the facility's configured shift
+ * timezone (`/shift/config`) — never the hardcoded IST defaults — so a
+ * site running in America/New_York sees "EDT" instead of "IST".
  */
 export function QuietHoursStatusBadge({
   active,
@@ -53,11 +56,12 @@ export function QuietHoursStatusBadge({
   quietHoursEnabled,
   variant,
 }: Props) {
+  const { config: shiftConfig, tzLabel } = useShiftConfig();
   if (!quietHoursEnabled) return null;
 
   if (active && activeUntil) {
-    const until = formatIstMoment(activeUntil);
-    const label = `Quiet hours active until ${until} IST`;
+    const until = formatZonedMoment(activeUntil, shiftConfig.timeZone);
+    const label = `Quiet hours active until ${until} ${tzLabel}`;
     return (
       <span
         data-testid="quiet-hours-status-active"
@@ -69,7 +73,7 @@ export function QuietHoursStatusBadge({
         }
       >
         <BellOff className={variant === "compact" ? "w-3 h-3" : "w-3.5 h-3.5"} />
-        {variant === "compact" ? `Muted until ${until} IST` : label}
+        {variant === "compact" ? `Muted until ${until} ${tzLabel}` : label}
       </span>
     );
   }
@@ -79,14 +83,14 @@ export function QuietHoursStatusBadge({
   // clean when alerts are flowing through.
   if (variant === "compact") return null;
   if (!nextStart) return null;
-  const next = formatIstMoment(nextStart);
+  const next = formatZonedMoment(nextStart, shiftConfig.timeZone);
   return (
     <span
       data-testid="quiet-hours-status-inactive"
       className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12.5px] font-medium bg-secondary text-muted-foreground ring-1 ring-border"
     >
       <MoonStar className="w-3.5 h-3.5" />
-      Alerts active — next mute at {next} IST
+      Alerts active — next mute at {next} {tzLabel}
     </span>
   );
 }

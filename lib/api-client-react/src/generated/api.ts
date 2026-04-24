@@ -63,6 +63,7 @@ import type {
   ReuploadSubmissionBody,
   ScoreSummary,
   SetAreaAssignmentsBody,
+  ShiftConfig,
   Submission,
   UpdateAreaBody,
   UpdateAreaProfileBody,
@@ -2264,6 +2265,81 @@ export function useGetCurrentShift<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetCurrentShiftQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get the facility's configured shift timezone and start hours
+ */
+export const getGetShiftConfigUrl = () => {
+  return `/api/shift/config`;
+};
+
+export const getShiftConfig = async (
+  options?: RequestInit,
+): Promise<ShiftConfig> => {
+  return customFetch<ShiftConfig>(getGetShiftConfigUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetShiftConfigQueryKey = () => {
+  return [`/api/shift/config`] as const;
+};
+
+export const getGetShiftConfigQueryOptions = <
+  TData = Awaited<ReturnType<typeof getShiftConfig>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getShiftConfig>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetShiftConfigQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getShiftConfig>>> = ({
+    signal,
+  }) => getShiftConfig({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getShiftConfig>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetShiftConfigQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getShiftConfig>>
+>;
+export type GetShiftConfigQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the facility's configured shift timezone and start hours
+ */
+
+export function useGetShiftConfig<
+  TData = Awaited<ReturnType<typeof getShiftConfig>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getShiftConfig>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetShiftConfigQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

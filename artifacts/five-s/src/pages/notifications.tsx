@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Bell, Mail, MessageSquare, AlertCircle, CheckCircle2, MoonStar } from "lucide-react";
 import { QuietHoursStatusBadge } from "@/components/quiet-hours-status-badge";
+import { useShiftConfig } from "@/lib/shift-config";
 
 type Channel = "email" | "slack";
 
@@ -24,6 +25,7 @@ const WEEKDAYS: Array<{ label: string; bit: number }> = [
 ];
 
 export default function NotificationsPage() {
+  const { tzLabel } = useShiftConfig();
   const { data, isLoading } = useGetMyNotificationPreferences({
     query: {
       // Recompute the live "muted right now" status without waiting for a
@@ -136,8 +138,8 @@ export default function NotificationsPage() {
           : `on ${WEEKDAYS.filter((d) => weekdayMask & (1 << d.bit)).map((d) => d.label).join(", ")}`;
     const wraps = quietStart >= quietEnd;
     const tail = wraps ? " (next morning)" : "";
-    return `Muted ${quietStart}–${quietEnd}${tail} IST ${days}.`;
-  }, [quietOn, quietStart, quietEnd, weekdayMask]);
+    return `Muted ${quietStart}–${quietEnd}${tail} ${tzLabel} ${days}.`;
+  }, [quietOn, quietStart, quietEnd, weekdayMask, tzLabel]);
 
   if (isLoading || !data) {
     return (
@@ -215,13 +217,13 @@ export default function NotificationsPage() {
               <div className="mt-4 space-y-4">
                 <div className="flex flex-wrap items-end gap-3">
                   <TimeField
-                    label="Start (IST)"
+                    label={`Start (${tzLabel})`}
                     value={quietStart}
                     onChange={onStartChange}
                     testid="quiet-hours-start"
                   />
                   <TimeField
-                    label="End (IST)"
+                    label={`End (${tzLabel})`}
                     value={quietEnd}
                     onChange={onEndChange}
                     testid="quiet-hours-end"

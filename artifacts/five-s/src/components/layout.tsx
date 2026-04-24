@@ -6,30 +6,29 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { QuietHoursStatusBadge } from "@/components/quiet-hours-status-badge";
+import { useShiftConfig } from "@/lib/shift-config";
 
-function useISTClock() {
-  const [time, setTime] = useState(() =>
+/**
+ * Live clock anchored to the facility's configured shift timezone (sourced
+ * from `/shift/config`) so a US site doesn't see Asia/Kolkata hours in the
+ * header.
+ */
+function useShiftClock(timeZone: string) {
+  const formatNow = () =>
     new Date().toLocaleTimeString("en-US", {
-      timeZone: "Asia/Kolkata",
+      timeZone,
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
-    })
-  );
+    });
+  const [time, setTime] = useState(formatNow);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      setTime(
-        new Date().toLocaleTimeString("en-US", {
-          timeZone: "Asia/Kolkata",
-          hour: "numeric",
-          minute: "2-digit",
-          hour12: true,
-        })
-      );
-    }, 1000);
+    setTime(formatNow());
+    const id = setInterval(() => setTime(formatNow()), 1000);
     return () => clearInterval(id);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeZone]);
 
   return time;
 }
@@ -37,7 +36,8 @@ function useISTClock() {
 export function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const [location] = useLocation();
-  const istTime = useISTClock();
+  const { config: shiftConfig, tzLabel } = useShiftConfig();
+  const shiftTime = useShiftClock(shiftConfig.timeZone);
 
   if (!user) return <>{children}</>;
 
@@ -86,7 +86,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               />
             )}
             <span className="text-[13px] tabular-nums text-muted-foreground">
-              {istTime} <span className="opacity-60">IST</span>
+              {shiftTime} <span className="opacity-60">{tzLabel}</span>
             </span>
             <span className="text-[13px] text-muted-foreground hidden sm:inline-block ml-2">
               {user.email}

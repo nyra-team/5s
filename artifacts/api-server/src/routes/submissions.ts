@@ -13,7 +13,7 @@ import {
 import { GetSubmissionParams, ListSubmissionsQueryParams } from "@workspace/api-zod";
 import { authMiddleware } from "../lib/auth";
 import { upload } from "../lib/upload";
-import { getCurrentShift, getISTShiftRange } from "../lib/scoring";
+import { getCurrentShift, getISTShiftRange, getShiftConfig } from "../lib/scoring";
 import {
   scoreSubmission,
   type ScoringOutput,
@@ -637,6 +637,14 @@ router.get("/submissions/:id", authMiddleware, async (req, res): Promise<void> =
 
 router.get("/shift/current", authMiddleware, async (_req, res): Promise<void> => {
   res.json(getCurrentShift());
+});
+
+// Exposes the facility's configured shift timezone + start hours so the UI can
+// stop hardcoding "IST" / "Asia/Kolkata" in shift labels, clocks, and
+// quiet-hours copy. Callers cache this; it changes only on server restart.
+router.get("/shift/config", authMiddleware, async (_req, res): Promise<void> => {
+  const cfg = getShiftConfig();
+  res.json({ timeZone: cfg.timeZone, startHours: cfg.startHours });
 });
 
 router.get("/operator/recent", authMiddleware, async (req, res): Promise<void> => {

@@ -18,6 +18,7 @@ import { format, formatDistanceToNowStrict } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
+import { useShiftConfig } from "@/lib/shift-config";
 
 function timeAgo(d: Date | string | null | undefined) {
   if (!d) return null;
@@ -238,6 +239,7 @@ export default function LiveShiftPage() {
   const { data, isLoading } = useGetLiveShift({
     query: { refetchInterval: 30_000, queryKey: getGetLiveShiftQueryKey() },
   });
+  const { tzLabel, formatClockTime, formatDayTime } = useShiftConfig();
 
   if (isLoading || !data) {
     return (
@@ -261,7 +263,7 @@ export default function LiveShiftPage() {
         </p>
         <h1 className="text-[34px] font-semibold tracking-tight leading-tight">Live shift {shift}</h1>
         <p className="text-muted-foreground text-[15px]">
-          {format(startsAt, "MMM d, h:mm a")} – {format(endsAt, "h:mm a")} IST · {totalThings === 0 ? "all clear" : `${totalThings} thing${totalThings === 1 ? "" : "s"} need attention`}
+          {formatDayTime(startsAt)} – {formatClockTime(endsAt)} {tzLabel} · {totalThings === 0 ? "all clear" : `${totalThings} thing${totalThings === 1 ? "" : "s"} need attention`}
         </p>
       </header>
 

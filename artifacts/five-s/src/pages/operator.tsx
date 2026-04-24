@@ -85,11 +85,9 @@ import {
   peekCaptureDraftMeta,
   purgeStaleCaptureDrafts,
 } from "@/lib/capture-drafts";
-import { getShiftLabels } from "@/lib/theme";
+import { useShiftConfig } from "@/lib/shift-config";
 import { useEffectiveOperatorThresholds } from "@/lib/operator-thresholds";
 import { EnvironmentChecklist, normalizeEnvironment } from "@/lib/environment";
-
-const SHIFT_OPTIONS = getShiftLabels();
 
 const RECENT_STRIP_PREF_KEY = "operator.recentStrip.collapsed";
 
@@ -308,6 +306,11 @@ export default function OperatorHome() {
   } = useGetCurrentShift({
     query: { refetchInterval: 60_000, queryKey: getGetCurrentShiftQueryKey() },
   });
+  // Shift pill labels ("Shift A · 7 AM – 3 PM") are derived from the backend
+  // /shift/config so the operator switcher always matches the server's notion
+  // of when each shift starts/ends — even for facilities running off the
+  // 6/14/22 IST defaults.
+  const { shiftLabels } = useShiftConfig();
   const [selectedShift, setSelectedShift] = useState<"A" | "B" | "C" | null>(null);
   // Treat "shift unknown" as a real state distinct from A/B/C. Do NOT silently
   // fall back to "A" — that would mis-tag the page as Shift A whenever the
@@ -518,7 +521,7 @@ export default function OperatorHome() {
         </div>
 
         <div role="tablist" className="inline-flex p-1 pill-track rounded-full">
-          {SHIFT_OPTIONS.map((opt) => {
+          {shiftLabels.map((opt) => {
             const active = activeShift === opt.value;
             const isCurrent = currentShift?.shift === opt.value;
             return (
@@ -622,6 +625,7 @@ function ShiftUnknownView({
   onRetry: () => void;
   onSelectShift: (s: "A" | "B" | "C") => void;
 }) {
+  const { shiftLabels } = useShiftConfig();
   return (
     <div className="space-y-8 pb-20">
       <header className="space-y-6">
@@ -650,7 +654,7 @@ function ShiftUnknownView({
           aria-busy={shiftLoading}
           className="inline-flex p-1 pill-track rounded-full"
         >
-          {SHIFT_OPTIONS.map((opt) => (
+          {shiftLabels.map((opt) => (
             <button
               key={opt.value}
               role="tab"
