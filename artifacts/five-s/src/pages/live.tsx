@@ -72,15 +72,26 @@ function NudgeButton({
   );
 }
 
-function DismissedWithoutSubmitChip({ at }: { at: Date | string }) {
+function DismissedWithoutSubmitChip({
+  at,
+  byEmail,
+}: {
+  at: Date | string;
+  byEmail?: string | null;
+}) {
+  const shortName = byEmail ? byEmail.split("@")[0] : null;
+  const label = shortName ? `Dismissed by ${shortName}@…` : "Operator dismissed";
+  const title = byEmail
+    ? `${byEmail} dismissed the nudge without submitting fresh evidence`
+    : "Operator dismissed the nudge without submitting fresh evidence";
   return (
     <span
       className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/15 rounded-full px-2 py-0.5 mt-1.5"
-      title="Operator dismissed the nudge without submitting fresh evidence"
+      title={title}
       data-testid="indicator-operator-dismissed"
     >
       <BellOff className="w-3 h-3" />
-      Operator dismissed {timeAgo(at)}
+      {label} {timeAgo(at)}
     </span>
   );
 }
@@ -98,7 +109,10 @@ function PendingAreaCard({ item, shift }: { item: LiveShiftPendingArea; shift: C
           {item.lastNudgeAt && ` · last nudged ${timeAgo(item.lastNudgeAt)}`}
         </p>
         {item.lastOperatorDismissedNudgeAt && (
-          <DismissedWithoutSubmitChip at={item.lastOperatorDismissedNudgeAt} />
+          <DismissedWithoutSubmitChip
+            at={item.lastOperatorDismissedNudgeAt}
+            byEmail={item.lastOperatorDismissedNudgeByEmail}
+          />
         )}
       </div>
       <NudgeButton areaId={item.areaId} shift={shift} lastNudgeAt={item.lastNudgeAt} />
@@ -126,7 +140,10 @@ function OverdueCard({ item, shift }: { item: LiveShiftOverdueCheck; shift: Crea
           {item.lastNudgeAt && ` · last nudged ${timeAgo(item.lastNudgeAt)}`}
         </p>
         {item.lastOperatorDismissedNudgeAt && (
-          <DismissedWithoutSubmitChip at={item.lastOperatorDismissedNudgeAt} />
+          <DismissedWithoutSubmitChip
+            at={item.lastOperatorDismissedNudgeAt}
+            byEmail={item.lastOperatorDismissedNudgeByEmail}
+          />
         )}
       </div>
       <NudgeButton areaId={item.areaId} machine={item.machine ?? undefined} shift={shift} lastNudgeAt={item.lastNudgeAt} />

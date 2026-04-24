@@ -175,9 +175,15 @@ describe("nudge dismissal attribution", () => {
     const pending = (live.body.pendingAreas as Array<{
       areaId: number;
       lastOperatorDismissedNudgeAt: string | null;
+      lastOperatorDismissedNudgeByEmail: string | null;
     }>).find((p) => p.areaId === area.id);
     expect(pending).toBeDefined();
     expect(pending!.lastOperatorDismissedNudgeAt).not.toBeNull();
+    // The dismissing operator's email is surfaced so managers know who to
+    // talk to without clicking through (Task #94).
+    expect(pending!.lastOperatorDismissedNudgeByEmail).toBe(
+      `${RUN_TAG}-op@test.local`,
+    );
   });
 
   it("GET /shift/live leaves lastOperatorDismissedNudgeAt null when the nudge was cleared by a submission", async () => {
@@ -202,11 +208,13 @@ describe("nudge dismissal attribution", () => {
     const pending = (live.body.pendingAreas as Array<{
       areaId: number;
       lastOperatorDismissedNudgeAt: string | null;
+      lastOperatorDismissedNudgeByEmail: string | null;
     }>).find((p) => p.areaId === area.id);
     // The area is still pending (no submission row was created in this test —
     // we called the helper directly), so it should be in pendingAreas with
     // lastOperatorDismissedNudgeAt=null because the dismissal reason was SUBMISSION.
     expect(pending).toBeDefined();
     expect(pending!.lastOperatorDismissedNudgeAt).toBeNull();
+    expect(pending!.lastOperatorDismissedNudgeByEmail).toBeNull();
   });
 });

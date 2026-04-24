@@ -62,15 +62,19 @@ router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, r
   const operatorDismissedByArea = await getOperatorDismissedNudgeByArea(start);
   const pendingAreas = allAreas
     .filter((a) => !submittedSet.has(a.id))
-    .map((a) => ({
-      areaId: a.id,
-      areaName: a.name,
-      lastNudgeAt: nudgesByArea.get(a.id) ?? null,
-      // Pending areas have no submission this shift by definition, so any
-      // operator-dismissed nudge here is unambiguously a "swipe-away without
-      // re-capturing" event we want managers to see.
-      lastOperatorDismissedNudgeAt: operatorDismissedByArea.get(a.id) ?? null,
-    }));
+    .map((a) => {
+      const dismissed = operatorDismissedByArea.get(a.id);
+      return {
+        areaId: a.id,
+        areaName: a.name,
+        lastNudgeAt: nudgesByArea.get(a.id) ?? null,
+        // Pending areas have no submission this shift by definition, so any
+        // operator-dismissed nudge here is unambiguously a "swipe-away without
+        // re-capturing" event we want managers to see.
+        lastOperatorDismissedNudgeAt: dismissed?.dismissedAt ?? null,
+        lastOperatorDismissedNudgeByEmail: dismissed?.dismissedByEmail ?? null,
+      };
+    });
 
   // Overdue checks: area_schedules whose nextDueAt is in the past, joined to areas.
   const now = new Date();
@@ -101,6 +105,7 @@ router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, r
     .filter((s) => s.machine === AREA_BASELINE_KEY || s.profileStatus === "TRAINED")
     .map((s) => {
       const nudgeKey = `${s.areaId}|${s.machine === AREA_BASELINE_KEY ? "" : s.machine}`;
+      const dismissed = operatorDismissedByAreaMachine.get(nudgeKey);
       return {
         areaId: s.areaId,
         areaName: s.areaName,
@@ -110,8 +115,8 @@ router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, r
           : 0,
         cadenceSeconds: s.cadenceSeconds,
         lastNudgeAt: nudgesByAreaMachine.get(nudgeKey) ?? null,
-        lastOperatorDismissedNudgeAt:
-          operatorDismissedByAreaMachine.get(nudgeKey) ?? null,
+        lastOperatorDismissedNudgeAt: dismissed?.dismissedAt ?? null,
+        lastOperatorDismissedNudgeByEmail: dismissed?.dismissedByEmail ?? null,
       };
     })
     .sort((a, b) => b.overdueSinceMinutes - a.overdueSinceMinutes);

@@ -12,4 +12,6 @@ export interface LiveShiftPendingAreaType {
   lastNudgeAt?: Date | null;
   /** When the operator most recently dismissed a nudge for this area in the current shift without submitting fresh evidence. Null if no such dismissal occurred. */
   lastOperatorDismissedNudgeAt?: Date | null;
+  /** Email of the operator who performed the most recent operator-dismiss for this area in the current shift, paired with `lastOperatorDismissedNudgeAt`. Null if unknown or no such dismissal occurred. */
+  lastOperatorDismissedNudgeByEmail?: string | null;
 }

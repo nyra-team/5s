@@ -996,6 +996,12 @@ export const GetLiveShiftResponse = zod.object({
         .describe(
           "When the operator most recently dismissed a nudge for this area in the current shift without submitting fresh evidence. Null if no such dismissal occurred.",
         ),
+      lastOperatorDismissedNudgeByEmail: zod
+        .string()
+        .nullish()
+        .describe(
+          "Email of the operator who performed the most recent operator-dismiss for this area in the current shift, paired with `lastOperatorDismissedNudgeAt`. Null if unknown or no such dismissal occurred.",
+        ),
     }),
   ),
   overdueChecks: zod.array(
@@ -1011,6 +1017,12 @@ export const GetLiveShiftResponse = zod.object({
         .nullish()
         .describe(
           "When the operator most recently dismissed a nudge for this area+machine in the current shift without submitting fresh evidence. Null if no such dismissal occurred.",
+        ),
+      lastOperatorDismissedNudgeByEmail: zod
+        .string()
+        .nullish()
+        .describe(
+          "Email of the operator who performed the most recent operator-dismiss for this area+machine in the current shift, paired with `lastOperatorDismissedNudgeAt`. Null if unknown or no such dismissal occurred.",
         ),
     }),
   ),

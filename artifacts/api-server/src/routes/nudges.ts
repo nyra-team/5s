@@ -289,15 +289,22 @@ export async function getLatestActiveNudgeByArea(): Promise<Map<number, Date>> {
 // dismissal from yesterday doesn't keep flagging the area.
 const OPERATOR_DISMISS_REASON: NudgeDismissReason = "OPERATOR_DISMISS";
 
+export interface OperatorDismissedNudgeInfo {
+  dismissedAt: Date;
+  dismissedByEmail: string | null;
+}
+
 export async function getOperatorDismissedNudgeByArea(
   sinceDismissedAt: Date,
-): Promise<Map<number, Date>> {
+): Promise<Map<number, OperatorDismissedNudgeInfo>> {
   const rows = await db
     .select({
       areaId: nudgesTable.areaId,
       dismissedAt: nudgesTable.dismissedAt,
+      dismissedByEmail: usersTable.email,
     })
     .from(nudgesTable)
+    .leftJoin(usersTable, eq(nudgesTable.dismissedByUserId, usersTable.id))
     .where(
       and(
         eq(nudgesTable.dismissReason, OPERATOR_DISMISS_REASON),
@@ -305,12 +312,15 @@ export async function getOperatorDismissedNudgeByArea(
         gte(nudgesTable.dismissedAt, sinceDismissedAt),
       ),
     );
-  const map = new Map<number, Date>();
+  const map = new Map<number, OperatorDismissedNudgeInfo>();
   for (const r of rows) {
     if (!r.dismissedAt) continue;
     const prev = map.get(r.areaId);
-    if (!prev || prev.getTime() < r.dismissedAt.getTime()) {
-      map.set(r.areaId, r.dismissedAt);
+    if (!prev || prev.dismissedAt.getTime() < r.dismissedAt.getTime()) {
+      map.set(r.areaId, {
+        dismissedAt: r.dismissedAt,
+        dismissedByEmail: r.dismissedByEmail ?? null,
+      });
     }
   }
   return map;
@@ -318,14 +328,16 @@ export async function getOperatorDismissedNudgeByArea(
 
 export async function getOperatorDismissedNudgesByAreaMachine(
   sinceDismissedAt: Date,
-): Promise<Map<string, Date>> {
+): Promise<Map<string, OperatorDismissedNudgeInfo>> {
   const rows = await db
     .select({
       areaId: nudgesTable.areaId,
       machine: nudgesTable.machine,
       dismissedAt: nudgesTable.dismissedAt,
+      dismissedByEmail: usersTable.email,
     })
     .from(nudgesTable)
+    .leftJoin(usersTable, eq(nudgesTable.dismissedByUserId, usersTable.id))
     .where(
       and(
         eq(nudgesTable.dismissReason, OPERATOR_DISMISS_REASON),
@@ -333,13 +345,16 @@ export async function getOperatorDismissedNudgesByAreaMachine(
         gte(nudgesTable.dismissedAt, sinceDismissedAt),
       ),
     );
-  const map = new Map<string, Date>();
+  const map = new Map<string, OperatorDismissedNudgeInfo>();
   for (const r of rows) {
     if (!r.dismissedAt) continue;
     const key = `${r.areaId}|${r.machine ?? ""}`;
     const prev = map.get(key);
-    if (!prev || prev.getTime() < r.dismissedAt.getTime()) {
-      map.set(key, r.dismissedAt);
+    if (!prev || prev.dismissedAt.getTime() < r.dismissedAt.getTime()) {
+      map.set(key, {
+        dismissedAt: r.dismissedAt,
+        dismissedByEmail: r.dismissedByEmail ?? null,
+      });
     }
   }
   return map;
