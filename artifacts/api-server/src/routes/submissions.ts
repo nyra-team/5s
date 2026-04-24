@@ -74,27 +74,38 @@ const submissionSelect = {
 
 /**
  * Returns the area ids the given operator is allowed to act on:
- *   - `null`  → no assignments configured for this user; treat them as
- *               having access to *all* areas (backward-compatible mode for
- *               sites that haven't filled in the new model yet).
- *   - `[]`    → assignments table has been touched but the operator was
- *               left with zero areas; we honor that as "no access".
+ *   - `null`  → the assignments table is completely empty site-wide; this
+ *               is the backward-compatible "see everything" mode for fresh
+ *               installs and for sites that haven't started using the
+ *               assignment model at all.
+ *   - `[]`    → other operators have explicit assignments but this user
+ *               has zero rows; we treat that as an intentional "no access"
+ *               state and let the caller surface a friendly empty state.
  *   - `[…]`   → the explicit set of assigned area ids.
  *
- * Distinguishing "no rows" from "explicit empty set" is impossible with
- * just this table (deletes are physical), so we adopt the documented rule:
- * zero rows == grant all. Managers who want to lock an operator out should
- * either remove the user or give them a sentinel "no-access" area, but the
- * common case (a freshly seeded DB or an operator the manager hasn't
- * configured yet) keeps working.
+ * The previous version of this helper treated *any* "no rows for this
+ * user" result as "see everything", which silently masked configuration
+ * mistakes — once a manager assigned anyone, an unassigned operator would
+ * still see the whole site instead of nothing. We now scope the legacy
+ * fallback to the case where the table is empty for *every* user, so a
+ * partially-configured site fails closed for unassigned operators.
  */
 async function getAssignedAreaIds(userId: number): Promise<number[] | null> {
   const rows = await db
     .select({ areaId: areaAssignmentsTable.areaId })
     .from(areaAssignmentsTable)
     .where(eq(areaAssignmentsTable.userId, userId));
-  if (rows.length === 0) return null;
-  return rows.map((r) => r.areaId);
+  if (rows.length > 0) return rows.map((r) => r.areaId);
+
+  // No rows for this user — decide whether the empty state is an explicit
+  // "no access" or the legacy "no assignments anywhere yet" fallback by
+  // checking whether the table has any rows at all.
+  const [siteRow] = await db
+    .select({ userId: areaAssignmentsTable.userId })
+    .from(areaAssignmentsTable)
+    .limit(1);
+  if (!siteRow) return null;
+  return [];
 }
 
 

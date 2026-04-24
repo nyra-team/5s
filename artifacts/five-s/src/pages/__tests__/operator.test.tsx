@@ -47,6 +47,12 @@ vi.mock("framer-motion", async () => {
 const mockState = {
   recent: [] as unknown[],
   statuses: [] as unknown[],
+  // Mirrors GET /areas — the operator page reads this only to disambiguate
+  // its empty-state copy when statuses === []. Defaults to the same single
+  // area used by makeStatus() so existing tests don't have to opt in.
+  allAreas: [{ id: 1, name: "Mixing Floor", environmentType: "factory" }] as unknown[],
+  allAreasLoading: false,
+  allAreasError: false,
   nextChecks: [] as unknown[],
   shift: { shift: "A" } as { shift: "A" | "B" | "C" } | undefined,
   shiftLoading: false,
@@ -112,6 +118,16 @@ vi.mock("@workspace/api-client-react", async () => {
       refetch: refetchCurrentShiftMock,
     }),
     useGetOperatorStatus: stub("statuses"),
+    // useListAreas needs the richer shape (isLoading / isError) so the
+    // operator empty-state can hold the "no areas exist" copy until the
+    // /areas lookup has actually resolved. Tests can override either
+    // mockState.allAreas or mockState.allAreasLoading / allAreasError to
+    // exercise the loading / error branch.
+    useListAreas: () => ({
+      data: mockState.allAreasLoading || mockState.allAreasError ? undefined : mockState.allAreas,
+      isLoading: mockState.allAreasLoading,
+      isError: mockState.allAreasError,
+    }),
     useGetNextChecks: stub("nextChecks"),
     useGetOperatorRecent: stub("recent"),
     useGetActiveNudges: stub("nudges"),
@@ -310,6 +326,9 @@ function makeNextCheck(overrides: Partial<NextCheck>): NextCheck {
 beforeEach(() => {
   mockState.recent = [];
   mockState.statuses = [];
+  mockState.allAreas = [{ id: 1, name: "Mixing Floor", environmentType: "factory" }];
+  mockState.allAreasLoading = false;
+  mockState.allAreasError = false;
   mockState.nextChecks = [];
   mockState.shift = { shift: "A" };
   mockState.shiftLoading = false;
@@ -1223,5 +1242,84 @@ describe("inferSuggestionSeverity — keyword rules", () => {
   it("returns 'low' for benign or empty text", () => {
     expect(inferSuggestionSeverity("Wipe down the bench")).toBe("low");
     expect(inferSuggestionSeverity("")).toBe("low");
+  });
+});
+
+describe("OperatorHome — no assigned areas empty state", () => {
+  // Regression for task #139: when an operator has zero assigned areas we
+  // used to render a single bland line ("No areas assigned for this shift.")
+  // which conflated "the site has nothing set up yet" with "your manager
+  // forgot to assign you anything". The friendlier empty-state has two
+  // distinct copy paths so the operator knows who to talk to.
+
+  it("tells operators their manager forgot to assign them when areas exist site-wide", () => {
+    mockState.statuses = [];
+    mockState.allAreas = [
+      { id: 1, name: "Mixing Floor", environmentType: "factory" },
+      { id: 2, name: "Packaging", environmentType: "factory" },
+    ];
+
+    renderOperator();
+
+    const empty = screen.getByTestId("empty-no-assigned-areas");
+    expect(empty).toHaveAttribute("data-variant", "unassigned");
+    expect(empty).toHaveTextContent(/no areas assigned to you yet/i);
+    expect(empty).toHaveTextContent(/ask them to add you/i);
+    // The site-has-no-areas copy must NOT appear in this branch.
+    expect(empty).not.toHaveTextContent(/no audit areas have been set up/i);
+  });
+
+  it("tells operators the site has no areas configured when allAreas is empty", () => {
+    mockState.statuses = [];
+    mockState.allAreas = [];
+
+    renderOperator();
+
+    const empty = screen.getByTestId("empty-no-assigned-areas");
+    expect(empty).toHaveAttribute("data-variant", "no-areas");
+    expect(empty).toHaveTextContent(/no audit areas have been set up yet/i);
+    expect(empty).toHaveTextContent(/ask your manager to add some/i);
+    // The unassigned copy must NOT appear when the site itself has no areas.
+    expect(empty).not.toHaveTextContent(/no areas assigned to you yet/i);
+  });
+
+  it("does not render the empty state when the operator has at least one area", () => {
+    mockState.statuses = [makeStatus({ areaId: 1, areaName: "Bay 1" })];
+    mockState.allAreas = [
+      { id: 1, name: "Bay 1", environmentType: "factory" },
+    ];
+
+    renderOperator();
+
+    expect(
+      screen.queryByTestId("empty-no-assigned-areas"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("falls back to neutral copy while the /areas lookup is still loading instead of claiming the site has no areas", () => {
+    mockState.statuses = [];
+    mockState.allAreas = [];
+    mockState.allAreasLoading = true;
+
+    renderOperator();
+
+    const empty = screen.getByTestId("empty-no-assigned-areas");
+    expect(empty).toHaveAttribute("data-variant", "unknown");
+    // Must not promise either "site has no areas" or "you're unassigned"
+    // before /areas has settled — both would mislead the operator.
+    expect(empty).not.toHaveTextContent(/no audit areas have been set up/i);
+    expect(empty).not.toHaveTextContent(/no areas assigned to you yet/i);
+  });
+
+  it("falls back to neutral copy when /areas errored, and asks the operator to refresh", () => {
+    mockState.statuses = [];
+    mockState.allAreas = [];
+    mockState.allAreasError = true;
+
+    renderOperator();
+
+    const empty = screen.getByTestId("empty-no-assigned-areas");
+    expect(empty).toHaveAttribute("data-variant", "unknown");
+    expect(empty).toHaveTextContent(/refresh this page/i);
   });
 });

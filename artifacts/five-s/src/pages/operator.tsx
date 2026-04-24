@@ -12,6 +12,7 @@ import {
   useGetActiveNudgesByArea,
   useDismissNudge,
   useUndismissNudge,
+  useListAreas,
   getGetSubmissionQueryKey,
   getGetAreaProfileQueryKey,
   AreaStatus,
@@ -384,6 +385,19 @@ export default function OperatorHome() {
     { shift: (activeShift ?? "A") as "A" | "B" | "C" },
     { query: { enabled: shiftKnown } },
   );
+  // Used purely to disambiguate the empty-state copy when an operator's
+  // status response comes back with zero areas: that can mean either "the
+  // site has no areas configured at all" or "areas exist but the manager
+  // hasn't assigned any to me yet". Both render a friendly message instead
+  // of leaving the page blank, but the wording is different. We hold the
+  // empty-state until this query has resolved so a transient failure on
+  // /areas doesn't flash the wrong copy ("site has no areas") at the
+  // operator before the real result lands.
+  const {
+    data: allAreas,
+    isLoading: allAreasLoading,
+    isError: allAreasError,
+  } = useListAreas();
   const { data: nextChecks } = useGetNextChecks({
     query: { refetchInterval: 60_000, queryKey: getGetNextChecksQueryKey() },
   });
@@ -605,6 +619,12 @@ export default function OperatorHome() {
 
   const completed = statuses?.filter((s) => s.submitted).length || 0;
   const total = statuses?.length || 0;
+  // Only render the friendly empty-state once we *know* the operator's
+  // status list resolved cleanly to zero rows. A `statuses === undefined`
+  // (transient query error / mid-refetch) must NOT render the empty-state
+  // — that would falsely tell an operator they have no assignments when
+  // we simply haven't heard back from the server yet.
+  const showAssignmentEmptyState = Array.isArray(statuses) && total === 0;
 
   return (
     <div className="space-y-8 pb-20">
@@ -692,10 +712,12 @@ export default function OperatorHome() {
               </motion.div>
             ))}
           </AnimatePresence>
-          {statuses?.length === 0 && (
-            <p className="text-muted-foreground py-12 text-center col-span-full">
-              No areas assigned for this shift.
-            </p>
+          {showAssignmentEmptyState && (
+            <NoAssignedAreasEmptyState
+              siteHasAnyAreas={Array.isArray(allAreas) && allAreas.length > 0}
+              siteAreaCountKnown={Array.isArray(allAreas) && !allAreasError}
+              siteAreaCountLoading={allAreasLoading}
+            />
           )}
         </div>
       </section>
@@ -796,6 +818,69 @@ function ShiftUnknownView({
           </div>
         )}
       </header>
+    </div>
+  );
+}
+
+/* ------------------------ No assigned areas state ------------------------ */
+
+/**
+ * Friendly empty-state for the assigned-areas grid. Two distinct messages so
+ * the operator knows whether the site is brand-new (no areas exist yet) or
+ * whether a manager has set things up but missed assigning them — the second
+ * case is almost always a configuration mistake on the manager's side and
+ * the previous "see everything" fallback was actively misleading.
+ */
+function NoAssignedAreasEmptyState({
+  siteHasAnyAreas,
+  siteAreaCountKnown,
+  siteAreaCountLoading,
+}: {
+  siteHasAnyAreas: boolean;
+  // True only after the /areas lookup has settled cleanly. We hold the
+  // strongly-worded "no areas exist" copy until then so a transient
+  // failure on /areas can't flash the wrong message at the operator.
+  siteAreaCountKnown: boolean;
+  siteAreaCountLoading: boolean;
+}) {
+  let variant: "unassigned" | "no-areas" | "unknown";
+  let title: string;
+  let body: string;
+  if (siteHasAnyAreas) {
+    variant = "unassigned";
+    title = "No areas assigned to you yet";
+    body =
+      "Your manager hasn't assigned you any areas. Ask them to add you to the areas you're responsible for so this list fills in.";
+  } else if (siteAreaCountKnown) {
+    variant = "no-areas";
+    title = "No audit areas have been set up yet";
+    body =
+      "There are no audit areas configured for this site yet. Ask your manager to add some so you can start submitting checks.";
+  } else {
+    // /areas is still loading or errored — fall back to the neutral
+    // wording so we don't claim the site has no areas when we don't
+    // actually know.
+    variant = "unknown";
+    title = "No areas to audit right now";
+    body = siteAreaCountLoading
+      ? "Hang on while we check your assignments. If this list stays empty, ask your manager whether you're set up for any areas."
+      : "We couldn't load the area list. Ask your manager whether you're assigned to any areas, then refresh this page.";
+  }
+  return (
+    <div
+      className="col-span-full"
+      data-testid="empty-no-assigned-areas"
+      data-variant={variant}
+    >
+      <div className="rounded-2xl border border-dashed border-border/70 bg-secondary/40 px-6 py-10 text-center space-y-2">
+        <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-secondary text-muted-foreground">
+          <Info className="w-5 h-5" aria-hidden="true" />
+        </div>
+        <h3 className="text-base font-semibold text-foreground">{title}</h3>
+        <p className="text-sm text-muted-foreground max-w-md mx-auto leading-snug">
+          {body}
+        </p>
+      </div>
     </div>
   );
 }

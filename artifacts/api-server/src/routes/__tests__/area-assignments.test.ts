@@ -20,9 +20,11 @@ import { signToken } from "../../lib/auth";
 //   - Operator-facing scoping (`/operator/status`,
 //     `POST /submissions/identify-area`, `POST /submissions`)
 //
-// The route uses a "no rows for this user → see all areas" backward-compat
-// rule so existing single-line setups don't break, and these tests pin both
-// halves of that rule (default-all and explicit narrowing).
+// The backward-compat rule is "see everything when the assignments table is
+// completely empty site-wide". As soon as *any* operator has been assigned
+// somewhere, an unassigned operator now correctly sees an empty list (the
+// home page renders a friendly "ask your manager" empty state for that
+// case). These tests pin both halves of that rule.
 
 const RUN_TAG = `assignments-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -180,7 +182,7 @@ describe("PUT /areas/:id/assignments", () => {
 });
 
 describe("GET /operator/status (assignment scoping)", () => {
-  it("returns every area for an operator with no assignments configured", async () => {
+  it("returns every area for an operator when the assignments table is empty site-wide", async () => {
     const res = await request(app)
       .get("/api/operator/status")
       .set("Authorization", `Bearer ${opAToken}`);
@@ -191,7 +193,7 @@ describe("GET /operator/status (assignment scoping)", () => {
     expect(ids).toEqual(expect.arrayContaining([areaA.id, areaB.id, areaC.id]));
   });
 
-  it("narrows the home grid to assigned areas only once any assignment exists", async () => {
+  it("narrows the home grid to assigned areas once any assignment exists, and returns [] for operators left unassigned", async () => {
     await request(app)
       .put(`/api/areas/${areaA.id}/assignments`)
       .set("Authorization", `Bearer ${managerToken}`)
@@ -210,13 +212,16 @@ describe("GET /operator/status (assignment scoping)", () => {
     const ids = (res.body as Array<{ areaId: number }>).map((s) => s.areaId).sort();
     expect(ids).toEqual([areaA.id, areaC.id].sort());
 
-    // Operator B has no assignments — should still see everything.
+    // Operator B has no rows. Once assignments exist for *anyone*, an
+    // unassigned operator must get an empty list rather than the legacy
+    // "see everything" fallback — that previous behavior was masking
+    // configuration mistakes (task #139). The operator UI renders a
+    // friendly "ask your manager" empty state for this case.
     const bRes = await request(app)
       .get("/api/operator/status")
       .set("Authorization", `Bearer ${opBToken}`);
     expect(bRes.status).toBe(200);
-    const bIds = (bRes.body as Array<{ areaId: number }>).map((s) => s.areaId);
-    expect(bIds).toEqual(expect.arrayContaining([areaA.id, areaB.id, areaC.id]));
+    expect(bRes.body).toEqual([]);
   });
 });
 
