@@ -190,9 +190,25 @@ describe("dispatch — NO_PROVIDER_CONFIGURED", () => {
       createdAt: new Date(Date.now() - 5 * 60 * 1000),
     });
 
+    // Stub fetch so the configured Slack webhook actually "succeeds". The
+    // recovery sweep now treats genuine provider failure as transient and
+    // re-queues (task #157), which would block DELIVERED stamping; here
+    // we're asserting that the NO_PROVIDER_CONFIGURED branch doesn't fire
+    // when a provider IS configured, so a healthy 200 response is the
+    // right shape for this test.
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://hooks.example.invalid/")) {
+        return new Response("ok", { status: 200 });
+      }
+      return originalFetch(input as RequestInfo, _init);
+    }) as typeof fetch;
+
     try {
       await recoverPendingEscalationNotifications();
     } finally {
+      globalThis.fetch = originalFetch;
       delete process.env.SLACK_WEBHOOK_URL;
       await db
         .update(usersTable)

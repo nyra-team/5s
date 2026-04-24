@@ -1,7 +1,7 @@
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { db, escalationsTable, submissionsTable } from "@workspace/db";
-import { and, inArray, isNull } from "drizzle-orm";
+import { db, escalationsTable, submissionsTable, usersTable } from "@workspace/db";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { TestWorld, type TestArea, type TestUser } from "./helpers.js";
 import { recoverPendingEscalationNotifications } from "../src/lib/notifications.js";
 
@@ -57,6 +57,7 @@ describe("recoverPendingEscalationNotifications", () => {
     "ESCALATION_NOTIFICATION_RECOVERY_WINDOW_MS",
     "SLACK_WEBHOOK_URL",
     "RESEND_API_KEY",
+    "NOTIFICATION_FROM_EMAIL",
   ];
 
   beforeEach(() => {
@@ -64,6 +65,7 @@ describe("recoverPendingEscalationNotifications", () => {
     // Make sure no real notification provider is invoked from these tests.
     delete process.env.SLACK_WEBHOOK_URL;
     delete process.env.RESEND_API_KEY;
+    delete process.env.NOTIFICATION_FROM_EMAIL;
     // Generous recovery window so back-dated rows aren't classified "too old".
     process.env.ESCALATION_NOTIFICATION_RECOVERY_WINDOW_MS = String(
       24 * 60 * 60 * 1000,
@@ -188,6 +190,157 @@ describe("recoverPendingEscalationNotifications", () => {
     for (const r of rows) {
       assert.notEqual(r.notifiedAt, null, `escalation ${r.id} must remain stamped`);
     }
+  });
+
+  test("a transient Slack/email outage during recovery is retried on the next sweep", async () => {
+    // The bug we're closing: the atomic-claim recovery sweep stamps
+    // notified_at BEFORE attempting Slack/email dispatch. On its own this
+    // would mean a transient provider outage during a deploy silently loses
+    // the alert — the row is stamped, so the next restart's sweep won't pick
+    // it up either. With provider-failure retry enabled, the recovery sweep
+    // un-stamps notified_at when no provider succeeds, so a follow-up sweep
+    // (next deploy / next scheduled tick) actually delivers the alert.
+    //
+    // We exercise the full path by:
+    //   1. Configuring both providers (Slack webhook + Resend) so dispatch
+    //      actually attempts a real `fetch`.
+    //   2. Stubbing global fetch to fail every notification request (Slack
+    //      and Resend both return 503). Database calls go through `pg` over
+    //      TCP, not fetch, so they're unaffected.
+    //   3. Running recovery once — it should claim the row, fail dispatch,
+    //      and clear notified_at back to NULL.
+    //   4. Restoring fetch to succeed, running recovery again, and asserting
+    //      the row is now stamped DELIVERED. This is the proof the alert
+    //      survives a transient outage instead of being silently swallowed.
+    process.env.SLACK_WEBHOOK_URL = "https://hooks.slack.test/recovery-retry";
+    process.env.RESEND_API_KEY = "test-resend-key";
+    process.env.NOTIFICATION_FROM_EMAIL = "alerts@5s.test";
+
+    // A manager has to exist with email notifications on so the dispatch
+    // path actually fans out to a recipient (defaults: notifyEmailEnabled
+    // true, notifySlackEnabled false). Slack is still attempted because the
+    // webhook env var is set, but it's only sent if at least one manager
+    // opted in to Slack — so this test intentionally exercises the email
+    // failure path. We add a Slack-subscribing manager too to cover both.
+    const manager = await world.createUser("MANAGER", "mgr-recovery-retry");
+    // Bump the manager to also receive Slack so both providers are exercised.
+    await db
+      .update(usersTable)
+      .set({ notifySlackEnabled: true })
+      .where(eq(usersTable.id, manager.id));
+
+    const operator = await world.createUser("OPERATOR", "op-recovery-retry");
+    const area = await world.createArea("Cell-recovery-retry");
+    const escalationId = await seedUnnotifiedEscalation({ area, operator });
+
+    // Sanity: row starts unnotified.
+    const beforeFirst = await db
+      .select({ notifiedAt: escalationsTable.notifiedAt })
+      .from(escalationsTable)
+      .where(eq(escalationsTable.id, escalationId));
+    assert.equal(beforeFirst[0]?.notifiedAt, null, "row must start unnotified");
+
+    // --- First sweep: providers down. ---
+    const originalFetch = globalThis.fetch;
+    let failingFetchCalls = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      // Only intercept notification requests; nothing else in this test
+      // path uses fetch, but be explicit so a future change doesn't
+      // accidentally suffocate an unrelated call.
+      if (url.startsWith("https://hooks.slack.test/") || url.startsWith("https://api.resend.com/")) {
+        failingFetchCalls += 1;
+        return new Response("upstream is down", { status: 503 });
+      }
+      return originalFetch(input as RequestInfo, _init);
+    }) as typeof fetch;
+
+    let firstResult;
+    try {
+      firstResult = await recoverPendingEscalationNotifications();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assert.equal(firstResult.claimed, 1, "first sweep should claim the row");
+    assert.equal(firstResult.dispatchAttempted, 1, "first sweep should attempt dispatch");
+    assert.equal(
+      firstResult.dispatchRetried,
+      1,
+      "failed dispatch must be re-queued so the next sweep retries",
+    );
+    assert.ok(failingFetchCalls > 0, "stubbed fetch should have been invoked");
+
+    const afterFirst = await db
+      .select({
+        notifiedAt: escalationsTable.notifiedAt,
+        notifyDeliveryStatus: escalationsTable.notifyDeliveryStatus,
+      })
+      .from(escalationsTable)
+      .where(eq(escalationsTable.id, escalationId));
+    assert.equal(
+      afterFirst[0]?.notifiedAt,
+      null,
+      "notified_at must be cleared so the next recovery sweep picks the row up",
+    );
+    assert.equal(
+      afterFirst[0]?.notifyDeliveryStatus,
+      null,
+      "delivery status must be cleared too — the alert hasn't actually been delivered",
+    );
+
+    // --- Second sweep: providers recovered. ---
+    let succeedingFetchCalls = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://hooks.slack.test/") || url.startsWith("https://api.resend.com/")) {
+        succeedingFetchCalls += 1;
+        return new Response("ok", { status: 200 });
+      }
+      return originalFetch(input as RequestInfo, _init);
+    }) as typeof fetch;
+
+    let secondResult;
+    try {
+      secondResult = await recoverPendingEscalationNotifications();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assert.equal(
+      secondResult.claimed,
+      1,
+      "the re-queued row must be re-claimed by the second sweep",
+    );
+    assert.equal(secondResult.dispatchAttempted, 1, "second sweep should attempt dispatch");
+    assert.equal(
+      secondResult.dispatchRetried,
+      0,
+      "no further retries needed — providers are healthy now",
+    );
+    assert.equal(secondResult.dispatchFailures, 0, "no unexpected dispatch exceptions");
+    assert.ok(
+      succeedingFetchCalls > 0,
+      "providers should have been re-attempted on the second sweep",
+    );
+
+    const afterSecond = await db
+      .select({
+        notifiedAt: escalationsTable.notifiedAt,
+        notifyDeliveryStatus: escalationsTable.notifyDeliveryStatus,
+      })
+      .from(escalationsTable)
+      .where(eq(escalationsTable.id, escalationId));
+    assert.notEqual(
+      afterSecond[0]?.notifiedAt,
+      null,
+      "after a successful recovery dispatch, notified_at must be stamped",
+    );
+    assert.equal(
+      afterSecond[0]?.notifyDeliveryStatus,
+      "DELIVERED",
+      "successful recovery dispatch must record DELIVERED so the manager UI is honest",
+    );
   });
 });
 

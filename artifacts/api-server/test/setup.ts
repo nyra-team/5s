@@ -371,6 +371,17 @@ function applyMigrations(targetUrl: string): void {
     env: { ...process.env, DATABASE_URL: targetUrl },
     stdio: ["ignore", "inherit", "inherit"],
   });
+  // Migrations only replay what's been generated under `migrations/`. Schema
+  // additions made directly in `src/schema/*.ts` without a corresponding
+  // generated migration won't reach the test template via `pnpm migrate`
+  // alone, so push the live schema to close that gap. `--force` skips the
+  // interactive "destructive change" prompt — safe for an isolated test
+  // template DB.
+  execSync("pnpm exec drizzle-kit push --force", {
+    cwd: dbPkgDir,
+    env: { ...process.env, DATABASE_URL: targetUrl },
+    stdio: ["ignore", "inherit", "inherit"],
+  });
 }
 
 /**

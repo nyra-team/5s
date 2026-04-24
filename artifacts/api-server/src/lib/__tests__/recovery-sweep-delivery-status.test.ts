@@ -37,11 +37,11 @@ beforeAll(async () => {
   process.env.ESCALATION_NOTIFICATION_WINDOW_MS = "0";
   // Pin both providers so dispatch's NO_PROVIDER_CONFIGURED branch isn't
   // tripped by leftover managers in the shared dev DB (regardless of which
-  // channels they happen to have toggled on). The values are intentionally
-  // non-routable so no real network call goes anywhere — dispatch only
-  // inspects whether the env vars are *set* when picking the status, and
-  // stamps DELIVERED even if the actual provider call fails (that policy is
-  // documented on the NotifyDeliveryStatus type).
+  // channels they happen to have toggled on). The recovery sweep now
+  // re-queues on transient provider failure (task #157), so we also stub
+  // global fetch in beforeEach to simulate a healthy provider — that way
+  // the DELIVERED-stamping assertion exercises the happy path instead of
+  // tripping the "all providers failed → re-queue" branch.
   process.env.SLACK_WEBHOOK_URL = "https://hooks.example.invalid/recover-status";
   process.env.RESEND_API_KEY = "test-resend-key";
   process.env.NOTIFICATION_FROM_EMAIL = "noreply@example.invalid";
@@ -115,11 +115,31 @@ afterAll(async () => {
   await pool.end();
 });
 
+const ORIGINAL_FETCH = globalThis.fetch;
+
 beforeEach(async () => {
   if (inserted.length > 0) {
     await db.delete(escalationsTable).where(inArray(escalationsTable.id, inserted));
     inserted.length = 0;
   }
+  // Stub fetch so notification provider calls succeed (200). The recovery
+  // sweep treats genuine provider failure as transient and re-queues, which
+  // would block the DELIVERED-stamping assertion below; we want a healthy
+  // provider here so the delivery-status badge is what's actually under test.
+  globalThis.fetch = (async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (
+      url.startsWith("https://hooks.example.invalid/") ||
+      url.startsWith("https://api.resend.com/")
+    ) {
+      return new Response("ok", { status: 200 });
+    }
+    return ORIGINAL_FETCH(input as RequestInfo, _init);
+  }) as typeof fetch;
+});
+
+afterAll(() => {
+  globalThis.fetch = ORIGINAL_FETCH;
 });
 
 async function insertEscalation(opts: {

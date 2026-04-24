@@ -562,12 +562,81 @@ async function markEscalationsNotified(
   }
 }
 
+/**
+ * Outcome of an individual provider dispatch attempt. The `dispatch()` helper
+ * aggregates these to decide whether the alert as a whole counts as
+ * "delivered" (so the recovery sweep can choose to retry it on transient
+ * outages instead of relying on the in-process error log as the only signal).
+ *
+ *   "DELIVERED"      — at least one recipient successfully received the alert
+ *                      via this provider.
+ *   "NOT_CONFIGURED" — the provider's env vars are unset, so we explicitly
+ *                      skipped it. Treated as "nothing to retry" so we don't
+ *                      loop forever in deployments that intentionally run
+ *                      with one or zero providers.
+ *   "FAILED"         — the provider was attempted and every recipient errored
+ *                      (HTTP non-2xx, fetch threw, etc.). Triggers a retry
+ *                      when the caller opts in via `retryOnFailure`.
+ */
+type ProviderOutcome = "DELIVERED" | "NOT_CONFIGURED" | "FAILED";
+
+export interface DispatchResult {
+  /**
+   * True when the alert can be considered handled — either it was delivered
+   * via at least one provider, every configured provider was a no-op
+   * (NOT_CONFIGURED), or there were simply no recipients (all in quiet hours
+   * / nobody opted in). False only when at least one provider was attempted
+   * AND no provider succeeded (i.e. transient outage), or when manager
+   * loading itself failed.
+   */
+  delivered: boolean;
+  /** Slack provider outcome, or null if Slack was not attempted. */
+  slack: ProviderOutcome | null;
+  /** Email provider outcome, or null if email was not attempted. */
+  email: ProviderOutcome | null;
+  /**
+   * True when at least one targeted manager has channels enabled but none of
+   * those channels are served by a configured provider — i.e. the alert
+   * "left the system through a wall." Dispatch corrective-stamps these rows
+   * with `notify_delivery_status = "NO_PROVIDER_CONFIGURED"` itself; callers
+   * (recovery sweep) must NOT overwrite that with a DELIVERED stamp.
+   */
+  noProviderConfigured: boolean;
+}
+
+export interface DispatchOptions {
+  /**
+   * When true, the caller has already atomically stamped `notified_at` AND
+   * `notify_delivery_status = "DELIVERED"` on the rows (see
+   * `claimEscalationsForLiveDispatch`) to guard against a concurrent
+   * startup-recovery sweep. Dispatch will skip the redundant restamp at the
+   * end. Used by the live grouping/immediate paths.
+   *
+   * Mutually exclusive with `retryOnFailure`: the live path treats provider
+   * outage as best-effort (rows are already marked DELIVERED so they won't
+   * be retried), while the recovery path needs to roll the stamp back on
+   * failure to retry on the next sweep.
+   */
+  preClaimed?: boolean;
+  /**
+   * When true, dispatch will NOT stamp `notified_at` / `notify_delivery_status`
+   * itself; the caller is responsible for persisting the outcome. Used by the
+   * recovery sweep, which has already stamped `notified_at` via its atomic
+   * claim and wants to *un-stamp* it on provider failure so the next sweep
+   * retries. Default false preserves the legacy behavior of marking DELIVERED
+   * at the end on a best-effort basis (used by re-pings).
+   */
+  retryOnFailure?: boolean;
+}
+
 async function dispatch(
   events: EscalationNotification[],
   reping: RepingContext | null,
-  opts: { preClaimed?: boolean } = {},
-): Promise<void> {
-  if (events.length === 0) return;
+  opts: DispatchOptions = {},
+): Promise<DispatchResult> {
+  if (events.length === 0) {
+    return { delivered: true, slack: null, email: null, noProviderConfigured: false };
+  }
 
   let managers: ManagerRow[];
   try {
@@ -590,7 +659,7 @@ async function dispatch(
       { err, count: events.length, areaName: events[0]?.areaName, reping: !!reping },
       "notify: failed to load managers (will retry on next restart)",
     );
-    return;
+    return { delivered: false, slack: null, email: null, noProviderConfigured: false };
   }
 
   const now = new Date();
@@ -615,10 +684,12 @@ async function dispatch(
     (m) => m.notifySlackEnabled && !quietIds.has(m.id),
   );
 
-  await Promise.allSettled([
-    emailRecipients.length > 0 ? sendEmails(emailRecipients, events, reping) : Promise.resolve(),
-    anySlackSubscriberActive ? sendSlack(events, reping) : Promise.resolve(),
-  ]);
+  const slackPromise: Promise<ProviderOutcome | null> = anySlackSubscriberActive
+    ? sendSlack(events, reping)
+    : Promise.resolve(null);
+  const emailPromise: Promise<ProviderOutcome | null> = emailRecipients.length > 0
+    ? sendEmails(emailRecipients, events, reping)
+    : Promise.resolve(null);
 
   // Detect the silent-failure mode where dispatch ran but the alert had no
   // way of leaving the system. We compute this off the *full* manager set
@@ -657,24 +728,104 @@ async function dispatch(
     );
   }
 
-  // Stamp notified_at after the best-effort dispatch attempt. The status
-  // distinguishes a healthy delivery from the silent-failure case where
-  // every targeted channel was a no-op because its provider was missing.
-  // We only skip stamping when manager loading itself failed above, because
-  // that's a transient condition we want to retry on next restart.
-  //
-  // The live grouping/immediate paths claim the rows BEFORE calling dispatch
-  // (see `claimEscalationsForLiveDispatch`) to atomically guard against a
-  // concurrent startup-recovery sweep, so they pass `preClaimed: true` —
-  // those rows are already stamped `DELIVERED`. We skip the redundant
-  // restamp in the healthy case, but still issue a corrective UPDATE when
-  // dispatch discovers the no-provider condition so the inbox surfaces the
-  // "No channel configured" badge instead of the stale `DELIVERED`. Re-pings
-  // and the recovery sweep don't pre-claim, so they always stamp here.
-  if (!opts.preClaimed || noProviderConfigured) {
+  const [slackSettled, emailSettled] = await Promise.allSettled([slackPromise, emailPromise]);
+
+  // sendSlack / sendEmails are written to never throw — they catch internally
+  // and return a ProviderOutcome — but we still defend against future drift
+  // by treating an unexpected rejection as FAILED.
+  const slack: ProviderOutcome | null =
+    slackSettled.status === "fulfilled" ? slackSettled.value : "FAILED";
+  const email: ProviderOutcome | null =
+    emailSettled.status === "fulfilled" ? emailSettled.value : "FAILED";
+
+  // Aggregate provider outcomes into a single delivery verdict:
+  // - No provider attempted (both null) → delivered (nothing we can or
+  //   should retry).
+  // - Any provider succeeded → delivered.
+  // - Every attempted provider was NOT_CONFIGURED → delivered (no retry
+  //   would ever change the answer).
+  // - Otherwise (at least one FAILED, none DELIVERED) → not delivered, the
+  //   recovery sweep will reschedule.
+  const attempts: ProviderOutcome[] = [];
+  if (slack !== null) attempts.push(slack);
+  if (email !== null) attempts.push(email);
+
+  let delivered: boolean;
+  if (attempts.length === 0) {
+    delivered = true;
+  } else if (attempts.includes("DELIVERED")) {
+    delivered = true;
+  } else if (attempts.every((o) => o === "NOT_CONFIGURED")) {
+    delivered = true;
+  } else {
+    delivered = false;
+  }
+
+  // Stamping behavior. Three paths converge here:
+  //   - Re-ping path (default, neither flag): stamp DELIVERED (or
+  //     NO_PROVIDER_CONFIGURED) here to record the latest delivery attempt
+  //     time. The status distinguishes healthy delivery from the
+  //     silent-failure case where every targeted channel was a no-op
+  //     because its provider was missing.
+  //   - Live path (preClaimed=true): the live grouping/immediate paths claim
+  //     the rows BEFORE calling dispatch (see `claimEscalationsForLiveDispatch`)
+  //     to atomically guard against a concurrent startup-recovery sweep, and
+  //     that claim already stamps both `notified_at` and
+  //     `notify_delivery_status="DELIVERED"`. We skip the redundant restamp
+  //     in the healthy case, but still issue a corrective UPDATE when
+  //     dispatch discovers the no-provider condition so the inbox surfaces
+  //     the "No channel configured" badge instead of the stale `DELIVERED`.
+  //     This path is intentionally best-effort on transient provider
+  //     failure — the row is already marked DELIVERED so the recovery sweep
+  //     won't pick it up; the safety net is that the recovery sweep covers
+  //     rows whose `notified_at` was never set (e.g. grouping-window flush
+  //     lost across a restart).
+  //   - Recovery path (retryOnFailure=true): caller persists the outcome.
+  //     On `delivered=true && !noProviderConfigured` it records DELIVERED
+  //     status (notified_at was already stamped by the atomic claim). On
+  //     `delivered=false` it un-stamps notified_at so the next sweep
+  //     retries. On `noProviderConfigured` we corrective-stamp here so the
+  //     row is no longer a recovery candidate (no retry will fix a missing
+  //     provider) and the recovery caller is responsible for not
+  //     overwriting that stamp.
+  if ((!opts.preClaimed && !opts.retryOnFailure) || noProviderConfigured) {
     await markEscalationsNotified(
       events.map((e) => e.escalationId),
       noProviderConfigured ? "NO_PROVIDER_CONFIGURED" : "DELIVERED",
+    );
+  }
+
+  return { delivered, slack, email, noProviderConfigured };
+}
+
+async function unstampForRetry(escalationIds: number[]): Promise<boolean> {
+  if (escalationIds.length === 0) return true;
+  try {
+    await db
+      .update(escalationsTable)
+      .set({ notifiedAt: null, notifyDeliveryStatus: null })
+      .where(inArray(escalationsTable.id, escalationIds));
+    return true;
+  } catch (err) {
+    logger.error(
+      { err, escalationIds },
+      "notify: failed to un-stamp notified_at for retry (alerts may be lost)",
+    );
+    return false;
+  }
+}
+
+async function recordRecoveryDelivered(escalationIds: number[]): Promise<void> {
+  if (escalationIds.length === 0) return;
+  try {
+    await db
+      .update(escalationsTable)
+      .set({ notifyDeliveryStatus: "DELIVERED" })
+      .where(inArray(escalationsTable.id, escalationIds));
+  } catch (err) {
+    logger.error(
+      { err, escalationIds },
+      "notify: failed to stamp notify_delivery_status=DELIVERED on recovered rows",
     );
   }
 }
@@ -687,8 +838,9 @@ export interface RecoverySweepResult {
    * is the right counter for "exactly-once across concurrent sweeps" — every
    * claimed in-window row gets exactly one dispatch attempt, owned by exactly
    * one process. Whether the underlying provider (Slack webhook, Resend) then
-   * succeeds is a separate concern; failures are logged inside `dispatch()`
-   * and counted in `dispatchFailures`.
+   * succeeds is a separate concern; failures are surfaced via
+   * `dispatchRetried` (provider outage → row re-queued) and `dispatchFailures`
+   * (unexpected exception thrown out of dispatch).
    */
   dispatchAttempted: number;
   /**
@@ -699,6 +851,14 @@ export interface RecoverySweepResult {
    * loading manager preferences).
    */
   dispatchFailures: number;
+  /**
+   * Number of recent rows whose dispatch failed (provider outage or manager
+   * load error) and were re-queued — i.e. their `notified_at` was cleared
+   * back to NULL so the next recovery sweep picks them up. This closes the
+   * "alert silently lost during a deploy if Slack/email is briefly down"
+   * gap that the atomic-claim design originally documented as a trade-off.
+   */
+  dispatchRetried: number;
   /** Number of rows older than the recovery window that were marked undeliverable. */
   skippedTooOld: number;
 }
@@ -723,12 +883,18 @@ export interface RecoverySweepResult {
  * already set and the row is excluded from its RETURNING set. Each row is
  * dispatched by exactly one process.
  *
- * Trade-off: stamping `notified_at` BEFORE we attempt dispatch means a
- * dispatch failure (e.g. transient Slack/email outage) is not retried by
- * the next startup sweep. We accept that — the previous "stamp after
- * dispatch" design left the door open to double-sends on every concurrent
- * boot, which is the louder user-visible failure. Managers auditing the
- * trail can still find the in-process error logs from `dispatch()`.
+ * Provider-failure retry:
+ * The atomic claim stamps `notified_at` BEFORE dispatch, which on its own
+ * would silently lose the alert if Slack or the email provider was briefly
+ * down at the moment of the sweep. To close that gap, recovery dispatch
+ * runs with `retryOnFailure: true`: when no provider succeeds (and at
+ * least one was attempted), we clear `notified_at` back to NULL so the
+ * NEXT recovery sweep — at the next API boot, or the next scheduled tick
+ * — picks the row up and tries again. The atomic-claim guarantee is
+ * preserved because clearing only happens AFTER dispatch returns, by which
+ * point any sibling process has already excluded these rows from its own
+ * claim. Only one process can ever flip `notified_at` from non-null back
+ * to null for a given row in a given dispatch attempt.
  */
 export async function recoverPendingEscalationNotifications(): Promise<RecoverySweepResult> {
   const lookbackMs = recoveryWindowMs();
@@ -757,12 +923,24 @@ export async function recoverPendingEscalationNotifications(): Promise<RecoveryS
     claimedIds = claimedRows.map((r) => r.id);
   } catch (err) {
     logger.error({ err }, "notify: startup recovery sweep failed to claim escalations");
-    return { claimed: 0, dispatchAttempted: 0, dispatchFailures: 0, skippedTooOld: 0 };
+    return {
+      claimed: 0,
+      dispatchAttempted: 0,
+      dispatchFailures: 0,
+      dispatchRetried: 0,
+      skippedTooOld: 0,
+    };
   }
 
   if (claimedIds.length === 0) {
     logger.info("notify: startup recovery sweep found no unnotified escalations");
-    return { claimed: 0, dispatchAttempted: 0, dispatchFailures: 0, skippedTooOld: 0 };
+    return {
+      claimed: 0,
+      dispatchAttempted: 0,
+      dispatchFailures: 0,
+      dispatchRetried: 0,
+      skippedTooOld: 0,
+    };
   }
 
   let claimedRows: Array<{
@@ -806,6 +984,7 @@ export async function recoverPendingEscalationNotifications(): Promise<RecoveryS
       claimed: claimedIds.length,
       dispatchAttempted: 0,
       dispatchFailures: 0,
+      dispatchRetried: 0,
       skippedTooOld: 0,
     };
   }
@@ -850,6 +1029,7 @@ export async function recoverPendingEscalationNotifications(): Promise<RecoveryS
       claimed: claimedIds.length,
       dispatchAttempted: 0,
       dispatchFailures: 0,
+      dispatchRetried: 0,
       skippedTooOld: tooOld.length,
     };
   }
@@ -891,16 +1071,56 @@ export async function recoverPendingEscalationNotifications(): Promise<RecoveryS
   // `dispatchFailures` is the count of in-window rows whose dispatch call
   // raised an unexpected exception (the grouped path uses Promise.allSettled
   // internally so this is normally 0 even with a flaky provider).
+  // `dispatchRetried` counts rows whose dispatch returned a delivery=false
+  // verdict (provider outage / manager-load error) and were re-queued by
+  // clearing `notified_at` so the next sweep tries again.
   let dispatchFailures = 0;
+  let dispatchRetried = 0;
   for (const events of byArea.values()) {
+    const ids = events.map((e) => e.escalationId);
+    let result: DispatchResult;
     try {
-      await dispatch(events, null);
+      result = await dispatch(events, null, { retryOnFailure: true });
     } catch (err) {
+      // Unexpected throw out of dispatch. Treat the same as a delivery
+      // failure: re-queue these rows so the next sweep retries them rather
+      // than silently swallowing the alert.
       dispatchFailures += events.length;
       logger.error(
         { err, areaId: events[0].areaId, count: events.length },
-        "notify: startup recovery dispatch failed (alerts lost — already claimed)",
+        "notify: startup recovery dispatch threw — re-queueing for retry",
       );
+      const restamped = await unstampForRetry(ids);
+      if (restamped) dispatchRetried += events.length;
+      continue;
+    }
+
+    if (result.delivered) {
+      if (result.noProviderConfigured) {
+        // Dispatch already corrective-stamped these rows with
+        // NO_PROVIDER_CONFIGURED — overwriting with DELIVERED would mask
+        // the missing-channel signal in the manager inbox.
+      } else {
+        // Notified_at was already stamped by the atomic claim; record the
+        // outcome so the manager UI's delivery badge reflects "DELIVERED".
+        await recordRecoveryDelivered(ids);
+      }
+    } else {
+      // Provider failure (e.g. Slack 5xx, Resend down) or manager-load
+      // failure. Clear notified_at so this row is picked up by the next
+      // recovery sweep — closes the "alert silently lost during a deploy"
+      // gap that the old fire-and-forget design left open.
+      logger.warn(
+        {
+          areaId: events[0].areaId,
+          count: events.length,
+          slack: result.slack,
+          email: result.email,
+        },
+        "notify: startup recovery dispatch failed — re-queueing for next sweep",
+      );
+      const restamped = await unstampForRetry(ids);
+      if (restamped) dispatchRetried += events.length;
     }
   }
 
@@ -908,6 +1128,7 @@ export async function recoverPendingEscalationNotifications(): Promise<RecoveryS
     claimed: claimedIds.length,
     dispatchAttempted: recent.length,
     dispatchFailures,
+    dispatchRetried,
     skippedTooOld: tooOld.length,
   };
 }
@@ -1144,14 +1365,14 @@ function windowMinutesLabel(): string {
 async function sendSlack(
   events: EscalationNotification[],
   reping: RepingContext | null,
-): Promise<void> {
+): Promise<ProviderOutcome> {
   const webhook = process.env.SLACK_WEBHOOK_URL?.trim();
   if (!webhook) {
     logger.info(
       { count: events.length, areaName: events[0].areaName, reping: !!reping },
       "notify: SLACK_WEBHOOK_URL not set — skipping Slack message",
     );
-    return;
+    return "NOT_CONFIGURED";
   }
 
   // Re-pings always carry exactly one event (see notifyEscalationReping), so
@@ -1171,14 +1392,16 @@ async function sendSlack(
         { count: events.length, status: res.status, body: body.slice(0, 200), reping: !!reping },
         "notify: Slack webhook returned non-2xx",
       );
-      return;
+      return "FAILED";
     }
     logger.info(
       { count: events.length, areaName: events[0].areaName, reping: !!reping },
       "notify: Slack message posted",
     );
+    return "DELIVERED";
   } catch (err) {
     logger.error({ err, count: events.length, reping: !!reping }, "notify: Slack post failed");
+    return "FAILED";
   }
 }
 
@@ -1259,7 +1482,7 @@ async function sendEmails(
   recipients: string[],
   events: EscalationNotification[],
   reping: RepingContext | null,
-): Promise<void> {
+): Promise<ProviderOutcome> {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   const from = process.env.NOTIFICATION_FROM_EMAIL?.trim();
   if (!apiKey || !from) {
@@ -1267,7 +1490,7 @@ async function sendEmails(
       { count: events.length, recipientCount: recipients.length, reping: !!reping },
       "notify: RESEND_API_KEY / NOTIFICATION_FROM_EMAIL not set — skipping email",
     );
-    return;
+    return "NOT_CONFIGURED";
   }
 
   // Re-pings always carry exactly one event (see notifyEscalationReping), so
@@ -1275,7 +1498,12 @@ async function sendEmails(
   const { subject, html, text } =
     events.length === 1 ? buildSingleEmail(events[0], reping) : buildGroupedEmail(events);
 
-  await Promise.allSettled(
+  // Track per-recipient success so we can return a single aggregate outcome.
+  // Partial success counts as DELIVERED — we don't want the recovery sweep
+  // to re-send to recipients who already got the email just because one
+  // address bounced. Only a total failure (every recipient errored) flips
+  // the bit to FAILED and triggers a retry.
+  const results = await Promise.allSettled(
     recipients.map(async (to) => {
       try {
         const res = await fetch("https://api.resend.com/emails", {
@@ -1292,14 +1520,19 @@ async function sendEmails(
             { count: events.length, to, status: res.status, body: body.slice(0, 200), reping: !!reping },
             "notify: Resend returned non-2xx",
           );
-          return;
+          return false;
         }
         logger.info({ count: events.length, to, reping: !!reping }, "notify: email sent");
+        return true;
       } catch (err) {
         logger.error({ err, count: events.length, to, reping: !!reping }, "notify: email send failed");
+        return false;
       }
     }),
   );
+
+  const anySent = results.some((r) => r.status === "fulfilled" && r.value === true);
+  return anySent ? "DELIVERED" : "FAILED";
 }
 
 function buildSingleEmail(
