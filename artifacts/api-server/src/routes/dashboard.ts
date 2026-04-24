@@ -234,10 +234,16 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
     return;
   }
 
-  // Use the configured shift timezone (validated at startup) so trend rows
-  // bucket by the same calendar day operators see in their timezone.
+  // Use the configured shift timezone (validated at startup via
+  // Intl.DateTimeFormat — never user-controlled) so trend rows bucket by the
+  // same calendar day operators see in their timezone. We inline the tz as a
+  // SQL literal rather than a bound parameter: when each use of istDayExpr is
+  // bound separately, postgres sees two distinct parameter slots in SELECT vs
+  // GROUP BY and can't prove the expressions are equal, raising
+  // "column must appear in the GROUP BY clause" (SQLSTATE 42803).
   const shiftTz = getShiftConfig().timeZone;
-  const istDayExpr = sql<string>`to_char(${submissionsTable.createdAt} at time zone ${shiftTz}, 'YYYY-MM-DD')`;
+  const tzLiteral = sql.raw(`'${shiftTz.replace(/'/g, "''")}'`);
+  const istDayExpr = sql<string>`to_char(${submissionsTable.createdAt} at time zone ${tzLiteral}, 'YYYY-MM-DD')`;
 
   // When a shift filter is provided, every day's average reflects only that
   // shift's submissions; the date window itself is unchanged.
