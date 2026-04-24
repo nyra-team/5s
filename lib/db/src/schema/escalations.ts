@@ -28,15 +28,23 @@ export const escalationsTable = pgTable("escalations", {
   // Tracks the *outcome* of the notify attempt that stamped `notifiedAt`.
   // NULL alongside a NULL `notifiedAt` means dispatch hasn't happened yet.
   // Known values:
-  //   "DELIVERED"               — providers were attempted (Slack/Resend);
-  //                               individual provider failures are logged but
-  //                               we still mark delivered to avoid re-pinging
-  //                               on every restart.
-  //   "SKIPPED_RECOVERY_WINDOW" — the startup recovery sweep found this row
-  //                               older than the recovery window and gave up
-  //                               on dispatching it, stamping `notifiedAt` so
-  //                               it stops being re-scanned. Surfaced in the
-  //                               manager UI as a "delivery skipped" badge.
+  //   "DELIVERED"                — providers were attempted (Slack/Resend);
+  //                                individual provider failures are logged but
+  //                                we still mark delivered to avoid re-pinging
+  //                                on every restart.
+  //   "SKIPPED_RECOVERY_WINDOW"  — the startup recovery sweep found this row
+  //                                older than the recovery window and gave up
+  //                                on dispatching it, stamping `notifiedAt` so
+  //                                it stops being re-scanned. Surfaced in the
+  //                                manager UI as a "delivery skipped" badge.
+  //   "NO_PROVIDER_CONFIGURED"   — dispatch ran but no notification channel
+  //                                could carry the alert: either neither
+  //                                Slack nor Resend is configured at all, or
+  //                                every targeted manager only had channels
+  //                                enabled whose providers are missing.
+  //                                Surfaced in the manager UI as a "no
+  //                                channel configured" badge so the inbox
+  //                                doesn't pretend the alert went out.
   notifyDeliveryStatus: text("notify_delivery_status"),
   repingCount: integer("reping_count").notNull().default(0),
   lastRepingAt: timestamp("last_reping_at", { withTimezone: true }),

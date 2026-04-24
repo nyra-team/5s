@@ -345,6 +345,7 @@ function EscalationCard({
           }`}>{e.status}</span>
           <RepingBadge count={e.repingCount} lastRepingAt={e.lastRepingAt} />
           <DeliverySkippedBadge status={e.notifyDeliveryStatus} />
+          <NoChannelConfiguredBadge status={e.notifyDeliveryStatus} />
         </div>
         <div className="flex gap-2">
           {e.status === "OPEN" && (
@@ -401,6 +402,30 @@ function DeliverySkippedBadge({
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-[260px] text-center">
         This escalation was older than the notification recovery window when the API restarted, so no email or Slack message was actually sent. It still appears here for follow-up.
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function NoChannelConfiguredBadge({
+  status,
+}: {
+  status?: EscalationNotifyDeliveryStatus;
+}) {
+  if (status !== "NO_PROVIDER_CONFIGURED") return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="inline-flex items-center gap-1 text-[11.5px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-500/25 dark:text-amber-100 cursor-help"
+          data-testid="badge-no-channel-configured"
+        >
+          <BellOff className="w-3 h-3" />
+          No channel configured
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-[260px] text-center">
+        No notification channel is configured — escalation was not sent. Ask an admin to set up Slack or email so future alerts reach the team.
       </TooltipContent>
     </Tooltip>
   );

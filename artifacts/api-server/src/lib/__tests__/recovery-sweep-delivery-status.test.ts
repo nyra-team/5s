@@ -20,6 +20,9 @@ import { recoverPendingEscalationNotifications } from "../notifications";
 const RUN_TAG = `recover-status-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const ORIGINAL_RECOVERY_WINDOW = process.env.ESCALATION_NOTIFICATION_RECOVERY_WINDOW_MS;
 const ORIGINAL_GROUPING_WINDOW = process.env.ESCALATION_NOTIFICATION_WINDOW_MS;
+const ORIGINAL_SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL;
+const ORIGINAL_RESEND_API_KEY = process.env.RESEND_API_KEY;
+const ORIGINAL_NOTIFICATION_FROM_EMAIL = process.env.NOTIFICATION_FROM_EMAIL;
 
 let operatorId: number;
 let area: { id: number; name: string };
@@ -32,6 +35,16 @@ beforeAll(async () => {
   // them past the test's lifetime.
   process.env.ESCALATION_NOTIFICATION_RECOVERY_WINDOW_MS = String(60 * 60 * 1000);
   process.env.ESCALATION_NOTIFICATION_WINDOW_MS = "0";
+  // Pin both providers so dispatch's NO_PROVIDER_CONFIGURED branch isn't
+  // tripped by leftover managers in the shared dev DB (regardless of which
+  // channels they happen to have toggled on). The values are intentionally
+  // non-routable so no real network call goes anywhere — dispatch only
+  // inspects whether the env vars are *set* when picking the status, and
+  // stamps DELIVERED even if the actual provider call fails (that policy is
+  // documented on the NotifyDeliveryStatus type).
+  process.env.SLACK_WEBHOOK_URL = "https://hooks.example.invalid/recover-status";
+  process.env.RESEND_API_KEY = "test-resend-key";
+  process.env.NOTIFICATION_FROM_EMAIL = "noreply@example.invalid";
 
   const [u] = await db
     .insert(usersTable)
@@ -83,6 +96,21 @@ afterAll(async () => {
     delete process.env.ESCALATION_NOTIFICATION_WINDOW_MS;
   } else {
     process.env.ESCALATION_NOTIFICATION_WINDOW_MS = ORIGINAL_GROUPING_WINDOW;
+  }
+  if (ORIGINAL_SLACK_WEBHOOK_URL === undefined) {
+    delete process.env.SLACK_WEBHOOK_URL;
+  } else {
+    process.env.SLACK_WEBHOOK_URL = ORIGINAL_SLACK_WEBHOOK_URL;
+  }
+  if (ORIGINAL_RESEND_API_KEY === undefined) {
+    delete process.env.RESEND_API_KEY;
+  } else {
+    process.env.RESEND_API_KEY = ORIGINAL_RESEND_API_KEY;
+  }
+  if (ORIGINAL_NOTIFICATION_FROM_EMAIL === undefined) {
+    delete process.env.NOTIFICATION_FROM_EMAIL;
+  } else {
+    process.env.NOTIFICATION_FROM_EMAIL = ORIGINAL_NOTIFICATION_FROM_EMAIL;
   }
   await pool.end();
 });

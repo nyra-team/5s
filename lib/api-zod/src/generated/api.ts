@@ -1608,10 +1608,10 @@ export const ListEscalationsResponseItem = zod.object({
     .nullish()
     .describe("Timestamp of the most recent reminder ping, if any."),
   notifyDeliveryStatus: zod
-    .enum(["DELIVERED", "SKIPPED_RECOVERY_WINDOW"])
+    .enum(["DELIVERED", "SKIPPED_RECOVERY_WINDOW", "NO_PROVIDER_CONFIGURED"])
     .nullish()
     .describe(
-      'Outcome of the most recent notification dispatch attempt for this\nescalation. `DELIVERED` means the API made a best-effort send to\nthe configured email\/Slack providers (individual provider failures\nare logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`\nmeans the startup-recovery sweep found this row older than the\nrecovery window and gave up on dispatching it — managers see a\n\"delivery skipped\" badge so they know the alert never went out.\n`null` when no dispatch has happened yet.\n',
+      'Outcome of the most recent notification dispatch attempt for this\nescalation. `DELIVERED` means the API made a best-effort send to\nthe configured email\/Slack providers (individual provider failures\nare logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`\nmeans the startup-recovery sweep found this row older than the\nrecovery window and gave up on dispatching it — managers see a\n\"delivery skipped\" badge so they know the alert never went out.\n`NO_PROVIDER_CONFIGURED` means dispatch ran but no notification\nchannel could carry the alert: either neither Slack nor Resend is\nconfigured at all, or every targeted manager only had channels\nenabled whose providers are missing — managers see a distinct\n\"No channel configured\" badge so they know the alert never left\nthe system.\n`null` when no dispatch has happened yet.\n',
     ),
 });
 export const ListEscalationsResponse = zod.array(ListEscalationsResponseItem);
@@ -1656,10 +1656,10 @@ export const AcknowledgeEscalationResponse = zod.object({
     .nullish()
     .describe("Timestamp of the most recent reminder ping, if any."),
   notifyDeliveryStatus: zod
-    .enum(["DELIVERED", "SKIPPED_RECOVERY_WINDOW"])
+    .enum(["DELIVERED", "SKIPPED_RECOVERY_WINDOW", "NO_PROVIDER_CONFIGURED"])
     .nullish()
     .describe(
-      'Outcome of the most recent notification dispatch attempt for this\nescalation. `DELIVERED` means the API made a best-effort send to\nthe configured email\/Slack providers (individual provider failures\nare logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`\nmeans the startup-recovery sweep found this row older than the\nrecovery window and gave up on dispatching it — managers see a\n\"delivery skipped\" badge so they know the alert never went out.\n`null` when no dispatch has happened yet.\n',
+      'Outcome of the most recent notification dispatch attempt for this\nescalation. `DELIVERED` means the API made a best-effort send to\nthe configured email\/Slack providers (individual provider failures\nare logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`\nmeans the startup-recovery sweep found this row older than the\nrecovery window and gave up on dispatching it — managers see a\n\"delivery skipped\" badge so they know the alert never went out.\n`NO_PROVIDER_CONFIGURED` means dispatch ran but no notification\nchannel could carry the alert: either neither Slack nor Resend is\nconfigured at all, or every targeted manager only had channels\nenabled whose providers are missing — managers see a distinct\n\"No channel configured\" badge so they know the alert never left\nthe system.\n`null` when no dispatch has happened yet.\n',
     ),
 });
 
@@ -1696,10 +1696,10 @@ export const ResolveEscalationResponse = zod.object({
     .nullish()
     .describe("Timestamp of the most recent reminder ping, if any."),
   notifyDeliveryStatus: zod
-    .enum(["DELIVERED", "SKIPPED_RECOVERY_WINDOW"])
+    .enum(["DELIVERED", "SKIPPED_RECOVERY_WINDOW", "NO_PROVIDER_CONFIGURED"])
     .nullish()
     .describe(
-      'Outcome of the most recent notification dispatch attempt for this\nescalation. `DELIVERED` means the API made a best-effort send to\nthe configured email\/Slack providers (individual provider failures\nare logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`\nmeans the startup-recovery sweep found this row older than the\nrecovery window and gave up on dispatching it — managers see a\n\"delivery skipped\" badge so they know the alert never went out.\n`null` when no dispatch has happened yet.\n',
+      'Outcome of the most recent notification dispatch attempt for this\nescalation. `DELIVERED` means the API made a best-effort send to\nthe configured email\/Slack providers (individual provider failures\nare logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`\nmeans the startup-recovery sweep found this row older than the\nrecovery window and gave up on dispatching it — managers see a\n\"delivery skipped\" badge so they know the alert never went out.\n`NO_PROVIDER_CONFIGURED` means dispatch ran but no notification\nchannel could carry the alert: either neither Slack nor Resend is\nconfigured at all, or every targeted manager only had channels\nenabled whose providers are missing — managers see a distinct\n\"No channel configured\" badge so they know the alert never left\nthe system.\n`null` when no dispatch has happened yet.\n',
     ),
 });
 
@@ -1899,10 +1899,14 @@ export const GetLiveShiftResponse = zod.object({
         .nullish()
         .describe("Timestamp of the most recent reminder ping, if any."),
       notifyDeliveryStatus: zod
-        .enum(["DELIVERED", "SKIPPED_RECOVERY_WINDOW"])
+        .enum([
+          "DELIVERED",
+          "SKIPPED_RECOVERY_WINDOW",
+          "NO_PROVIDER_CONFIGURED",
+        ])
         .nullish()
         .describe(
-          'Outcome of the most recent notification dispatch attempt for this\nescalation. `DELIVERED` means the API made a best-effort send to\nthe configured email\/Slack providers (individual provider failures\nare logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`\nmeans the startup-recovery sweep found this row older than the\nrecovery window and gave up on dispatching it — managers see a\n\"delivery skipped\" badge so they know the alert never went out.\n`null` when no dispatch has happened yet.\n',
+          'Outcome of the most recent notification dispatch attempt for this\nescalation. `DELIVERED` means the API made a best-effort send to\nthe configured email\/Slack providers (individual provider failures\nare logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`\nmeans the startup-recovery sweep found this row older than the\nrecovery window and gave up on dispatching it — managers see a\n\"delivery skipped\" badge so they know the alert never went out.\n`NO_PROVIDER_CONFIGURED` means dispatch ran but no notification\nchannel could carry the alert: either neither Slack nor Resend is\nconfigured at all, or every targeted manager only had channels\nenabled whose providers are missing — managers see a distinct\n\"No channel configured\" badge so they know the alert never left\nthe system.\n`null` when no dispatch has happened yet.\n',
         ),
     }),
   ),

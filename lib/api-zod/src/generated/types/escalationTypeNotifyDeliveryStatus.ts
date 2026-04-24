@@ -14,6 +14,12 @@ are logged but still counted as delivered). `SKIPPED_RECOVERY_WINDOW`
 means the startup-recovery sweep found this row older than the
 recovery window and gave up on dispatching it — managers see a
 "delivery skipped" badge so they know the alert never went out.
+`NO_PROVIDER_CONFIGURED` means dispatch ran but no notification
+channel could carry the alert: either neither Slack nor Resend is
+configured at all, or every targeted manager only had channels
+enabled whose providers are missing — managers see a distinct
+"No channel configured" badge so they know the alert never left
+the system.
 `null` when no dispatch has happened yet.
 
  */
@@ -24,4 +30,5 @@ export type EscalationTypeNotifyDeliveryStatus =
 export const EscalationTypeNotifyDeliveryStatus = {
   DELIVERED: "DELIVERED",
   SKIPPED_RECOVERY_WINDOW: "SKIPPED_RECOVERY_WINDOW",
+  NO_PROVIDER_CONFIGURED: "NO_PROVIDER_CONFIGURED",
 } as const;

@@ -520,7 +520,26 @@ interface ManagerRow {
  * surfaced to the manager UI. Keep these in sync with the schema doc-comment
  * and the OpenAPI `Escalation.notifyDeliveryStatus` enum.
  */
-export type NotifyDeliveryStatus = "DELIVERED" | "SKIPPED_RECOVERY_WINDOW";
+export type NotifyDeliveryStatus =
+  | "DELIVERED"
+  | "SKIPPED_RECOVERY_WINDOW"
+  | "NO_PROVIDER_CONFIGURED";
+
+/**
+ * Reads provider config off the environment. Exported for tests so they can
+ * assert the same logic the dispatch path uses without re-implementing the
+ * env-name conventions.
+ */
+export function notificationProvidersConfigured(): {
+  slackConfigured: boolean;
+  emailConfigured: boolean;
+} {
+  const slackConfigured = !!process.env.SLACK_WEBHOOK_URL?.trim();
+  const emailConfigured =
+    !!process.env.RESEND_API_KEY?.trim() &&
+    !!process.env.NOTIFICATION_FROM_EMAIL?.trim();
+  return { slackConfigured, emailConfigured };
+}
 
 async function markEscalationsNotified(
   escalationIds: number[],
@@ -601,22 +620,61 @@ async function dispatch(
     anySlackSubscriberActive ? sendSlack(events, reping) : Promise.resolve(),
   ]);
 
-  // Stamp notified_at after the best-effort dispatch attempt — including the
-  // case where no provider is configured (those are explicitly logged inside
-  // sendSlack/sendEmails). We only skip stamping when manager loading itself
-  // failed above, because that's a transient condition we want to retry.
+  // Detect the silent-failure mode where dispatch ran but the alert had no
+  // way of leaving the system. We compute this off the *full* manager set
+  // (not the quiet-hours-filtered slice) because quiet hours is a transient,
+  // per-manager suppression by design — it shouldn't get conflated with a
+  // missing-provider config problem that affects every future dispatch.
+  //
+  // A manager is "reachable in principle" if at least one channel they have
+  // turned on has its corresponding provider configured. If at least one
+  // manager has channels enabled but none of those channels are served by a
+  // configured provider, we record NO_PROVIDER_CONFIGURED so the inbox can
+  // show the manager that the alert never actually went out.
+  const { slackConfigured, emailConfigured } = notificationProvidersConfigured();
+  const anyManagerHasEnabledChannel = managers.some(
+    (m) => m.notifyEmailEnabled || m.notifySlackEnabled,
+  );
+  const anyManagerReachableInPrinciple = managers.some(
+    (m) =>
+      (m.notifyEmailEnabled && emailConfigured) ||
+      (m.notifySlackEnabled && slackConfigured),
+  );
+  const noProviderConfigured =
+    anyManagerHasEnabledChannel && !anyManagerReachableInPrinciple;
+
+  if (noProviderConfigured) {
+    logger.warn(
+      {
+        count: events.length,
+        areaName: events[0].areaName,
+        managerCount: managers.length,
+        slackConfigured,
+        emailConfigured,
+        reping: !!reping,
+      },
+      "notify: no notification channel is configured for any targeted manager — escalation was not sent",
+    );
+  }
+
+  // Stamp notified_at after the best-effort dispatch attempt. The status
+  // distinguishes a healthy delivery from the silent-failure case where
+  // every targeted channel was a no-op because its provider was missing.
+  // We only skip stamping when manager loading itself failed above, because
+  // that's a transient condition we want to retry on next restart.
   //
   // The live grouping/immediate paths claim the rows BEFORE calling dispatch
   // (see `claimEscalationsForLiveDispatch`) to atomically guard against a
-  // concurrent startup-recovery sweep, so they pass `preClaimed: true` and
-  // we skip the redundant restamp here. Re-pings and the recovery sweep
-  // continue to stamp here (recovery's own claim only touches `notified_at`,
-  // not `notify_delivery_status`, and re-pings stamp to record the latest
-  // delivery attempt time).
-  if (!opts.preClaimed) {
+  // concurrent startup-recovery sweep, so they pass `preClaimed: true` —
+  // those rows are already stamped `DELIVERED`. We skip the redundant
+  // restamp in the healthy case, but still issue a corrective UPDATE when
+  // dispatch discovers the no-provider condition so the inbox surfaces the
+  // "No channel configured" badge instead of the stale `DELIVERED`. Re-pings
+  // and the recovery sweep don't pre-claim, so they always stamp here.
+  if (!opts.preClaimed || noProviderConfigured) {
     await markEscalationsNotified(
       events.map((e) => e.escalationId),
-      "DELIVERED",
+      noProviderConfigured ? "NO_PROVIDER_CONFIGURED" : "DELIVERED",
     );
   }
 }
