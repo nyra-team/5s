@@ -4,10 +4,17 @@ import {
   useGetSubmission,
   useGetLabels,
   useCreateLabel,
+  useQuickApproveLabel,
+  useResolveEscalation,
   useGetAreaModelStatus,
   getGetAreaModelStatusQueryKey,
+  getListSubmissionsQueryKey,
+  getGetLabelsQueryKey,
+  getListEscalationsQueryKey,
+  getGetEscalationCountQueryKey,
 } from "@workspace/api-client-react";
-import { useState } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -19,8 +26,9 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
+import { useToast } from "@/hooks/use-toast";
 import {
-  CheckCircle2, ArrowRight, Brain, AlertTriangle, MapPin, Tag, Video, Image as ImageIcon, Sparkles,
+  CheckCircle2, ArrowRight, Brain, AlertTriangle, MapPin, Tag, Video, Image as ImageIcon, Sparkles, Search, Keyboard, Pencil,
 } from "lucide-react";
 import { motion } from "framer-motion";
 
@@ -85,7 +93,7 @@ function PillarBar({ label, value, max = 5 }: { label: string; value: number; ma
   );
 }
 
-function LabelForm({ submissionId, existingLabel }: { submissionId: number; existingLabel?: any }) {
+function LabelForm({ submissionId, existingLabel, autoFocus }: { submissionId: number; existingLabel?: any; autoFocus?: boolean }) {
   const { user } = useAuth();
   const isManager = user?.role === "MANAGER";
   const [pillars, setPillars] = useState<Record<string, number>>({
@@ -96,12 +104,18 @@ function LabelForm({ submissionId, existingLabel }: { submissionId: number; exis
     sustain: existingLabel?.pillarsJson?.sustain ?? 3,
   });
   const createLabel = useCreateLabel();
+  const formRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (autoFocus && formRef.current) {
+      formRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [autoFocus]);
   if (!isManager) return null;
   const totalScore = Object.values(pillars).reduce((a, b) => a + b, 0);
   const handleSubmit = () => createLabel.mutate({ data: { submissionId, pillarsJson: pillars as any, totalScore } });
 
   return (
-    <div className="rounded-2xl p-5 bg-amber-50/70 dark:bg-amber-500/10">
+    <div ref={formRef} className="rounded-2xl p-5 bg-amber-50/70 dark:bg-amber-500/10" data-testid="form-label">
       <div className="flex items-center gap-2 mb-2">
         <Tag className="w-4 h-4 text-amber-700 dark:text-amber-300" />
         <h4 className="font-semibold text-[14px] text-amber-900 dark:text-amber-200">{existingLabel ? "Update label" : "Manager label"}</h4>
@@ -127,7 +141,7 @@ function LabelForm({ submissionId, existingLabel }: { submissionId: number; exis
   );
 }
 
-function SubmissionDetail({ submissionId }: { submissionId: number }) {
+function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: number; autoFocusLabelForm?: boolean }) {
   const { data: sub } = useGetSubmission(submissionId);
   const { data: labels } = useGetLabels(submissionId);
   const { data: modelStatus } = useGetAreaModelStatus(sub?.areaId ?? 0, { query: { enabled: !!sub?.areaId, queryKey: getGetAreaModelStatusQueryKey(sub?.areaId ?? 0) } });
@@ -266,7 +280,7 @@ function SubmissionDetail({ submissionId }: { submissionId: number }) {
             </section>
           )}
 
-          <LabelForm submissionId={sub.id} existingLabel={myLabel} />
+          <LabelForm submissionId={sub.id} existingLabel={myLabel} autoFocus={autoFocusLabelForm} />
 
           {modelStatus && (
             <div className="rounded-xl p-4 bg-secondary/60">
@@ -297,70 +311,347 @@ function SubmissionDetail({ submissionId }: { submissionId: number }) {
   );
 }
 
+const KEYBOARD_SHORTCUTS = [
+  { keys: "j / ↓", desc: "Next row" },
+  { keys: "k / ↑", desc: "Previous row" },
+  { keys: "Enter", desc: "Open submission" },
+  { keys: "g", desc: "Approve as-is (1-click label)" },
+  { keys: "r", desc: "Resolve open escalation on this row" },
+  { keys: "?", desc: "Show this cheat sheet" },
+  { keys: "Esc", desc: "Close" },
+];
+
+// Decide whether the browser is a touch-only device. We only suppress the
+// manager keyboard shortcuts when the primary pointer is coarse AND no fine
+// pointer is available anywhere on the system (so phones/tablets without a
+// keyboard are excluded, but desktops, laptops, hybrid touchscreen laptops,
+// and headless test browsers continue to receive shortcuts). Defaults to
+// false (i.e. shortcuts enabled) during SSR / before the media queries
+// resolve so the desktop experience is unaffected.
+function useIsTouchOnly(): boolean {
+  const [touchOnly, setTouchOnly] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const coarse = window.matchMedia("(pointer: coarse)");
+    const anyFine = window.matchMedia("(any-pointer: fine)");
+    const update = () => setTouchOnly(coarse.matches && !anyFine.matches);
+    update();
+    const add = (mq: MediaQueryList, fn: () => void) => {
+      if (typeof mq.addEventListener === "function") mq.addEventListener("change", fn);
+      else mq.addListener(fn);
+    };
+    const rm = (mq: MediaQueryList, fn: () => void) => {
+      if (typeof mq.removeEventListener === "function") mq.removeEventListener("change", fn);
+      else mq.removeListener(fn);
+    };
+    add(coarse, update);
+    add(anyFine, update);
+    return () => {
+      rm(coarse, update);
+      rm(anyFine, update);
+    };
+  }, []);
+  return touchOnly;
+}
+
+function ShortcutsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="inline-flex items-center gap-2"><Keyboard className="w-4 h-4" /> Keyboard shortcuts</DialogTitle>
+          <DialogDescription>Move through the audit log without leaving the keyboard.</DialogDescription>
+        </DialogHeader>
+        <ul className="space-y-2 text-[13px]">
+          {KEYBOARD_SHORTCUTS.map((s) => (
+            <li key={s.keys} className="flex items-center justify-between">
+              <span className="text-foreground/80">{s.desc}</span>
+              <kbd className="px-2 py-0.5 rounded bg-secondary text-[12px] font-mono">{s.keys}</kbd>
+            </li>
+          ))}
+        </ul>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Submissions() {
+  const { user } = useAuth();
+  const isManager = user?.role === "MANAGER";
   const [shiftFilter, setShiftFilter] = useState<string>("");
   const [areaFilter, setAreaFilter] = useState<string>("");
   const [dateFilter, setDateFilter] = useState<string>("");
+  const [search, setSearch] = useState<string>("");
+  const [debouncedSearch, setDebouncedSearch] = useState<string>("");
+  const [minScore, setMinScore] = useState<string>("");
+  const [maxScore, setMaxScore] = useState<string>("");
+  const [debouncedMin, setDebouncedMin] = useState<string>("");
+  const [debouncedMax, setDebouncedMax] = useState<string>("");
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<number | null>(null);
+  const [autoFocusLabelForm, setAutoFocusLabelForm] = useState(false);
+  const [activeIdx, setActiveIdx] = useState<number>(-1);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const quickApprove = useQuickApproveLabel();
+  const resolveEscalation = useResolveEscalation();
+  const isTouchOnly = useIsTouchOnly();
+
+  // Debounce search and score inputs to avoid hammering the API on every keystroke.
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => clearTimeout(id);
+  }, [search]);
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setDebouncedMin(minScore);
+      setDebouncedMax(maxScore);
+    }, 250);
+    return () => clearTimeout(id);
+  }, [minScore, maxScore]);
 
   const { data: areas } = useListAreas();
-  const { data: submissions, isLoading } = useListSubmissions({
-    shift: shiftFilter ? (shiftFilter as any) : undefined,
-    areaId: areaFilter ? parseInt(areaFilter) : undefined,
-    date: dateFilter ? dateFilter : undefined,
-  });
+  const params = useMemo(
+    () => ({
+      shift: shiftFilter ? (shiftFilter as any) : undefined,
+      areaId: areaFilter && areaFilter !== "all" ? parseInt(areaFilter) : undefined,
+      date: dateFilter ? dateFilter : undefined,
+      q: debouncedSearch || undefined,
+      minScorePercent: debouncedMin ? Math.max(0, Math.min(100, parseInt(debouncedMin))) : undefined,
+      maxScorePercent: debouncedMax ? Math.max(0, Math.min(100, parseInt(debouncedMax))) : undefined,
+    }),
+    [shiftFilter, areaFilter, dateFilter, debouncedSearch, debouncedMin, debouncedMax],
+  );
+  const { data: submissions, isLoading } = useListSubmissions(params as any);
+
+  // Reset focused row when results change.
+  useEffect(() => {
+    if (!submissions || submissions.length === 0) {
+      setActiveIdx(-1);
+    } else if (activeIdx >= submissions.length) {
+      setActiveIdx(submissions.length - 1);
+    }
+  }, [submissions, activeIdx]);
+
+  const rowRefs = useRef<Array<HTMLTableRowElement | null>>([]);
+  useEffect(() => {
+    if (activeIdx < 0) return;
+    const el = rowRefs.current[activeIdx];
+    if (el) el.scrollIntoView({ block: "nearest" });
+  }, [activeIdx]);
+
+  const openWithLabelForm = (id: number) => {
+    setAutoFocusLabelForm(true);
+    setSelectedSubmissionId(id);
+  };
+
+  const handleApprove = (id: number) => {
+    quickApprove.mutate(
+      { data: { submissionId: id } },
+      {
+        onSuccess: () => {
+          toast({ title: "Approved", description: "AI score saved as your label." });
+          queryClient.invalidateQueries({ queryKey: getListSubmissionsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetLabelsQueryKey(id) });
+        },
+        onError: (e: any) => {
+          const desc = e?.message ?? "Could not save label.";
+          toast({ variant: "destructive", title: "Approve failed", description: desc });
+        },
+      },
+    );
+  };
+
+  // Keyboard shortcuts: ignore when a modal is open or focus is in a text input.
+  // Only register on devices with a fine pointer (real keyboard); touch-only
+  // devices skip this entirely so we don't intercept on-screen keyboards.
+  useEffect(() => {
+    if (!isManager) return;
+    if (isTouchOnly) return;
+    const handler = (e: KeyboardEvent) => {
+      if (selectedSubmissionId !== null) return;
+      if (shortcutsOpen) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (target?.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const list = submissions ?? [];
+      switch (e.key) {
+        case "j":
+        case "ArrowDown":
+          if (list.length > 0) {
+            e.preventDefault();
+            setActiveIdx((i) => Math.min(list.length - 1, (i < 0 ? -1 : i) + 1));
+          }
+          break;
+        case "k":
+        case "ArrowUp":
+          if (list.length > 0) {
+            e.preventDefault();
+            setActiveIdx((i) => Math.max(0, (i < 0 ? 1 : i) - 1));
+          }
+          break;
+        case "Enter":
+          if (activeIdx >= 0 && list[activeIdx]) {
+            e.preventDefault();
+            setSelectedSubmissionId(list[activeIdx].id);
+          }
+          break;
+        case "g":
+          if (activeIdx >= 0 && list[activeIdx]) {
+            e.preventDefault();
+            handleApprove(list[activeIdx].id);
+          }
+          break;
+        case "r":
+          if (activeIdx >= 0 && list[activeIdx]) {
+            e.preventDefault();
+            const row = list[activeIdx];
+            if (row.openEscalationId != null) {
+              resolveEscalation.mutate(
+                { id: row.openEscalationId },
+                {
+                  onSuccess: () => {
+                    toast({ title: "Escalation resolved", description: row.areaName });
+                    queryClient.invalidateQueries({ queryKey: getListSubmissionsQueryKey() });
+                    queryClient.invalidateQueries({ queryKey: getListEscalationsQueryKey() });
+                    queryClient.invalidateQueries({ queryKey: getGetEscalationCountQueryKey() });
+                  },
+                  onError: (err: any) =>
+                    toast({
+                      variant: "destructive",
+                      title: "Could not resolve",
+                      description: err?.message ?? "Try again from the Escalations tab.",
+                    }),
+                },
+              );
+            } else {
+              toast({
+                title: "No open escalation on this row",
+                description: "Use the Escalations tab to act on others.",
+              });
+            }
+          }
+          break;
+        case "?":
+          e.preventDefault();
+          setShortcutsOpen(true);
+          break;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isManager, submissions, activeIdx, selectedSubmissionId, shortcutsOpen]);
 
   return (
     <div className="space-y-8 pb-12">
-      <header className="space-y-2">
-        <p className="eyebrow">History</p>
-        <h1 className="text-[34px] font-semibold tracking-tight leading-tight">Audit log</h1>
-        <p className="text-muted-foreground text-[15px]">Review 5S/GMP submissions across all shifts and areas.</p>
+      <header className="flex items-start justify-between gap-3">
+        <div className="space-y-2">
+          <p className="eyebrow">History</p>
+          <h1 className="text-[34px] font-semibold tracking-tight leading-tight">Audit log</h1>
+          <p className="text-muted-foreground text-[15px]">Review 5S/GMP submissions across all shifts and areas.</p>
+        </div>
+        {isManager && (
+          <button
+            onClick={() => setShortcutsOpen(true)}
+            className="hidden md:inline-flex items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground rounded-full px-3 py-1.5 hover-overlay"
+            data-testid="button-shortcuts"
+            title="Keyboard shortcuts (?)"
+          >
+            <Keyboard className="w-3.5 h-3.5" /> Shortcuts
+          </button>
+        )}
       </header>
 
-      <div className="bg-card rounded-2xl shadow-soft p-5 sm:p-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="space-y-1.5">
-          <Label className="eyebrow">Date</Label>
-          <Input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="h-11 rounded-xl bg-secondary/60 border-transparent" />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="eyebrow">Shift</Label>
-          <div role="tablist" className="inline-flex p-1 pill-track rounded-full h-11">
-            {SHIFT_FILTER_OPTIONS.map((opt) => {
-              const active = shiftFilter === opt.value;
-              return (
-                <button
-                  key={opt.value || "all"}
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setShiftFilter(opt.value)}
-                  data-testid={`button-shift-filter-${opt.value || "all"}`}
-                  className={`relative px-4 rounded-full text-[13px] font-medium whitespace-nowrap transition-colors min-w-[52px] ${
-                    active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {active && (
-                    <motion.span
-                      layoutId="submissions-shift-filter-pill"
-                      className="absolute inset-0 pill-thumb-bg rounded-full shadow-soft"
-                      transition={{ type: "spring", stiffness: 500, damping: 38 }}
-                    />
-                  )}
-                  <span className="relative z-10">{opt.label}</span>
-                </button>
-              );
-            })}
+      <div className="bg-card rounded-2xl shadow-soft p-5 sm:p-6 space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="space-y-1.5">
+            <Label className="eyebrow">Date</Label>
+            <Input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="h-11 rounded-xl bg-secondary/60 border-transparent" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="eyebrow">Shift</Label>
+            <div role="tablist" className="inline-flex p-1 pill-track rounded-full h-11">
+              {SHIFT_FILTER_OPTIONS.map((opt) => {
+                const active = shiftFilter === opt.value;
+                return (
+                  <button
+                    key={opt.value || "all"}
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setShiftFilter(opt.value)}
+                    data-testid={`button-shift-filter-${opt.value || "all"}`}
+                    className={`relative px-4 rounded-full text-[13px] font-medium whitespace-nowrap transition-colors min-w-[52px] ${
+                      active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {active && (
+                      <motion.span
+                        layoutId="submissions-shift-filter-pill"
+                        className="absolute inset-0 pill-thumb-bg rounded-full shadow-soft"
+                        transition={{ type: "spring", stiffness: 500, damping: 38 }}
+                      />
+                    )}
+                    <span className="relative z-10">{opt.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="eyebrow">Area</Label>
+            <Select value={areaFilter} onValueChange={setAreaFilter}>
+              <SelectTrigger className="h-11 rounded-xl bg-secondary/60 border-transparent"><SelectValue placeholder="All areas" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All areas</SelectItem>
+                {areas?.map((a) => (<SelectItem key={a.id} value={a.id.toString()}>{a.name}</SelectItem>))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
-        <div className="space-y-1.5">
-          <Label className="eyebrow">Area</Label>
-          <Select value={areaFilter} onValueChange={setAreaFilter}>
-            <SelectTrigger className="h-11 rounded-xl bg-secondary/60 border-transparent"><SelectValue placeholder="All areas" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All areas</SelectItem>
-              {areas?.map((a) => (<SelectItem key={a.id} value={a.id.toString()}>{a.name}</SelectItem>))}
-            </SelectContent>
-          </Select>
+        <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-4">
+          <div className="space-y-1.5">
+            <Label className="eyebrow">Search</Label>
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Operator email, machine tag, or area name"
+                className="h-11 pl-9 rounded-xl bg-secondary/60 border-transparent"
+                data-testid="input-search"
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="eyebrow">Score range</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={100}
+                value={minScore}
+                onChange={(e) => setMinScore(e.target.value)}
+                placeholder="Min %"
+                className="h-11 rounded-xl bg-secondary/60 border-transparent"
+                data-testid="input-min-score"
+              />
+              <span className="text-muted-foreground">–</span>
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={100}
+                value={maxScore}
+                onChange={(e) => setMaxScore(e.target.value)}
+                placeholder="Max %"
+                className="h-11 rounded-xl bg-secondary/60 border-transparent"
+                data-testid="input-max-score"
+              />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -375,22 +666,25 @@ export default function Submissions() {
                 <th className="font-medium px-3 py-3.5">Score</th>
                 <th className="font-medium px-3 py-3.5">Type</th>
                 <th className="font-medium px-3 py-3.5">Time</th>
-                <th className="font-medium px-3 py-3.5 pr-5">Operator</th>
+                <th className="font-medium px-3 py-3.5">Operator</th>
+                {isManager && <th className="font-medium px-3 py-3.5 pr-5 text-right">Quick label</th>}
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
-                <tr><td colSpan={7} className="h-32 text-center text-muted-foreground">Loading submissions…</td></tr>
+                <tr><td colSpan={isManager ? 8 : 7} className="h-32 text-center text-muted-foreground">Loading submissions…</td></tr>
               ) : submissions?.length === 0 ? (
-                <tr><td colSpan={7} className="h-32 text-center text-muted-foreground">No submissions found matching criteria.</td></tr>
+                <tr><td colSpan={isManager ? 8 : 7} className="h-32 text-center text-muted-foreground">No submissions found matching criteria.</td></tr>
               ) : (
                 submissions?.map((sub, idx) => {
                   const thumb = sub.mediaType === "video" && sub.keyframesJson?.[0] ? sub.keyframesJson[0] : sub.imageUrl;
+                  const isActive = activeIdx === idx;
                   return (
                     <tr
                       key={sub.id}
-                      className={`cursor-pointer transition-all duration-150 ${idx % 2 === 1 ? "bg-secondary/40" : ""} hover:bg-primary/5 active:bg-primary/10 active:scale-[0.997] motion-reduce:active:scale-100 motion-reduce:transition-none`}
-                      onClick={() => setSelectedSubmissionId(sub.id)}
+                      ref={(el) => { rowRefs.current[idx] = el; }}
+                      className={`cursor-pointer transition-all duration-150 ${idx % 2 === 1 ? "bg-secondary/40" : ""} ${isActive ? "ring-2 ring-inset ring-primary/60 bg-primary/5" : "hover:bg-primary/5"} active:bg-primary/10 active:scale-[0.997] motion-reduce:active:scale-100 motion-reduce:transition-none`}
+                      onClick={() => { setActiveIdx(idx); setSelectedSubmissionId(sub.id); }}
                       data-testid={`row-submission-${sub.id}`}
                     >
                       <td className="px-5 py-3">
@@ -410,7 +704,34 @@ export default function Submissions() {
                         </div>
                       </td>
                       <td className="px-3 py-3 text-muted-foreground tabular-nums">{format(new Date(sub.createdAt), "MMM d, HH:mm")}</td>
-                      <td className="px-3 py-3 pr-5 text-muted-foreground">{sub.userEmail}</td>
+                      <td className="px-3 py-3 text-muted-foreground">{sub.userEmail}</td>
+                      {isManager && (
+                        <td className="px-3 py-3 pr-5">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="rounded-full h-8 text-[12px]"
+                              disabled={quickApprove.isPending}
+                              onClick={(e) => { e.stopPropagation(); handleApprove(sub.id); }}
+                              data-testid={`button-approve-${sub.id}`}
+                              title="Approve as-is (g)"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="rounded-full h-8 text-[12px]"
+                              onClick={(e) => { e.stopPropagation(); openWithLabelForm(sub.id); }}
+                              data-testid={`button-needswork-${sub.id}`}
+                              title="Needs work (r)"
+                            >
+                              <Pencil className="w-3.5 h-3.5 mr-1" /> Needs work
+                            </Button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })
@@ -420,9 +741,21 @@ export default function Submissions() {
         </div>
       </div>
 
-      <Dialog open={!!selectedSubmissionId} onOpenChange={(open) => !open && setSelectedSubmissionId(null)}>
-        {selectedSubmissionId && <SubmissionDetail submissionId={selectedSubmissionId} />}
+      <Dialog
+        open={!!selectedSubmissionId}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedSubmissionId(null);
+            setAutoFocusLabelForm(false);
+          }
+        }}
+      >
+        {selectedSubmissionId && (
+          <SubmissionDetail submissionId={selectedSubmissionId} autoFocusLabelForm={autoFocusLabelForm} />
+        )}
       </Dialog>
+
+      <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
   );
 }

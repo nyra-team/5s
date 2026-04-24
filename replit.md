@@ -59,6 +59,19 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - **ideal_photos**: id, area_id, image_url, embedding_json, created_at
 - **submissions**: id, area_id, user_id, shift, score_total, score_json, suggestions_json, image_url, embedding_hash, similarity_to_ideal, ai_total_score, ai_pillars_json, ai_recommendations_json, ai_issues_json, model_version, scoring_mode, created_at
 - **labels**: id, submission_id, labeled_by_user_id, pillars_json, total_score, created_at
+- **escalations**: id, submission_id, area_id, operator_id, score_total, score_percent, failing_pillars_json, recommended_actions_json, evidence_urls_json, status (OPEN/ACKNOWLEDGED/RESOLVED), acknowledged/resolved metadata
+- **nudges**: id, area_id, machine, shift, operator_id, manager_id, dismissed_at, created_at — manager-to-operator pings de-duped per area+machine+shift while undismissed
+- **area_profiles / area_schedules**: learned area metadata + per-machine cadence
+
+## Manager triage flow (Task 20)
+
+- `/live` is the manager landing page. Shows pending areas, overdue checks (per-machine when learned), low-scoring submissions (<60%), and open escalations for the current IST shift. Auto-refreshes every 30s.
+- Inline quick-label on the audit log: `Approve` (1-click, copies AI pillar scores via `POST /labels/quick-approve`) and `Needs work` (opens detail with the label form auto-scrolled into view).
+- Submissions list supports `q` (operator email / machine tag / area name), `minScorePercent`, `maxScorePercent` query params (debounced 250ms client-side).
+- Keyboard shortcuts on submissions list (manager only, suppressed on touch-only devices via `(pointer: coarse)` && `!(any-pointer: fine)`): `j`/`↓` next row, `k`/`↑` previous, `Enter` open, `g` approve, `r` resolve the open escalation on the active row (toast if none), `?` cheat sheet, `Esc` close. The `Needs work` button stays mouse-accessible on every row.
+- `GET /submissions` returns `openEscalationId` per row (max non-RESOLVED escalation id), which `r` uses to call `useResolveEscalation` and invalidate submissions / escalations / count queries.
+- Escalations supports multi-select with a sticky bottom action bar (Acknowledge / Resolve / Clear).
+- Operator clients pull active nudges every 60s via `GET /nudges` (OPERATOR-only — managers receive HTTP 403). The endpoint appends the caller's userId to `nudges.seen_by_user_ids_json` so each operator sees a nudge exactly once; the row stays alive (and the per-area/machine/shift dedupe stays active) until a manager explicitly resolves it.
 
 ## Architecture
 

@@ -1,6 +1,6 @@
 import { useAuth } from "@/lib/auth";
 import { Link, useLocation } from "wouter";
-import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List, Inbox } from "lucide-react";
+import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List, Inbox, Activity } from "lucide-react";
 import { useGetEscalationCount } from "@workspace/api-client-react";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
@@ -48,6 +48,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const openCount = escalationCount?.open ?? 0;
 
   const tabs = [
+    { href: "/live", label: "Live shift", icon: Activity, badge: 0 },
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, badge: 0 },
     { href: "/submissions", label: "Submissions", icon: List, badge: 0 },
     { href: "/areas", label: "Areas", icon: LayoutGrid, badge: 0 },

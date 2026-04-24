@@ -7,6 +7,7 @@ import {
   useGetOperatorRecent,
   useGetAreaProfile,
   useGetSubmission,
+  useGetActiveNudges,
   getGetSubmissionQueryKey,
   getGetAreaProfileQueryKey,
   AreaStatus,
@@ -17,6 +18,7 @@ import {
   getGetOperatorStatusQueryKey,
   getGetNextChecksQueryKey,
   getGetOperatorRecentQueryKey,
+  getGetActiveNudgesQueryKey,
 } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -105,7 +107,29 @@ export default function OperatorHome() {
     { query: { queryKey: getGetOperatorRecentQueryKey({ limit: 12 }) } }
   );
   const recent = recentRaw ?? [];
+  // Pull active nudges from managers periodically. The endpoint is OPERATOR-only
+  // and tracks per-recipient seen state server-side via seen_by_user_ids_json,
+  // so each operator sees a given nudge exactly once across refetches. We still
+  // de-dupe locally to avoid re-toasting within the same page load.
+  const { data: activeNudges } = useGetActiveNudges({
+    query: { refetchInterval: 60_000, queryKey: getGetActiveNudgesQueryKey() },
+  });
   const { toast } = useToast();
+  const seenNudgesRef = useRef<Set<number>>(new Set());
+
+  useEffect(() => {
+    if (!activeNudges || activeNudges.length === 0) return;
+    for (const n of activeNudges) {
+      if (seenNudgesRef.current.has(n.id)) continue;
+      seenNudgesRef.current.add(n.id);
+      toast({
+        title: "Manager nudge",
+        description: n.machine
+          ? `${n.areaName} · ${n.machine} needs a check this shift`
+          : `${n.areaName} needs a check this shift`,
+      });
+    }
+  }, [activeNudges, toast]);
 
   // Build the area-level due map (machine === null entries) for the area grid.
   const areaDueMap = useMemo(() => {

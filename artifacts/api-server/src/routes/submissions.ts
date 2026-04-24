@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, gte, lt, sql } from "drizzle-orm";
+import { eq, and, gte, lt, sql, or, ilike, inArray } from "drizzle-orm";
 import path from "node:path";
 import {
   db,
@@ -73,6 +73,27 @@ router.get("/submissions", authMiddleware, async (req, res): Promise<void> => {
     conditions.push(gte(submissionsTable.createdAt, start));
     conditions.push(lt(submissionsTable.createdAt, end));
   }
+  if (query.success && query.data.q) {
+    const term = `%${query.data.q.trim()}%`;
+    if (term !== "%%") {
+      const orExpr = or(
+        ilike(usersTable.email, term),
+        ilike(submissionsTable.machineTag, term),
+        ilike(areasTable.name, term),
+      );
+      if (orExpr) conditions.push(orExpr);
+    }
+  }
+  // scoreTotal is 0–25; percent = total * 4. Filtering on the underlying integer
+  // keeps the query indexable and avoids float math in SQL.
+  if (query.success && typeof query.data.minScorePercent === "number") {
+    const minTotal = Math.ceil(query.data.minScorePercent / 4);
+    conditions.push(gte(submissionsTable.scoreTotal, minTotal));
+  }
+  if (query.success && typeof query.data.maxScorePercent === "number") {
+    const maxTotal = Math.floor(query.data.maxScorePercent / 4);
+    conditions.push(lt(submissionsTable.scoreTotal, maxTotal + 1));
+  }
 
   const rows = await db
     .select(submissionSelect)
@@ -82,7 +103,33 @@ router.get("/submissions", authMiddleware, async (req, res): Promise<void> => {
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(sql`${submissionsTable.createdAt} DESC`);
 
-  res.json(rows);
+  // Annotate each row with its most-recent OPEN/ACKNOWLEDGED escalation id (or
+  // null) so the manager UI can offer a single-key resolve from the audit log.
+  // Done in one extra query to avoid an N+1 against /escalations per row.
+  const submissionIds = rows.map((r) => r.id);
+  const openEscByMap = new Map<number, number>();
+  if (submissionIds.length > 0) {
+    const escRows = await db
+      .select({
+        id: escalationsTable.id,
+        submissionId: escalationsTable.submissionId,
+        status: escalationsTable.status,
+        createdAt: escalationsTable.createdAt,
+      })
+      .from(escalationsTable)
+      .where(inArray(escalationsTable.submissionId, submissionIds));
+    for (const e of escRows) {
+      if (e.status === "RESOLVED") continue;
+      const prev = openEscByMap.get(e.submissionId);
+      if (prev === undefined) {
+        openEscByMap.set(e.submissionId, e.id);
+      } else {
+        openEscByMap.set(e.submissionId, Math.max(prev, e.id));
+      }
+    }
+  }
+
+  res.json(rows.map((r) => ({ ...r, openEscalationId: openEscByMap.get(r.id) ?? null })));
 });
 
 const uploadFields = upload.fields([

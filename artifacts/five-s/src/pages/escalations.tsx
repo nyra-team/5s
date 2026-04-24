@@ -6,7 +6,7 @@ import {
   getListEscalationsQueryKey,
   getGetEscalationCountQueryKey,
 } from "@workspace/api-client-react";
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -23,9 +23,93 @@ const STATUSES = [
 export default function EscalationsPage() {
   const [status, setStatus] = useState<(typeof STATUSES)[number]["value"]>("OPEN");
   const { data: escalations, isLoading } = useListEscalations({ status });
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const ack = useAcknowledgeEscalation();
+  const resolve = useResolveEscalation();
+
+  // Reset selections when the visible list changes (e.g. switching tabs).
+  useEffect(() => {
+    setSelected(new Set());
+  }, [status]);
+
+  // Drop selections that are no longer in the list (e.g. after resolving).
+  useEffect(() => {
+    if (!escalations) return;
+    setSelected((prev) => {
+      const visibleIds = new Set(escalations.map((e) => e.id));
+      const next = new Set<number>();
+      prev.forEach((id) => { if (visibleIds.has(id)) next.add(id); });
+      return next.size === prev.size ? prev : next;
+    });
+  }, [escalations]);
+
+  const selectableCount = useMemo(
+    () => (escalations ?? []).filter((e) => e.status !== "RESOLVED").length,
+    [escalations],
+  );
+  const allSelected = selectableCount > 0 && selected.size === selectableCount;
+
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelected(new Set());
+    } else {
+      const next = new Set<number>();
+      (escalations ?? []).forEach((e) => { if (e.status !== "RESOLVED") next.add(e.id); });
+      setSelected(next);
+    }
+  };
+
+  const toggleOne = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: getListEscalationsQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetEscalationCountQueryKey() });
+  };
+
+  const bulk = async (action: "acknowledge" | "resolve") => {
+    if (selected.size === 0) return;
+    const ids = Array.from(selected);
+    const all = escalations ?? [];
+    const eligible =
+      action === "acknowledge"
+        ? ids.filter((id) => all.find((e) => e.id === id)?.status === "OPEN")
+        : ids.filter((id) => all.find((e) => e.id === id)?.status !== "RESOLVED");
+
+    if (eligible.length === 0) {
+      setSelected(new Set());
+      return;
+    }
+
+    const results = await Promise.allSettled(
+      eligible.map((id) =>
+        action === "acknowledge"
+          ? ack.mutateAsync({ id })
+          : resolve.mutateAsync({ id }),
+      ),
+    );
+    const ok = results.filter((r) => r.status === "fulfilled").length;
+    const fail = results.length - ok;
+    invalidate();
+    setSelected(new Set());
+    toast({
+      title: action === "acknowledge" ? "Acknowledged" : "Resolved",
+      description: fail === 0 ? `${ok} escalation${ok === 1 ? "" : "s"} updated.` : `${ok} updated, ${fail} failed.`,
+      variant: fail > 0 ? "destructive" : undefined,
+    });
+  };
+
+  const isBusy = ack.isPending || resolve.isPending;
 
   return (
-    <div className="space-y-8 pb-12">
+    <div className="space-y-8 pb-32">
       <header className="space-y-2">
         <p className="eyebrow inline-flex items-center gap-1.5"><Inbox className="w-3 h-3" /> Inbox</p>
         <h1 className="text-[34px] font-semibold tracking-tight leading-tight">Escalations</h1>
@@ -34,22 +118,37 @@ export default function EscalationsPage() {
         </p>
       </header>
 
-      <div className="inline-flex p-1 pill-track rounded-full">
-        {STATUSES.map((s) => {
-          const active = status === s.value;
-          return (
-            <button
-              key={s.value}
-              onClick={() => setStatus(s.value)}
-              className={`px-4 py-2 rounded-full text-[13px] font-medium transition-colors ${
-                active ? "bg-card text-foreground shadow-soft" : "text-muted-foreground hover:text-foreground"
-              }`}
-              data-testid={`tab-status-${s.value}`}
-            >
-              {s.label}
-            </button>
-          );
-        })}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="inline-flex p-1 pill-track rounded-full">
+          {STATUSES.map((s) => {
+            const active = status === s.value;
+            return (
+              <button
+                key={s.value}
+                onClick={() => setStatus(s.value)}
+                className={`px-4 py-2 rounded-full text-[13px] font-medium transition-colors ${
+                  active ? "bg-card text-foreground shadow-soft" : "text-muted-foreground hover:text-foreground"
+                }`}
+                data-testid={`tab-status-${s.value}`}
+              >
+                {s.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {selectableCount > 0 && (
+          <label className="inline-flex items-center gap-2 text-[13px] text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={toggleAll}
+              className="h-4 w-4 accent-primary"
+              data-testid="checkbox-select-all"
+            />
+            Select all ({selectableCount})
+          </label>
+        )}
       </div>
 
       {isLoading ? (
@@ -58,7 +157,14 @@ export default function EscalationsPage() {
         </div>
       ) : escalations && escalations.length > 0 ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {escalations.map((e) => <EscalationCard key={e.id} escalation={e} />)}
+          {escalations.map((e) => (
+            <EscalationCard
+              key={e.id}
+              escalation={e}
+              selected={selected.has(e.id)}
+              onToggleSelect={() => toggleOne(e.id)}
+            />
+          ))}
         </div>
       ) : (
         <div className="text-center py-16 text-muted-foreground">
@@ -67,15 +173,64 @@ export default function EscalationsPage() {
           <p className="text-[13px] mt-1 opacity-80">All recent audits are passing.</p>
         </div>
       )}
+
+      {selected.size > 0 && (
+        <div className="fixed bottom-4 left-0 right-0 z-30 px-4 sm:px-8 pointer-events-none">
+          <div className="max-w-3xl mx-auto bg-card shadow-elevated rounded-2xl px-5 py-3 flex items-center justify-between gap-3 hairline pointer-events-auto" data-testid="bar-bulk-actions">
+            <span className="text-[13.5px] font-medium">
+              {selected.size} selected
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="rounded-full"
+                disabled={isBusy}
+                onClick={() => bulk("acknowledge")}
+                data-testid="button-bulk-ack"
+              >
+                <Eye className="w-3.5 h-3.5 mr-1" /> Acknowledge
+              </Button>
+              <Button
+                size="sm"
+                className="rounded-full"
+                disabled={isBusy}
+                onClick={() => bulk("resolve")}
+                data-testid="button-bulk-resolve"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Resolve
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="rounded-full"
+                onClick={() => setSelected(new Set())}
+                data-testid="button-bulk-clear"
+              >
+                Clear
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function EscalationCard({ escalation: e }: { escalation: Escalation }) {
+function EscalationCard({
+  escalation: e,
+  selected,
+  onToggleSelect,
+}: {
+  escalation: Escalation;
+  selected: boolean;
+  onToggleSelect: () => void;
+}) {
   const ack = useAcknowledgeEscalation();
   const resolve = useResolveEscalation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const selectable = e.status !== "RESOLVED";
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: getListEscalationsQueryKey() });
@@ -88,14 +243,29 @@ function EscalationCard({ escalation: e }: { escalation: Escalation }) {
       : "bg-amber-50 dark:bg-amber-500/12 text-amber-800 dark:text-amber-200";
 
   return (
-    <div className="bg-card rounded-2xl shadow-soft hover:shadow-elevated transition-shadow p-5 sm:p-6 flex flex-col gap-4" data-testid={`card-escalation-${e.id}`}>
+    <div
+      className={`bg-card rounded-2xl shadow-soft hover:shadow-elevated transition-shadow p-5 sm:p-6 flex flex-col gap-4 ${selected ? "ring-2 ring-primary/60" : ""}`}
+      data-testid={`card-escalation-${e.id}`}
+    >
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="eyebrow inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-rose-500" /> Failed audit</p>
-          <h3 className="text-[18px] font-semibold tracking-tight mt-1">{e.areaName}</h3>
-          <p className="text-[12.5px] text-muted-foreground mt-0.5">
-            {format(new Date(e.createdAt), "MMM d, h:mm a")} · {e.operatorEmail}
-          </p>
+        <div className="flex items-start gap-3 min-w-0">
+          {selectable && (
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4 accent-primary"
+              checked={selected}
+              onChange={onToggleSelect}
+              data-testid={`checkbox-select-${e.id}`}
+              aria-label={`Select escalation ${e.id}`}
+            />
+          )}
+          <div>
+            <p className="eyebrow inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-rose-500" /> Failed audit</p>
+            <h3 className="text-[18px] font-semibold tracking-tight mt-1">{e.areaName}</h3>
+            <p className="text-[12.5px] text-muted-foreground mt-0.5">
+              {format(new Date(e.createdAt), "MMM d, h:mm a")} · {e.operatorEmail}
+            </p>
+          </div>
         </div>
         <span className={`px-3 py-1 rounded-full text-[13px] font-bold ${tone}`}>{e.scorePercent}%</span>
       </div>

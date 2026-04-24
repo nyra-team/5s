@@ -148,6 +148,8 @@ export interface Submission {
   scoringMode?: string | null;
   modelVersion?: string | null;
   embeddingHash?: string | null;
+  /** ID of the most-recent OPEN or ACKNOWLEDGED escalation tied to this submission, or null if none. Lets the manager UI offer single-key resolve from the audit log. */
+  openEscalationId?: number | null;
   createdAt: string;
 }
 
@@ -321,10 +323,112 @@ export interface RecentSubmission {
   bestScoreInLastWeek?: number | null;
 }
 
+export interface QuickApproveLabelBody {
+  submissionId: number;
+}
+
+export type CreateNudgeBodyShift =
+  (typeof CreateNudgeBodyShift)[keyof typeof CreateNudgeBodyShift];
+
+export const CreateNudgeBodyShift = {
+  A: "A",
+  B: "B",
+  C: "C",
+} as const;
+
+export interface CreateNudgeBody {
+  areaId: number;
+  machine?: string | null;
+  shift: CreateNudgeBodyShift;
+  message?: string | null;
+}
+
+export type NudgeShift = (typeof NudgeShift)[keyof typeof NudgeShift];
+
+export const NudgeShift = {
+  A: "A",
+  B: "B",
+  C: "C",
+} as const;
+
+export interface Nudge {
+  id: number;
+  areaId: number;
+  areaName: string;
+  machine?: string | null;
+  shift: NudgeShift;
+  message?: string | null;
+  createdByEmail: string;
+  createdAt: string;
+  dismissedAt?: string | null;
+}
+
+export interface LiveShiftPendingArea {
+  areaId: number;
+  areaName: string;
+  lastNudgeAt?: string | null;
+}
+
+export interface LiveShiftOverdueCheck {
+  areaId: number;
+  areaName: string;
+  machine?: string | null;
+  overdueSinceMinutes: number;
+  cadenceSeconds: number;
+  lastNudgeAt?: string | null;
+}
+
+export interface LiveShiftLowScoring {
+  submissionId: number;
+  areaId: number;
+  areaName: string;
+  operatorEmail: string;
+  scorePercent: number;
+  createdAt: string;
+  thumbnailUrl: string;
+  hasOpenEscalation: boolean;
+}
+
+export type LiveShiftShift =
+  (typeof LiveShiftShift)[keyof typeof LiveShiftShift];
+
+export const LiveShiftShift = {
+  A: "A",
+  B: "B",
+  C: "C",
+} as const;
+
+export interface LiveShift {
+  shift: LiveShiftShift;
+  date: string;
+  startsAt: string;
+  endsAt: string;
+  pendingAreas: LiveShiftPendingArea[];
+  overdueChecks: LiveShiftOverdueCheck[];
+  lowScoring: LiveShiftLowScoring[];
+  openEscalations: Escalation[];
+}
+
 export type ListSubmissionsParams = {
   shift?: ListSubmissionsShift;
   areaId?: number;
   date?: string;
+  /**
+   * Free-text search across operator email, machine tag, and area name.
+   */
+  q?: string;
+  /**
+   * Inclusive lower bound on overall score (0-100).
+   * @minimum 0
+   * @maximum 100
+   */
+  minScorePercent?: number;
+  /**
+   * Inclusive upper bound on overall score (0-100).
+   * @minimum 0
+   * @maximum 100
+   */
+  maxScorePercent?: number;
 };
 
 export type ListSubmissionsShift =

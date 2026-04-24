@@ -58,6 +58,70 @@ router.post("/labels", authMiddleware, requireRole("MANAGER"), async (req, res):
   res.status(201).json(label);
 });
 
+router.post("/labels/quick-approve", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
+  const { userId } = (req as any).user;
+  const submissionId = Number(req.body?.submissionId);
+  if (!Number.isFinite(submissionId) || submissionId <= 0) {
+    res.status(400).json({ error: "submissionId is required" });
+    return;
+  }
+
+  const [submission] = await db
+    .select()
+    .from(submissionsTable)
+    .where(eq(submissionsTable.id, submissionId));
+  if (!submission) {
+    res.status(404).json({ error: "Submission not found" });
+    return;
+  }
+
+  // Prefer the AI's own pillar breakdown; fall back to the displayed score
+  // breakdown if the run pre-dates AI scoring.
+  const source = (submission.aiPillarsJson ?? submission.scoreJson) as
+    | Record<string, number>
+    | null;
+  if (!source) {
+    res.status(409).json({ error: "Submission has no scores to approve" });
+    return;
+  }
+  const pillarsJson = {
+    sort: clamp05(source.sort),
+    set: clamp05(source.set),
+    shine: clamp05(source.shine),
+    standardize: clamp05(source.standardize),
+    sustain: clamp05(source.sustain),
+  };
+  const totalScore =
+    pillarsJson.sort + pillarsJson.set + pillarsJson.shine + pillarsJson.standardize + pillarsJson.sustain;
+
+  const existing = await db
+    .select()
+    .from(labelsTable)
+    .where(and(eq(labelsTable.submissionId, submissionId), eq(labelsTable.labeledByUserId, userId)));
+
+  if (existing.length > 0) {
+    const [updated] = await db
+      .update(labelsTable)
+      .set({ pillarsJson, totalScore })
+      .where(eq(labelsTable.id, existing[0].id))
+      .returning();
+    res.status(201).json(updated);
+    return;
+  }
+
+  const [label] = await db
+    .insert(labelsTable)
+    .values({ submissionId, labeledByUserId: userId, pillarsJson, totalScore })
+    .returning();
+  res.status(201).json(label);
+});
+
+function clamp05(n: unknown): number {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(5, v));
+}
+
 router.get("/labels/:submissionId", authMiddleware, async (req, res): Promise<void> => {
   const submissionId = parseInt(String(req.params.submissionId), 10);
   if (isNaN(submissionId)) { res.status(400).json({ error: "Invalid submission ID" }); return; }

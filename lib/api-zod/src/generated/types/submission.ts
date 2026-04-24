@@ -34,5 +34,7 @@ export interface Submission {
   scoringMode?: string | null;
   modelVersion?: string | null;
   embeddingHash?: string | null;
+  /** ID of the most-recent OPEN or ACKNOWLEDGED escalation tied to this submission, or null if none. Lets the manager UI offer single-key resolve from the audit log. */
+  openEscalationId?: number | null;
   createdAt: Date;
 }

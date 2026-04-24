@@ -8,6 +8,8 @@ import dashboardRouter from "./dashboard";
 import labelsRouter from "./labels";
 import escalationsRouter from "./escalations";
 import scheduleRouter from "./schedule";
+import nudgesRouter from "./nudges";
+import liveRouter from "./live";
 
 const router: IRouter = Router();
 
@@ -20,5 +22,7 @@ router.use(dashboardRouter);
 router.use(labelsRouter);
 router.use(escalationsRouter);
 router.use(scheduleRouter);
+router.use(nudgesRouter);
+router.use(liveRouter);
 
 export default router;

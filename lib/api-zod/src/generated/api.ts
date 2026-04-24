@@ -150,10 +150,34 @@ export const ResetAreaProfileResponse = zod.object({
 /**
  * @summary List submissions with optional filters
  */
+export const listSubmissionsQueryMinScorePercentMin = 0;
+export const listSubmissionsQueryMinScorePercentMax = 100;
+
+export const listSubmissionsQueryMaxScorePercentMin = 0;
+export const listSubmissionsQueryMaxScorePercentMax = 100;
+
 export const ListSubmissionsQueryParams = zod.object({
   shift: zod.enum(["A", "B", "C"]).optional(),
   areaId: zod.coerce.number().optional(),
   date: zod.date().optional(),
+  q: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Free-text search across operator email, machine tag, and area name.",
+    ),
+  minScorePercent: zod.coerce
+    .number()
+    .min(listSubmissionsQueryMinScorePercentMin)
+    .max(listSubmissionsQueryMinScorePercentMax)
+    .optional()
+    .describe("Inclusive lower bound on overall score (0-100)."),
+  maxScorePercent: zod.coerce
+    .number()
+    .min(listSubmissionsQueryMaxScorePercentMin)
+    .max(listSubmissionsQueryMaxScorePercentMax)
+    .optional()
+    .describe("Inclusive upper bound on overall score (0-100)."),
 });
 
 export const ListSubmissionsResponseItem = zod.object({
@@ -211,6 +235,12 @@ export const ListSubmissionsResponseItem = zod.object({
   scoringMode: zod.string().nullish(),
   modelVersion: zod.string().nullish(),
   embeddingHash: zod.string().nullish(),
+  openEscalationId: zod
+    .number()
+    .nullish()
+    .describe(
+      "ID of the most-recent OPEN or ACKNOWLEDGED escalation tied to this submission, or null if none. Lets the manager UI offer single-key resolve from the audit log.",
+    ),
   createdAt: zod.coerce.date(),
 });
 export const ListSubmissionsResponse = zod.array(ListSubmissionsResponseItem);
@@ -297,6 +327,12 @@ export const GetSubmissionResponse = zod.object({
   scoringMode: zod.string().nullish(),
   modelVersion: zod.string().nullish(),
   embeddingHash: zod.string().nullish(),
+  openEscalationId: zod
+    .number()
+    .nullish()
+    .describe(
+      "ID of the most-recent OPEN or ACKNOWLEDGED escalation tied to this submission, or null if none. Lets the manager UI offer single-key resolve from the audit log.",
+    ),
   createdAt: zod.coerce.date(),
 });
 
@@ -369,6 +405,12 @@ export const ReuploadSubmissionResponse = zod.object({
   scoringMode: zod.string().nullish(),
   modelVersion: zod.string().nullish(),
   embeddingHash: zod.string().nullish(),
+  openEscalationId: zod
+    .number()
+    .nullish()
+    .describe(
+      "ID of the most-recent OPEN or ACKNOWLEDGED escalation tied to this submission, or null if none. Lets the manager UI offer single-key resolve from the audit log.",
+    ),
   createdAt: zod.coerce.date(),
 });
 
@@ -491,6 +533,12 @@ export const GetOperatorStatusResponseItem = zod.object({
       scoringMode: zod.string().nullish(),
       modelVersion: zod.string().nullish(),
       embeddingHash: zod.string().nullish(),
+      openEscalationId: zod
+        .number()
+        .nullish()
+        .describe(
+          "ID of the most-recent OPEN or ACKNOWLEDGED escalation tied to this submission, or null if none. Lets the manager UI offer single-key resolve from the audit log.",
+        ),
       createdAt: zod.coerce.date(),
     })
     .optional(),
@@ -653,6 +701,97 @@ export const CreateLabelBody = zod.object({
     sustain: zod.number(),
   }),
   totalScore: zod.number(),
+});
+
+/**
+ * @summary Approve the AI's score as the manager label in one click
+ */
+export const QuickApproveLabelBody = zod.object({
+  submissionId: zod.number(),
+});
+
+/**
+ * @summary Operator pulls active nudges (and they are dismissed atomically)
+ */
+export const GetActiveNudgesResponseItem = zod.object({
+  id: zod.number(),
+  areaId: zod.number(),
+  areaName: zod.string(),
+  machine: zod.string().nullish(),
+  shift: zod.enum(["A", "B", "C"]),
+  message: zod.string().nullish(),
+  createdByEmail: zod.string(),
+  createdAt: zod.coerce.date(),
+  dismissedAt: zod.coerce.date().nullish(),
+});
+export const GetActiveNudgesResponse = zod.array(GetActiveNudgesResponseItem);
+
+/**
+ * @summary Manager records a nudge against an area (and optional machine) for a shift
+ */
+export const CreateNudgeBody = zod.object({
+  areaId: zod.number(),
+  machine: zod.string().nullish(),
+  shift: zod.enum(["A", "B", "C"]),
+  message: zod.string().nullish(),
+});
+
+/**
+ * @summary Single-pane snapshot of the in-progress IST shift for managers
+ */
+export const GetLiveShiftResponse = zod.object({
+  shift: zod.enum(["A", "B", "C"]),
+  date: zod.coerce.date(),
+  startsAt: zod.coerce.date(),
+  endsAt: zod.coerce.date(),
+  pendingAreas: zod.array(
+    zod.object({
+      areaId: zod.number(),
+      areaName: zod.string(),
+      lastNudgeAt: zod.coerce.date().nullish(),
+    }),
+  ),
+  overdueChecks: zod.array(
+    zod.object({
+      areaId: zod.number(),
+      areaName: zod.string(),
+      machine: zod.string().nullish(),
+      overdueSinceMinutes: zod.number(),
+      cadenceSeconds: zod.number(),
+      lastNudgeAt: zod.coerce.date().nullish(),
+    }),
+  ),
+  lowScoring: zod.array(
+    zod.object({
+      submissionId: zod.number(),
+      areaId: zod.number(),
+      areaName: zod.string(),
+      operatorEmail: zod.string(),
+      scorePercent: zod.number(),
+      createdAt: zod.coerce.date(),
+      thumbnailUrl: zod.string(),
+      hasOpenEscalation: zod.boolean(),
+    }),
+  ),
+  openEscalations: zod.array(
+    zod.object({
+      id: zod.number(),
+      submissionId: zod.number(),
+      areaId: zod.number(),
+      areaName: zod.string(),
+      operatorId: zod.number(),
+      operatorEmail: zod.string(),
+      scoreTotal: zod.number(),
+      scorePercent: zod.number(),
+      failingPillars: zod.array(zod.string()),
+      recommendedActions: zod.array(zod.string()),
+      evidenceUrls: zod.array(zod.string()),
+      status: zod.enum(["OPEN", "ACKNOWLEDGED", "RESOLVED"]),
+      createdAt: zod.coerce.date(),
+      ackedAt: zod.coerce.date().nullish(),
+      resolvedAt: zod.coerce.date().nullish(),
+    }),
+  ),
 });
 
 /**

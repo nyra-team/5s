@@ -11,4 +11,20 @@ export type ListSubmissionsParams = {
   shift?: ListSubmissionsShift;
   areaId?: number;
   date?: Date;
+  /**
+   * Free-text search across operator email, machine tag, and area name.
+   */
+  q?: string;
+  /**
+   * Inclusive lower bound on overall score (0-100).
+   * @minimum 0
+   * @maximum 100
+   */
+  minScorePercent?: number;
+  /**
+   * Inclusive upper bound on overall score (0-100).
+   * @minimum 0
+   * @maximum 100
+   */
+  maxScorePercent?: number;
 };

@@ -23,6 +23,7 @@ import type {
   ComplianceData,
   CreateAreaBody,
   CreateLabelBody,
+  CreateNudgeBody,
   CreateSubmissionBody,
   CurrentShift,
   DashboardSummary,
@@ -36,10 +37,13 @@ import type {
   Label,
   ListEscalationsParams,
   ListSubmissionsParams,
+  LiveShift,
   LoginBody,
   LoginResponse,
   ModelStatus,
   NextCheck,
+  Nudge,
+  QuickApproveLabelBody,
   RecentSubmission,
   ReuploadSubmissionBody,
   ScoreSummary,
@@ -2281,6 +2285,328 @@ export const useCreateLabel = <
 > => {
   return useMutation(getCreateLabelMutationOptions(options));
 };
+
+/**
+ * @summary Approve the AI's score as the manager label in one click
+ */
+export const getQuickApproveLabelUrl = () => {
+  return `/api/labels/quick-approve`;
+};
+
+export const quickApproveLabel = async (
+  quickApproveLabelBody: QuickApproveLabelBody,
+  options?: RequestInit,
+): Promise<Label> => {
+  return customFetch<Label>(getQuickApproveLabelUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(quickApproveLabelBody),
+  });
+};
+
+export const getQuickApproveLabelMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quickApproveLabel>>,
+    TError,
+    { data: BodyType<QuickApproveLabelBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quickApproveLabel>>,
+  TError,
+  { data: BodyType<QuickApproveLabelBody> },
+  TContext
+> => {
+  const mutationKey = ["quickApproveLabel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quickApproveLabel>>,
+    { data: BodyType<QuickApproveLabelBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return quickApproveLabel(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuickApproveLabelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof quickApproveLabel>>
+>;
+export type QuickApproveLabelMutationBody = BodyType<QuickApproveLabelBody>;
+export type QuickApproveLabelMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Approve the AI's score as the manager label in one click
+ */
+export const useQuickApproveLabel = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quickApproveLabel>>,
+    TError,
+    { data: BodyType<QuickApproveLabelBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof quickApproveLabel>>,
+  TError,
+  { data: BodyType<QuickApproveLabelBody> },
+  TContext
+> => {
+  return useMutation(getQuickApproveLabelMutationOptions(options));
+};
+
+/**
+ * @summary Operator pulls active nudges (and they are dismissed atomically)
+ */
+export const getGetActiveNudgesUrl = () => {
+  return `/api/nudges`;
+};
+
+export const getActiveNudges = async (
+  options?: RequestInit,
+): Promise<Nudge[]> => {
+  return customFetch<Nudge[]>(getGetActiveNudgesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetActiveNudgesQueryKey = () => {
+  return [`/api/nudges`] as const;
+};
+
+export const getGetActiveNudgesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getActiveNudges>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getActiveNudges>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetActiveNudgesQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getActiveNudges>>> = ({
+    signal,
+  }) => getActiveNudges({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getActiveNudges>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetActiveNudgesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getActiveNudges>>
+>;
+export type GetActiveNudgesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Operator pulls active nudges (and they are dismissed atomically)
+ */
+
+export function useGetActiveNudges<
+  TData = Awaited<ReturnType<typeof getActiveNudges>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getActiveNudges>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetActiveNudgesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Manager records a nudge against an area (and optional machine) for a shift
+ */
+export const getCreateNudgeUrl = () => {
+  return `/api/nudges`;
+};
+
+export const createNudge = async (
+  createNudgeBody: CreateNudgeBody,
+  options?: RequestInit,
+): Promise<Nudge> => {
+  return customFetch<Nudge>(getCreateNudgeUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createNudgeBody),
+  });
+};
+
+export const getCreateNudgeMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createNudge>>,
+    TError,
+    { data: BodyType<CreateNudgeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createNudge>>,
+  TError,
+  { data: BodyType<CreateNudgeBody> },
+  TContext
+> => {
+  const mutationKey = ["createNudge"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createNudge>>,
+    { data: BodyType<CreateNudgeBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createNudge(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateNudgeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createNudge>>
+>;
+export type CreateNudgeMutationBody = BodyType<CreateNudgeBody>;
+export type CreateNudgeMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Manager records a nudge against an area (and optional machine) for a shift
+ */
+export const useCreateNudge = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createNudge>>,
+    TError,
+    { data: BodyType<CreateNudgeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createNudge>>,
+  TError,
+  { data: BodyType<CreateNudgeBody> },
+  TContext
+> => {
+  return useMutation(getCreateNudgeMutationOptions(options));
+};
+
+/**
+ * @summary Single-pane snapshot of the in-progress IST shift for managers
+ */
+export const getGetLiveShiftUrl = () => {
+  return `/api/shift/live`;
+};
+
+export const getLiveShift = async (
+  options?: RequestInit,
+): Promise<LiveShift> => {
+  return customFetch<LiveShift>(getGetLiveShiftUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetLiveShiftQueryKey = () => {
+  return [`/api/shift/live`] as const;
+};
+
+export const getGetLiveShiftQueryOptions = <
+  TData = Awaited<ReturnType<typeof getLiveShift>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getLiveShift>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetLiveShiftQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getLiveShift>>> = ({
+    signal,
+  }) => getLiveShift({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getLiveShift>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetLiveShiftQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getLiveShift>>
+>;
+export type GetLiveShiftQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Single-pane snapshot of the in-progress IST shift for managers
+ */
+
+export function useGetLiveShift<
+  TData = Awaited<ReturnType<typeof getLiveShift>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getLiveShift>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetLiveShiftQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Get labels for a submission

@@ -1,0 +1,177 @@
+import { Router, type IRouter } from "express";
+import { and, eq, isNull, inArray, sql } from "drizzle-orm";
+import { db, nudgesTable, areasTable, usersTable } from "@workspace/db";
+import { authMiddleware, requireRole } from "../lib/auth";
+
+const router: IRouter = Router();
+
+interface ShapedNudge {
+  id: number;
+  areaId: number;
+  areaName: string;
+  machine: string | null;
+  shift: string;
+  message: string | null;
+  createdByEmail: string;
+  createdAt: Date;
+  dismissedAt: Date | null;
+}
+
+async function fetchByIds(ids: number[]): Promise<ShapedNudge[]> {
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select({
+      id: nudgesTable.id,
+      areaId: nudgesTable.areaId,
+      areaName: areasTable.name,
+      machine: nudgesTable.machine,
+      shift: nudgesTable.shift,
+      message: nudgesTable.message,
+      createdByEmail: usersTable.email,
+      createdAt: nudgesTable.createdAt,
+      dismissedAt: nudgesTable.dismissedAt,
+    })
+    .from(nudgesTable)
+    .innerJoin(areasTable, eq(nudgesTable.areaId, areasTable.id))
+    .innerJoin(usersTable, eq(nudgesTable.createdByUserId, usersTable.id))
+    .where(inArray(nudgesTable.id, ids))
+    .orderBy(sql`${nudgesTable.createdAt} DESC`);
+  return rows;
+}
+
+// Operators pull active nudges they have not yet seen. Each request appends the
+// caller's user id to seen_by_user_ids_json so the toast is not re-shown to the
+// same operator on subsequent polls, while another operator on the same shift
+// still sees the nudge until they have read it themselves. Restricted to the
+// OPERATOR role — managers do not consume their own nudges.
+router.get("/nudges", authMiddleware, requireRole("OPERATOR"), async (req, res): Promise<void> => {
+  const { userId } = (req as any).user as { userId: number };
+
+  // Postgres @> with a numeric jsonb array element. We pass the array as a
+  // single-element JSON literal so the index can be used.
+  const seenByMe = sql`${nudgesTable.seenByUserIdsJson} @> ${JSON.stringify([userId])}::jsonb`;
+
+  const active = await db
+    .select({ id: nudgesTable.id })
+    .from(nudgesTable)
+    .where(and(isNull(nudgesTable.dismissedAt), sql`NOT (${seenByMe})`));
+
+  const ids = active.map((r) => r.id);
+  if (ids.length === 0) {
+    res.json([]);
+    return;
+  }
+
+  const shaped = await fetchByIds(ids);
+
+  // Append this operator's id to each unseen nudge atomically. Use jsonb_set
+  // with array concatenation (||) so we don't overwrite ids added by parallel
+  // operator polls. The `NOT (... @> ...)` guard makes this idempotent.
+  await db
+    .update(nudgesTable)
+    .set({
+      seenByUserIdsJson: sql`${nudgesTable.seenByUserIdsJson} || ${JSON.stringify([userId])}::jsonb`,
+    })
+    .where(and(inArray(nudgesTable.id, ids), sql`NOT (${seenByMe})`));
+
+  res.json(shaped);
+});
+
+router.post("/nudges", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
+  const { userId } = (req as any).user as { userId: number };
+  const areaId = Number(req.body?.areaId);
+  const shift = String(req.body?.shift ?? "");
+  const machineRaw = req.body?.machine;
+  const messageRaw = req.body?.message;
+
+  if (!Number.isFinite(areaId) || areaId <= 0) {
+    res.status(400).json({ error: "areaId is required" });
+    return;
+  }
+  if (!["A", "B", "C"].includes(shift)) {
+    res.status(400).json({ error: "shift must be A, B, or C" });
+    return;
+  }
+
+  const machine = typeof machineRaw === "string" && machineRaw.trim() !== "" ? machineRaw.trim() : null;
+  const message = typeof messageRaw === "string" && messageRaw.trim() !== "" ? messageRaw.trim() : null;
+
+  const [area] = await db.select().from(areasTable).where(eq(areasTable.id, areaId));
+  if (!area) {
+    res.status(404).json({ error: "Area not found" });
+    return;
+  }
+
+  // De-dupe: if a still-undismissed nudge exists for the same area+machine+shift, reuse it
+  // so spamming the button doesn't pile up identical toasts on the operator side.
+  const existing = await db
+    .select({ id: nudgesTable.id })
+    .from(nudgesTable)
+    .where(
+      and(
+        eq(nudgesTable.areaId, areaId),
+        eq(nudgesTable.shift, shift),
+        machine ? eq(nudgesTable.machine, machine) : isNull(nudgesTable.machine),
+        isNull(nudgesTable.dismissedAt),
+      ),
+    )
+    .limit(1);
+
+  if (existing.length > 0) {
+    const [shaped] = await fetchByIds([existing[0].id]);
+    res.status(201).json(shaped);
+    return;
+  }
+
+  const [created] = await db
+    .insert(nudgesTable)
+    .values({ areaId, machine, shift, message, createdByUserId: userId })
+    .returning({ id: nudgesTable.id });
+
+  const [shaped] = await fetchByIds([created.id]);
+  res.status(201).json(shaped);
+});
+
+// Helper used by /shift/live to look up the most recent open nudge per area/machine.
+export async function getLatestActiveNudgesByAreaMachine(): Promise<
+  Map<string, Date>
+> {
+  const rows = await db
+    .select({
+      areaId: nudgesTable.areaId,
+      machine: nudgesTable.machine,
+      createdAt: nudgesTable.createdAt,
+    })
+    .from(nudgesTable)
+    .where(isNull(nudgesTable.dismissedAt));
+  const map = new Map<string, Date>();
+  for (const r of rows) {
+    const key = `${r.areaId}|${r.machine ?? ""}`;
+    const prev = map.get(key);
+    if (!prev || prev.getTime() < r.createdAt.getTime()) {
+      map.set(key, r.createdAt);
+    }
+  }
+  return map;
+}
+
+// Same but lookup by area only (for "pending area" cards which don't pin a machine).
+export async function getLatestActiveNudgeByArea(): Promise<Map<number, Date>> {
+  const rows = await db
+    .select({
+      areaId: nudgesTable.areaId,
+      createdAt: nudgesTable.createdAt,
+    })
+    .from(nudgesTable)
+    .where(isNull(nudgesTable.dismissedAt));
+  const map = new Map<number, Date>();
+  for (const r of rows) {
+    const prev = map.get(r.areaId);
+    if (!prev || prev.getTime() < r.createdAt.getTime()) {
+      map.set(r.areaId, r.createdAt);
+    }
+  }
+  return map;
+}
+
+export default router;

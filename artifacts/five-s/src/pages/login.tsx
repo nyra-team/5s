@@ -40,7 +40,7 @@ export default function Login() {
 
   useEffect(() => {
     if (user) {
-      setLocation(user.role === "OPERATOR" ? "/" : "/dashboard");
+      setLocation(user.role === "OPERATOR" ? "/" : "/live");
     }
   }, [user, setLocation]);
 
