@@ -2,6 +2,7 @@ import {
   useGetDashboardCompliance,
   useGetDashboardScores,
   useGetDashboardSummary,
+  useGetEscalationCount,
   useListAreas,
   useGetAreaProfile,
   useGetDashboardTrends,
@@ -25,7 +26,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ResponsiveContainer, ReferenceDot } from "recharts";
-import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle, Repeat, Search, Send, FileQuestion, Loader2, UserX } from "lucide-react";
+import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle, Repeat, Search, Send, FileQuestion, Loader2, UserX, AlertCircle, RotateCw } from "lucide-react";
 import { format, parseISO, formatDistanceToNow } from "date-fns";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
@@ -37,24 +38,115 @@ import { useToast } from "@/hooks/use-toast";
 import { EnvironmentBadge, normalizeEnvironment } from "@/lib/environment";
 import { useIsMobile } from "@/hooks/use-mobile";
 
+// Three states a panel/card can be in. Distinguishing these in markup is what
+// stops a 500 from looking identical to "no data yet" — managers need to know
+// the difference so a real outage doesn't masquerade as a quiet shift.
+export type PanelStatus = "loading" | "error" | "ready";
+
+// Tiny inline error UI used inside a HeroStat tile. Keeps the card's icon /
+// label row visible (so the manager still sees which metric failed) but
+// replaces the value/hint with an error message and a Retry button.
+export function PanelInlineError({
+  onRetry,
+  testId,
+  message = "Couldn't load this data.",
+}: {
+  onRetry?: () => void;
+  testId?: string;
+  message?: string;
+}) {
+  return (
+    <div
+      className="flex flex-col gap-2"
+      role="alert"
+      data-testid={testId}
+    >
+      <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300">
+        <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+        <span className="text-[13px] font-medium">{message}</span>
+      </div>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="inline-flex items-center gap-1.5 self-start text-[12px] font-medium text-primary rounded-md px-2 py-1 -ml-2 hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+          data-testid={testId ? `${testId}-retry` : undefined}
+        >
+          <RotateCw className="w-3.5 h-3.5" aria-hidden="true" />
+          Retry
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Larger error state for full-width panels (charts, trend grids). Centered
+// inside the panel's content area so the section header stays readable.
+export function PanelError({
+  onRetry,
+  testId,
+  message = "We couldn't load this panel.",
+  hint,
+}: {
+  onRetry?: () => void;
+  testId?: string;
+  message?: string;
+  hint?: string;
+}) {
+  return (
+    <div
+      role="alert"
+      data-testid={testId}
+      className="h-full w-full flex flex-col items-center justify-center gap-3 rounded-xl bg-rose-50/60 dark:bg-rose-500/10 border border-rose-100 dark:border-rose-500/20 px-4 py-6 text-center"
+    >
+      <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300">
+        <AlertCircle className="w-4 h-4" aria-hidden="true" />
+        <span className="text-[13px] font-medium">{message}</span>
+      </div>
+      {hint && (
+        <p className="text-[11.5px] text-muted-foreground max-w-sm">{hint}</p>
+      )}
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-primary rounded-md px-3 py-1.5 bg-card border border-border hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+          data-testid={testId ? `${testId}-retry` : undefined}
+        >
+          <RotateCw className="w-3.5 h-3.5" aria-hidden="true" />
+          Retry
+        </button>
+      )}
+    </div>
+  );
+}
+
 function HeroStat({
   label,
   value,
   hint,
   icon: Icon,
   tone = "default",
+  status = "ready",
+  onRetry,
+  errorTestId,
 }: {
   label: string;
-  value: React.ReactNode;
-  hint: React.ReactNode;
+  value?: React.ReactNode;
+  hint?: React.ReactNode;
   icon: React.ComponentType<{ className?: string }>;
   tone?: "default" | "warn" | "good";
+  status?: PanelStatus;
+  onRetry?: () => void;
+  errorTestId?: string;
 }) {
   const iconColor =
+    status === "error" ? "text-rose-700 dark:text-rose-300" :
     tone === "warn" ? "text-amber-600 dark:text-amber-400" :
     tone === "good" ? "text-emerald-600 dark:text-emerald-400" :
     "text-primary";
   const iconBg =
+    status === "error" ? "bg-rose-50 dark:bg-rose-500/15" :
     tone === "warn" ? "bg-amber-50 dark:bg-amber-500/15" :
     tone === "good" ? "bg-emerald-50 dark:bg-emerald-500/15" :
     "bg-primary/10";
@@ -67,10 +159,28 @@ function HeroStat({
           <Icon className={`w-4 h-4 ${iconColor}`} />
         </div>
       </div>
-      <div className="text-[28px] sm:text-[40px] leading-none font-semibold tracking-tight tabular-nums">
-        {value}
-      </div>
-      <p className="text-[12px] sm:text-[13px] text-muted-foreground">{hint}</p>
+      {status === "loading" ? (
+        <>
+          <div
+            className="h-9 sm:h-10 w-24 bg-secondary rounded-lg animate-pulse"
+            aria-hidden="true"
+          />
+          <div
+            className="h-3 w-32 bg-secondary rounded animate-pulse"
+            aria-hidden="true"
+          />
+          <span className="sr-only">Loading {label}…</span>
+        </>
+      ) : status === "error" ? (
+        <PanelInlineError onRetry={onRetry} testId={errorTestId} />
+      ) : (
+        <>
+          <div className="text-[28px] sm:text-[40px] leading-none font-semibold tracking-tight tabular-nums">
+            {value}
+          </div>
+          <p className="text-[12px] sm:text-[13px] text-muted-foreground">{hint}</p>
+        </>
+      )}
     </div>
   );
 }
@@ -86,26 +196,68 @@ const tooltipStyle = {
   padding: "8px 12px",
 };
 
+// Map a React Query hook's loading/error flags to a panel status. Treat
+// "isLoading and we don't have any cached data" as loading; once we have
+// any data we never go back to a loading skeleton (re-fetches happen in the
+// background). isError wins so a stale-but-erroring panel still surfaces the
+// failure to the manager.
+function panelStatus(opts: {
+  isLoading: boolean;
+  isError: boolean;
+  hasData: boolean;
+}): PanelStatus {
+  if (opts.isError) return "error";
+  if (opts.isLoading && !opts.hasData) return "loading";
+  return "ready";
+}
+
 export default function Dashboard() {
   const today = format(new Date(), "yyyy-MM-dd");
 
-  const { data: summary, isLoading: sumLoading } = useGetDashboardSummary();
-  const { data: compliance, isLoading: compLoading } = useGetDashboardCompliance({ date: today });
-  const { data: scoresByArea, isLoading: scoresLoading } = useGetDashboardScores({ date: today, groupBy: "area" });
-  const { data: scoresByShift, isLoading: shiftLoading } = useGetDashboardScores({ date: today, groupBy: "shift" });
+  const summaryQ = useGetDashboardSummary();
+  const complianceQ = useGetDashboardCompliance({ date: today });
+  const scoresByAreaQ = useGetDashboardScores({ date: today, groupBy: "area" });
+  const scoresByShiftQ = useGetDashboardScores({ date: today, groupBy: "shift" });
+  const escalationCountQ = useGetEscalationCount();
   const isMobile = useIsMobile();
 
-  if (sumLoading || compLoading || scoresLoading || shiftLoading) {
-    return (
-      <div className="flex justify-center py-16">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-muted border-t-primary"></div>
-      </div>
-    );
-  }
+  const summary = summaryQ.data;
+  const compliance = complianceQ.data;
+  const scoresByArea = scoresByAreaQ.data;
+  const scoresByShift = scoresByShiftQ.data;
+  const escalationCount = escalationCountQ.data;
 
   const compliancePercent = Math.round(compliance?.compliancePercent || 0);
   const isCompliant = compliancePercent >= 80;
   const missingCount = compliance?.missingAreas?.length || 0;
+
+  const summaryStatus = panelStatus({
+    isLoading: summaryQ.isLoading,
+    isError: summaryQ.isError,
+    hasData: !!summary,
+  });
+  const complianceStatus = panelStatus({
+    isLoading: complianceQ.isLoading,
+    isError: complianceQ.isError,
+    hasData: !!compliance,
+  });
+  const scoresByAreaStatus = panelStatus({
+    isLoading: scoresByAreaQ.isLoading,
+    isError: scoresByAreaQ.isError,
+    hasData: !!scoresByArea,
+  });
+  const scoresByShiftStatus = panelStatus({
+    isLoading: scoresByShiftQ.isLoading,
+    isError: scoresByShiftQ.isError,
+    hasData: !!scoresByShift,
+  });
+  const escalationCountStatus = panelStatus({
+    isLoading: escalationCountQ.isLoading,
+    isError: escalationCountQ.isError,
+    hasData: !!escalationCount,
+  });
+
+  const openEscalations = escalationCount?.open ?? 0;
 
   return (
     <div className="space-y-10 pb-12">
@@ -125,18 +277,27 @@ export default function Dashboard() {
           hint={`${compliance?.submittedAreas} of ${compliance?.totalAreas} areas evaluated`}
           icon={Target}
           tone={isCompliant ? "good" : "warn"}
+          status={complianceStatus}
+          onRetry={() => complianceQ.refetch()}
+          errorTestId="hero-compliance-error"
         />
         <HeroStat
           label="Avg 5S Score"
           value={`${summary?.todayAvgScore ? Math.round(summary.todayAvgScore * 4) : 0}%`}
           hint="Out of 100%"
           icon={Activity}
+          status={summaryStatus}
+          onRetry={() => summaryQ.refetch()}
+          errorTestId="hero-avg-score-error"
         />
         <HeroStat
           label="Today's Photos"
           value={summary?.todaySubmissions || 0}
           hint="Across all active shifts"
           icon={ClipboardCheck}
+          status={summaryStatus}
+          onRetry={() => summaryQ.refetch()}
+          errorTestId="hero-photos-error"
         />
         <HeroStat
           label="Missing Areas"
@@ -148,16 +309,30 @@ export default function Dashboard() {
           }
           icon={AlertTriangle}
           tone={missingCount > 0 ? "warn" : "good"}
+          status={complianceStatus}
+          onRetry={() => complianceQ.refetch()}
+          errorTestId="hero-missing-areas-error"
         />
-        <Link href="/escalations" className="block">
+        {escalationCountStatus === "error" ? (
           <HeroStat
             label="Open Escalations"
-            value={summary?.openEscalations ?? 0}
-            hint={(summary?.openEscalations ?? 0) > 0 ? "Click to review failing audits" : "All escalations resolved"}
             icon={Inbox}
-            tone={(summary?.openEscalations ?? 0) > 0 ? "warn" : "good"}
+            status="error"
+            onRetry={() => escalationCountQ.refetch()}
+            errorTestId="hero-escalations-error"
           />
-        </Link>
+        ) : (
+          <Link href="/escalations" className="block">
+            <HeroStat
+              label="Open Escalations"
+              value={openEscalations}
+              hint={openEscalations > 0 ? "Click to review failing audits" : "All escalations resolved"}
+              icon={Inbox}
+              tone={openEscalations > 0 ? "warn" : "good"}
+              status={escalationCountStatus}
+            />
+          </Link>
+        )}
       </section>
 
       <AiReliabilityPanel />
@@ -177,12 +352,29 @@ export default function Dashboard() {
       <DetectionAgreementPanel />
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-card rounded-2xl shadow-soft p-6">
+        <div className="bg-card rounded-2xl shadow-soft p-6" data-testid="scores-by-area-panel">
           <div className="mb-5">
             <p className="eyebrow">By Area</p>
             <h2 className="text-lg font-semibold tracking-tight mt-1">Average scores</h2>
           </div>
           <div className="h-72">
+            {scoresByAreaStatus === "loading" ? (
+              <div
+                role="status"
+                aria-live="polite"
+                data-testid="scores-by-area-loading"
+                className="h-full w-full bg-secondary rounded-xl animate-pulse"
+              >
+                <span className="sr-only">Loading average scores by area…</span>
+              </div>
+            ) : scoresByAreaStatus === "error" ? (
+              <PanelError
+                onRetry={() => scoresByAreaQ.refetch()}
+                testId="scores-by-area-error"
+                message="Couldn't load average scores by area."
+                hint="The dashboard will retry automatically, or tap Retry to try now."
+              />
+            ) : (
             <ResponsiveContainer width="100%" height="100%">
               {isMobile ? (
                 // On phones, area-name labels along the bottom collide and clip. Flip
@@ -243,15 +435,33 @@ export default function Dashboard() {
                 </BarChart>
               )}
             </ResponsiveContainer>
+            )}
           </div>
         </div>
 
-        <div className="bg-card rounded-2xl shadow-soft p-6">
+        <div className="bg-card rounded-2xl shadow-soft p-6" data-testid="scores-by-shift-panel">
           <div className="mb-5">
             <p className="eyebrow">By Shift</p>
             <h2 className="text-lg font-semibold tracking-tight mt-1">Average scores</h2>
           </div>
           <div className="h-72">
+            {scoresByShiftStatus === "loading" ? (
+              <div
+                role="status"
+                aria-live="polite"
+                data-testid="scores-by-shift-loading"
+                className="h-full w-full bg-secondary rounded-xl animate-pulse"
+              >
+                <span className="sr-only">Loading average scores by shift…</span>
+              </div>
+            ) : scoresByShiftStatus === "error" ? (
+              <PanelError
+                onRetry={() => scoresByShiftQ.refetch()}
+                testId="scores-by-shift-error"
+                message="Couldn't load average scores by shift."
+                hint="The dashboard will retry automatically, or tap Retry to try now."
+              />
+            ) : (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={scoresByShift?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))} margin={{ top: 10, right: 10, left: -10, bottom: 0 }} layout="vertical">
                 <CartesianGrid strokeDasharray="2 4" horizontal={false} stroke="hsl(var(--border))" />
@@ -277,6 +487,7 @@ export default function Dashboard() {
                 <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[0, 8, 8, 0]} barSize={32} />
               </BarChart>
             </ResponsiveContainer>
+            )}
           </div>
         </div>
       </section>
@@ -979,15 +1190,36 @@ export function LearningTrendPanel() {
     try { window.localStorage.setItem(TREND_SHIFT_KEY, shiftFilter); } catch { /* quota / private mode */ }
   }, [shiftFilter]);
 
-  const { data: trends, isLoading } = useGetDashboardTrends({
+  const trendsQ = useGetDashboardTrends({
     days,
     ...(shiftFilter === "ALL" ? {} : { shift: shiftFilter }),
   });
+  const trends = trendsQ.data;
 
-  if (isLoading && !trends) {
+  if (trendsQ.isLoading && !trends) {
     return (
       <section className="bg-card rounded-2xl shadow-soft p-6">
         <div className="h-40 bg-secondary rounded-xl animate-pulse" />
+      </section>
+    );
+  }
+
+  if (trendsQ.isError && !trends) {
+    return (
+      <section
+        className="bg-card rounded-2xl shadow-soft p-6"
+        data-testid="dashboard-trends-error-panel"
+      >
+        <div className="mb-5">
+          <p className="eyebrow">AI learning</p>
+          <h2 className="text-lg font-semibold tracking-tight mt-1">Score trends</h2>
+        </div>
+        <PanelError
+          onRetry={() => trendsQ.refetch()}
+          testId="dashboard-trends-error"
+          message="Couldn't load score trends."
+          hint="The dashboard will retry automatically, or tap Retry to try now."
+        />
       </section>
     );
   }

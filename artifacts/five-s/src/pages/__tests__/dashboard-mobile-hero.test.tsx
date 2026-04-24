@@ -70,6 +70,7 @@ vi.mock("@workspace/api-client-react", () => {
       missingAreas: ["Bay 3"],
     }),
     useGetDashboardScores: noopQuery([]),
+    useGetEscalationCount: noopQuery({ count: 2 }),
     useListAreas: noopQuery([]),
     useGetAreaProfile: noopParamQuery(undefined),
     useGetDashboardTrends: noopQuery([]),
