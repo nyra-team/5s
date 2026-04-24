@@ -606,6 +606,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/DashboardAiReliability"
 
+  /dashboard/ai-cost:
+    get:
+      operationId: getDashboardAiCost
+      tags: [dashboard]
+      summary: Per-model AI latency, token usage, and estimated spend
+      description: >-
+        Per-`modelVersion` rollup of latency (avg + p95), token usage,
+        and an estimated USD cost over rolling 7d and 30d windows. Lets
+        managers see what the gpt-5 upgrade is costing in time and money,
+        with old `gpt-5-mini-…` rows and the new `gpt-5-…` rows rendered
+        side-by-side so the trade-off is obvious at a glance.
+      responses:
+        "200":
+          description: Per-model cost/latency rollup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardAiCost"
+
   /dashboard/trends:
     get:
       operationId: getDashboardTrends
@@ -2411,6 +2430,83 @@ components:
         last7d:
           $ref: "#/components/schemas/AiReliabilityWindow"
       required: [last24h, last7d]
+
+    AiCostModelRow:
+      type: object
+      description: |
+        Aggregate latency + token usage for one (modelVersion, callKind) pair
+        inside a rolling time window. callKind is "scoring" for rubric audits
+        and "identification" for the area-detection pass; both share the same
+        underlying ai_scoring_metrics table.
+      properties:
+        modelVersion:
+          type: string
+          description: The modelVersion string the pipeline tagged each row with (e.g. "gpt-5-factory-v1", "gpt-5-mini-warehouse-v3").
+        callKind:
+          type: string
+          description: Which pipeline produced these calls — "scoring" (callVLM rubric pass) or "identification" (area auto-detect).
+        requestCount:
+          type: integer
+          description: Number of model calls grouped into this row.
+        avgLatencyMs:
+          type: integer
+          nullable: true
+          description: Mean wall-clock duration in milliseconds. Null when no row in this group has a recorded latency.
+        p95LatencyMs:
+          type: integer
+          nullable: true
+          description: 95th percentile latency in milliseconds (PERCENTILE_CONT). Null when no row in this group has a recorded latency.
+        totalPromptTokens:
+          type: integer
+          description: Sum of prompt_tokens across the grouped rows. 0 when no usage was reported by the proxy.
+        totalCompletionTokens:
+          type: integer
+          description: Sum of completion_tokens across the grouped rows. 0 when no usage was reported.
+        totalTokens:
+          type: integer
+          description: Sum of total_tokens across the grouped rows. 0 when no usage was reported.
+        estimatedCostUsd:
+          type: number
+          nullable: true
+          description: Rough USD spend for the window using the published gpt-5 family per-token pricing. Null when the modelVersion didn't map to a known pricing family.
+        estimatedCostPerCallUsd:
+          type: number
+          nullable: true
+          description: estimatedCostUsd / requestCount, rounded to 4 decimal places. Null when pricing was unknown.
+        estimatedTokensPerCall:
+          type: integer
+          nullable: true
+          description: Average tokens consumed per request (totalTokens / requestCount), rounded to a whole token. Null only in the unreachable requestCount==0 case.
+      required:
+        - modelVersion
+        - callKind
+        - requestCount
+        - avgLatencyMs
+        - p95LatencyMs
+        - totalPromptTokens
+        - totalCompletionTokens
+        - totalTokens
+        - estimatedCostUsd
+        - estimatedCostPerCallUsd
+        - estimatedTokensPerCall
+
+    DashboardAiCost:
+      type: object
+      description: |
+        Per-model latency, token usage, and rough USD cost over rolling 7d and
+        30d windows. Lets managers see what swapping the underlying model is
+        costing in time and money, with old gpt-5-mini-… rows and the new
+        gpt-5-… rows rendered side-by-side so the trade-off is obvious.
+      properties:
+        last7d:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiCostModelRow"
+        last30d:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiCostModelRow"
+      required: [last7d, last30d]
 
     CurrentShift:
       type: object

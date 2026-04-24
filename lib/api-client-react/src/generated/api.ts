@@ -31,6 +31,7 @@ import type {
   CreateNudgeBody,
   CreateSubmissionBody,
   CurrentShift,
+  DashboardAiCost,
   DashboardAiReliability,
   DashboardSummary,
   ErrorResponse,
@@ -1969,6 +1970,82 @@ export function useGetDashboardAiReliability<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetDashboardAiReliabilityQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Per-`modelVersion` rollup of latency (avg + p95), token usage, and an estimated USD cost over rolling 7d and 30d windows. Lets managers see what the gpt-5 upgrade is costing in time and money, with old `gpt-5-mini-…` rows and the new `gpt-5-…` rows rendered side-by-side so the trade-off is obvious at a glance.
+ * @summary Per-model AI latency, token usage, and estimated spend
+ */
+export const getGetDashboardAiCostUrl = () => {
+  return `/api/dashboard/ai-cost`;
+};
+
+export const getDashboardAiCost = async (
+  options?: RequestInit,
+): Promise<DashboardAiCost> => {
+  return customFetch<DashboardAiCost>(getGetDashboardAiCostUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDashboardAiCostQueryKey = () => {
+  return [`/api/dashboard/ai-cost`] as const;
+};
+
+export const getGetDashboardAiCostQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDashboardAiCost>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDashboardAiCost>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetDashboardAiCostQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDashboardAiCost>>
+  > = ({ signal }) => getDashboardAiCost({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDashboardAiCost>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDashboardAiCostQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDashboardAiCost>>
+>;
+export type GetDashboardAiCostQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Per-model AI latency, token usage, and estimated spend
+ */
+
+export function useGetDashboardAiCost<
+  TData = Awaited<ReturnType<typeof getDashboardAiCost>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDashboardAiCost>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDashboardAiCostQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

@@ -1,8 +1,34 @@
 import { openai } from "@workspace/integrations-openai-ai-server";
+// Token-usage shape lifted off the actual openai client's response so we
+// don't need to import the openai package directly (it lives behind
+// @workspace/integrations-openai-ai-server). The non-streaming branch of
+// the response union carries the typed `usage` field we read.
+type ChatCompletionUsage = NonNullable<
+  Extract<
+    Awaited<ReturnType<typeof openai.chat.completions.create>>,
+    { usage?: unknown }
+  >["usage"]
+>;
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { logger } from "./logger.js";
 import { extractKeyframes, isVideoFile } from "./keyframes.js";
+import { db, aiScoringMetricsTable } from "@workspace/db";
+
+// modelVersion string written into the metrics row for identification calls.
+// Distinct from the scoring rows' `gpt-5-<env>-v1` so the dashboard's
+// per-model rollup can split scoring vs identification spend even when both
+// pipelines share the underlying OpenAI model. Bump the suffix if the model
+// or prompt changes meaningfully.
+const IDENTIFICATION_MODEL_VERSION = "gpt-5-identification-v1";
+
+// Coerce a possibly-undefined token-count field to a finite number, or null.
+// Centralized so the three usage fields (prompt/completion/total) share one
+// definition of "we got a usable number back".
+function numericOrNull(value: number | undefined | null): number | null {
+  if (value == null) return null;
+  return Number.isFinite(value) ? value : null;
+}
 
 export interface IdentificationCandidate {
   areaId: number;
@@ -113,15 +139,67 @@ export async function callIdentificationVLM(
     content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}` } });
   }
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-5",
-    response_format: { type: "json_object" },
-    max_completion_tokens: 1024,
-    messages: [
-      { role: "system", content: IDENTIFICATION_PROMPT },
-      { role: "user", content },
-    ],
-  });
+  // Wrap the chat call so we can record latency + token usage in the same
+  // ai_scoring_metrics table the scoring pipeline writes to. This is what
+  // lets the manager-facing per-model cost panel show identification spend
+  // side by side with scoring spend. Logging is best-effort: a DB hiccup
+  // must never break identification.
+  const tStart = Date.now();
+  let response: Awaited<ReturnType<typeof openai.chat.completions.create>>;
+  try {
+    response = await openai.chat.completions.create({
+      model: "gpt-5",
+      response_format: { type: "json_object" },
+      max_completion_tokens: 1024,
+      messages: [
+        { role: "system", content: IDENTIFICATION_PROMPT },
+        { role: "user", content },
+      ],
+    });
+  } catch (err) {
+    // Even on a thrown call, record the time we spent waiting so a chronic
+    // upstream timeout shows up in the latency dashboard. Token fields stay
+    // null because no usage object came back.
+    const latencyMs = Date.now() - tStart;
+    try {
+      await db.insert(aiScoringMetricsTable).values({
+        modelVersion: IDENTIFICATION_MODEL_VERSION,
+        retried: false,
+        validationError: err instanceof Error ? err.message.slice(0, 500) : "identification call threw",
+        callKind: "identification",
+        latencyMs,
+        promptTokens: null,
+        completionTokens: null,
+        totalTokens: null,
+      });
+    } catch (logErr) {
+      logger.warn({ err: logErr }, "failed to record AI identification metric (call threw)");
+    }
+    throw err;
+  }
+  const latencyMs = Date.now() - tStart;
+  // Treat each token field independently — the proxy occasionally surfaces
+  // some fields and not others (e.g. when an upstream gateway strips
+  // completion-token details), so a missing field becomes null instead of
+  // dragging the running totals to NaN.
+  const usage: ChatCompletionUsage | undefined = response.usage ?? undefined;
+  const promptTokens = numericOrNull(usage?.prompt_tokens);
+  const completionTokens = numericOrNull(usage?.completion_tokens);
+  const totalTokens = numericOrNull(usage?.total_tokens);
+  try {
+    await db.insert(aiScoringMetricsTable).values({
+      modelVersion: IDENTIFICATION_MODEL_VERSION,
+      retried: false,
+      validationError: null,
+      callKind: "identification",
+      latencyMs,
+      promptTokens,
+      completionTokens,
+      totalTokens,
+    });
+  } catch (err) {
+    logger.warn({ err }, "failed to record AI identification metric");
+  }
 
   const text = response.choices[0]?.message?.content || "{}";
   const parsed = JSON.parse(text);

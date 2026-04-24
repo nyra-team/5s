@@ -824,6 +824,50 @@ export interface DashboardAiReliability {
   last7d: AiReliabilityWindow;
 }
 
+/**
+ * Aggregate latency + token usage for one (modelVersion, callKind) pair
+inside a rolling time window. callKind is "scoring" for rubric audits
+and "identification" for the area-detection pass; both share the same
+underlying ai_scoring_metrics table.
+
+ */
+export interface AiCostModelRow {
+  /** The modelVersion string the pipeline tagged each row with (e.g. "gpt-5-factory-v1", "gpt-5-mini-warehouse-v3"). */
+  modelVersion: string;
+  /** Which pipeline produced these calls — "scoring" (callVLM rubric pass) or "identification" (area auto-detect). */
+  callKind: string;
+  /** Number of model calls grouped into this row. */
+  requestCount: number;
+  /** Mean wall-clock duration in milliseconds. Null when no row in this group has a recorded latency. */
+  avgLatencyMs: number | null;
+  /** 95th percentile latency in milliseconds (PERCENTILE_CONT). Null when no row in this group has a recorded latency. */
+  p95LatencyMs: number | null;
+  /** Sum of prompt_tokens across the grouped rows. 0 when no usage was reported by the proxy. */
+  totalPromptTokens: number;
+  /** Sum of completion_tokens across the grouped rows. 0 when no usage was reported. */
+  totalCompletionTokens: number;
+  /** Sum of total_tokens across the grouped rows. 0 when no usage was reported. */
+  totalTokens: number;
+  /** Rough USD spend for the window using the published gpt-5 family per-token pricing. Null when the modelVersion didn't map to a known pricing family. */
+  estimatedCostUsd: number | null;
+  /** estimatedCostUsd / requestCount, rounded to 4 decimal places. Null when pricing was unknown. */
+  estimatedCostPerCallUsd: number | null;
+  /** Average tokens consumed per request (totalTokens / requestCount), rounded to a whole token. Null only in the unreachable requestCount==0 case. */
+  estimatedTokensPerCall: number | null;
+}
+
+/**
+ * Per-model latency, token usage, and rough USD cost over rolling 7d and
+30d windows. Lets managers see what swapping the underlying model is
+costing in time and money, with old gpt-5-mini-… rows and the new
+gpt-5-… rows rendered side-by-side so the trade-off is obvious.
+
+ */
+export interface DashboardAiCost {
+  last7d: AiCostModelRow[];
+  last30d: AiCostModelRow[];
+}
+
 export type CurrentShiftShift =
   (typeof CurrentShiftShift)[keyof typeof CurrentShiftShift];
 

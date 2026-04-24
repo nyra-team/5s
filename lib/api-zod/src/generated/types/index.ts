@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./aiCostModelRowType";
 export * from "./aIIssueType";
 export * from "./aIIssueTypeSeverity";
 export * from "./aIRecommendationType";
@@ -43,6 +44,7 @@ export * from "./createSubmissionType";
 export * from "./createSubmissionTypeShift";
 export * from "./currentShiftType";
 export * from "./currentShiftTypeShift";
+export * from "./dashboardAiCostType";
 export * from "./dashboardAiReliabilityType";
 export * from "./dashboardSummaryType";
 export * from "./errorResponseType";

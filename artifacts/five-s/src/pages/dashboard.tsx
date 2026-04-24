@@ -9,6 +9,7 @@ import {
   useGetDashboardOperatorDismissesDetail,
   getGetDashboardOperatorDismissesDetailQueryKey,
   useGetDashboardAiReliability,
+  useGetDashboardAiCost,
   useGetAreaDetectionAgreement,
   type AreaTrend,
   type GetDashboardTrendsShift,
@@ -145,6 +146,8 @@ export default function Dashboard() {
       </section>
 
       <AiReliabilityPanel />
+
+      <AiCostPanel />
 
       <LearningStatusPanel />
 
@@ -506,6 +509,165 @@ function AiReliabilityErrorBreakdown({
             );
           })}
         </ul>
+      )}
+    </div>
+  );
+}
+
+// Render a USD figure with a precision that matches its magnitude. Audit
+// runs are typically pennies, so `<$0.01` collapses to a fixed string and
+// dollars-and-up rounds to two decimals for clean alignment.
+function formatUsd(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (n === 0) return "$0.00";
+  if (n < 0.01) return "<$0.01";
+  if (n < 1) return `$${n.toFixed(3)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+function formatLatencyMs(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (n < 1000) return `${Math.round(n)}ms`;
+  return `${(n / 1000).toFixed(1)}s`;
+}
+
+function formatTokenCount(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (n < 1000) return n.toLocaleString();
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
+}
+
+// Strip the trailing "-v1" / "-v3" version suffix when the row's modelVersion
+// has one — managers care about the family ("gpt-5-factory" vs "gpt-5-mini-
+// factory") more than the schema version, but we still keep the raw string
+// available as a tooltip in case engineers need the exact tag.
+function shortenModelVersion(v: string): string {
+  return v.replace(/-v\d+$/, "");
+}
+
+function AiCostPanel() {
+  const { data, isLoading } = useGetDashboardAiCost();
+
+  if (isLoading || !data) {
+    return (
+      <section className="bg-card rounded-2xl shadow-soft p-6" data-testid="ai-cost">
+        <div className="h-32 bg-secondary rounded-xl animate-pulse" />
+      </section>
+    );
+  }
+
+  const last7d = data.last7d;
+  const last30d = data.last30d;
+  const noDataYet = last7d.length === 0 && last30d.length === 0;
+
+  return (
+    <section className="bg-card rounded-2xl shadow-soft p-6" data-testid="ai-cost">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-5">
+        <div>
+          <p className="eyebrow">AI scoring</p>
+          <h2 className="text-lg font-semibold tracking-tight mt-1">
+            Per-model latency &amp; cost
+          </h2>
+          <p className="text-[13px] text-muted-foreground mt-1 max-w-xl">
+            What each underlying model is costing in time and money. Old
+            gpt-5-mini rows and the new gpt-5 rows render side-by-side so
+            you can sanity-check whether the upgrade is worth the spend.
+          </p>
+        </div>
+      </div>
+      {noDataYet ? (
+        <p className="text-[13px] text-muted-foreground" data-testid="ai-cost-empty">
+          No AI scoring activity yet — submit an audit to start tracking.
+        </p>
+      ) : (
+        <div className="space-y-6">
+          <AiCostWindowTable label="Last 7 days" rows={last7d} testId="ai-cost-7d" />
+          <AiCostWindowTable label="Last 30 days" rows={last30d} testId="ai-cost-30d" />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AiCostWindowTable({
+  label,
+  rows,
+  testId,
+}: {
+  label: string;
+  rows: Array<{
+    modelVersion: string;
+    callKind: string;
+    requestCount: number;
+    avgLatencyMs: number | null;
+    p95LatencyMs: number | null;
+    totalPromptTokens: number;
+    totalCompletionTokens: number;
+    totalTokens: number;
+    estimatedCostUsd: number | null;
+    estimatedCostPerCallUsd: number | null;
+    estimatedTokensPerCall: number | null;
+  }>;
+  testId: string;
+}) {
+  return (
+    <div data-testid={testId}>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <p className="text-[12px] font-medium text-muted-foreground uppercase tracking-wide">
+          {label}
+        </p>
+        <span className="text-[11.5px] text-muted-foreground" data-testid={`${testId}-row-count`}>
+          {rows.length} model{rows.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="text-[13px] text-muted-foreground rounded-xl bg-secondary/40 px-4 py-3">
+          No calls in this window.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                <th className="px-3 py-2 font-medium">Model</th>
+                <th className="px-3 py-2 font-medium">Kind</th>
+                <th className="px-3 py-2 font-medium text-right">Requests</th>
+                <th className="px-3 py-2 font-medium text-right">Avg latency</th>
+                <th className="px-3 py-2 font-medium text-right">p95 latency</th>
+                <th className="px-3 py-2 font-medium text-right">Tokens</th>
+                <th className="px-3 py-2 font-medium text-right">Tokens/call</th>
+                <th className="px-3 py-2 font-medium text-right">Est. cost</th>
+                <th className="px-3 py-2 font-medium text-right">Per call</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr
+                  key={`${row.modelVersion}-${row.callKind}`}
+                  className="border-t border-border/60"
+                  data-testid={`${testId}-row`}
+                >
+                  <td className="px-3 py-2 font-medium tabular-nums" title={row.modelVersion}>
+                    {shortenModelVersion(row.modelVersion)}
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground capitalize">{row.callKind}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{row.requestCount.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{formatLatencyMs(row.avgLatencyMs)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{formatLatencyMs(row.p95LatencyMs)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{formatTokenCount(row.totalTokens)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                    {formatTokenCount(row.estimatedTokensPerCall)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">{formatUsd(row.estimatedCostUsd)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                    {formatUsd(row.estimatedCostPerCallUsd)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

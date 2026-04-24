@@ -1,4 +1,15 @@
 import { openai } from "@workspace/integrations-openai-ai-server";
+// Token-usage shape lifted off the actual openai client's response so we
+// don't need to import the openai package directly (it lives behind
+// @workspace/integrations-openai-ai-server). chat.completions.create returns
+// a union including streaming responses; the non-streaming branch carries
+// the typed `usage` field we accumulate.
+type ChatCompletionUsage = NonNullable<
+  Extract<
+    Awaited<ReturnType<typeof openai.chat.completions.create>>,
+    { usage?: unknown }
+  >["usage"]
+>;
 import { logger } from "./logger.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -384,15 +395,29 @@ interface CallVlmOptions {
 // is kept for engineering spelunking, not for display.
 const VALIDATION_ERROR_MAX = 500;
 
+interface ScoringMetricExtras {
+  latencyMs: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+}
+
 /**
  * Append one row to `ai_scoring_metrics` describing the outcome of a VLM
  * call. Logging the metric is best-effort: a DB hiccup must never break
  * scoring, so we swallow errors and emit a warning instead.
+ *
+ * `extras` carries the wall-clock duration of the model call (summed across
+ * the optional one-shot retry) plus the token-usage figures the proxy
+ * reported. They live on the same row as `retried` so the dashboard can
+ * group cost/latency by `modelVersion` against the same denominator the
+ * retry-rate panel already uses.
  */
 async function recordScoringMetric(
   modelVersion: string,
   retried: boolean,
   validationError: string | null,
+  extras: ScoringMetricExtras,
 ): Promise<void> {
   try {
     await db.insert(aiScoringMetricsTable).values({
@@ -401,6 +426,11 @@ async function recordScoringMetric(
       validationError: validationError
         ? validationError.slice(0, VALIDATION_ERROR_MAX)
         : null,
+      callKind: "scoring",
+      latencyMs: extras.latencyMs,
+      promptTokens: extras.promptTokens,
+      completionTokens: extras.completionTokens,
+      totalTokens: extras.totalTokens,
     });
   } catch (err) {
     logger.warn({ err }, "failed to record AI scoring metric");
@@ -453,7 +483,31 @@ export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
     { role: "user", content: baseContent },
   ];
 
+  // Wall-clock + token usage are accumulated across the optional retry so
+  // the metric row reflects the FULL cost/latency of the audit, not just
+  // the first attempt. recordScoringMetric persists one row per callVLM().
+  let totalLatencyMs = 0;
+  let promptTokens: number | null = null;
+  let completionTokens: number | null = null;
+  let totalTokens: number | null = null;
+  // The proxy is allowed to drop usage fields (e.g. on stream-style
+  // responses or when the upstream gateway didn't surface them); guard with
+  // Number.isFinite so a missing field becomes "we don't know" instead of
+  // poisoning the running totals with NaN.
+  function accumulateUsage(usage: ChatCompletionUsage | undefined): void {
+    if (!usage) return;
+    const p = Number(usage.prompt_tokens);
+    const c = Number(usage.completion_tokens);
+    const t = Number(usage.total_tokens);
+    if (Number.isFinite(p)) promptTokens = (promptTokens ?? 0) + p;
+    if (Number.isFinite(c)) completionTokens = (completionTokens ?? 0) + c;
+    if (Number.isFinite(t)) totalTokens = (totalTokens ?? 0) + t;
+  }
+
+  const t0 = Date.now();
   const firstResp = await openai.chat.completions.create({ ...baseRequest, messages });
+  totalLatencyMs += Date.now() - t0;
+  accumulateUsage(firstResp.usage);
   const firstText = firstResp.choices[0]?.message?.content || "{}";
 
   let parsed: any;
@@ -501,7 +555,10 @@ Do not include any prose outside the JSON object.`,
         },
       ];
 
+      const tRetry = Date.now();
       const retryResp = await openai.chat.completions.create({ ...baseRequest, messages: retryMessages });
+      totalLatencyMs += Date.now() - tRetry;
+      accumulateUsage(retryResp.usage);
       const retryText = retryResp.choices[0]?.message?.content || "{}";
       try {
         parsed = JSON.parse(retryText);
@@ -510,7 +567,12 @@ Do not include any prose outside the JSON object.`,
         validationError = `retry was not valid JSON: ${(err as Error).message}`;
       }
       if (validationError) {
-        await recordScoringMetric(modelVersion, true, firstAttemptError);
+        await recordScoringMetric(modelVersion, true, firstAttemptError, {
+          latencyMs: totalLatencyMs,
+          promptTokens,
+          completionTokens,
+          totalTokens,
+        });
         metricRecorded = true;
         throw new Error(`VLM returned invalid JSON after one retry: ${validationError}`);
       }
@@ -519,7 +581,12 @@ Do not include any prose outside the JSON object.`,
     if (!metricRecorded) {
       // One row per callVLM. We don't block on this — failing to log a metric
       // must never break scoring (recordScoringMetric swallows its own errors).
-      await recordScoringMetric(modelVersion, firstAttemptError !== null, firstAttemptError);
+      await recordScoringMetric(modelVersion, firstAttemptError !== null, firstAttemptError, {
+        latencyMs: totalLatencyMs,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+      });
     }
   }
 

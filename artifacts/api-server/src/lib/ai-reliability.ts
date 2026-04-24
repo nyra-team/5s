@@ -1,4 +1,4 @@
-import { count, gte, sql } from "drizzle-orm";
+import { and, count, eq, gte, sql } from "drizzle-orm";
 import { db, aiScoringMetricsTable } from "@workspace/db";
 import { logger } from "./logger.js";
 import { notifyAiRetrySpike } from "./notifications.js";
@@ -59,7 +59,16 @@ export async function computeRetryStatsSince(since: Date): Promise<AiRetryStats>
       retriedCalls: sql<number>`COALESCE(SUM(CASE WHEN ${aiScoringMetricsTable.retried} THEN 1 ELSE 0 END), 0)`,
     })
     .from(aiScoringMetricsTable)
-    .where(gte(aiScoringMetricsTable.createdAt, since));
+    // Reliability is a scoring-only KPI: identification calls never set
+    // `retried=true` (they don't have a JSON-validation retry loop), so
+    // counting them here would silently dilute the retry-rate denominator
+    // once the identification pipeline starts writing rows.
+    .where(
+      and(
+        gte(aiScoringMetricsTable.createdAt, since),
+        eq(aiScoringMetricsTable.callKind, "scoring"),
+      ),
+    );
 
   const totalCalls = Number(row?.totalCalls ?? 0);
   const retriedCalls = Number(row?.retriedCalls ?? 0);

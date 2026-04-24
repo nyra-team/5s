@@ -726,6 +726,149 @@ export const GetDashboardAiReliabilityResponse = zod
   );
 
 /**
+ * Per-`modelVersion` rollup of latency (avg + p95), token usage, and an estimated USD cost over rolling 7d and 30d windows. Lets managers see what the gpt-5 upgrade is costing in time and money, with old `gpt-5-mini-…` rows and the new `gpt-5-…` rows rendered side-by-side so the trade-off is obvious at a glance.
+ * @summary Per-model AI latency, token usage, and estimated spend
+ */
+export const GetDashboardAiCostResponse = zod
+  .object({
+    last7d: zod.array(
+      zod
+        .object({
+          modelVersion: zod
+            .string()
+            .describe(
+              'The modelVersion string the pipeline tagged each row with (e.g. \"gpt-5-factory-v1\", \"gpt-5-mini-warehouse-v3\").',
+            ),
+          callKind: zod
+            .string()
+            .describe(
+              'Which pipeline produced these calls — \"scoring\" (callVLM rubric pass) or \"identification\" (area auto-detect).',
+            ),
+          requestCount: zod
+            .number()
+            .describe("Number of model calls grouped into this row."),
+          avgLatencyMs: zod
+            .number()
+            .nullable()
+            .describe(
+              "Mean wall-clock duration in milliseconds. Null when no row in this group has a recorded latency.",
+            ),
+          p95LatencyMs: zod
+            .number()
+            .nullable()
+            .describe(
+              "95th percentile latency in milliseconds (PERCENTILE_CONT). Null when no row in this group has a recorded latency.",
+            ),
+          totalPromptTokens: zod
+            .number()
+            .describe(
+              "Sum of prompt_tokens across the grouped rows. 0 when no usage was reported by the proxy.",
+            ),
+          totalCompletionTokens: zod
+            .number()
+            .describe(
+              "Sum of completion_tokens across the grouped rows. 0 when no usage was reported.",
+            ),
+          totalTokens: zod
+            .number()
+            .describe(
+              "Sum of total_tokens across the grouped rows. 0 when no usage was reported.",
+            ),
+          estimatedCostUsd: zod
+            .number()
+            .nullable()
+            .describe(
+              "Rough USD spend for the window using the published gpt-5 family per-token pricing. Null when the modelVersion didn't map to a known pricing family.",
+            ),
+          estimatedCostPerCallUsd: zod
+            .number()
+            .nullable()
+            .describe(
+              "estimatedCostUsd \/ requestCount, rounded to 4 decimal places. Null when pricing was unknown.",
+            ),
+          estimatedTokensPerCall: zod
+            .number()
+            .nullable()
+            .describe(
+              "Average tokens consumed per request (totalTokens \/ requestCount), rounded to a whole token. Null only in the unreachable requestCount==0 case.",
+            ),
+        })
+        .describe(
+          'Aggregate latency + token usage for one (modelVersion, callKind) pair\ninside a rolling time window. callKind is \"scoring\" for rubric audits\nand \"identification\" for the area-detection pass; both share the same\nunderlying ai_scoring_metrics table.\n',
+        ),
+    ),
+    last30d: zod.array(
+      zod
+        .object({
+          modelVersion: zod
+            .string()
+            .describe(
+              'The modelVersion string the pipeline tagged each row with (e.g. \"gpt-5-factory-v1\", \"gpt-5-mini-warehouse-v3\").',
+            ),
+          callKind: zod
+            .string()
+            .describe(
+              'Which pipeline produced these calls — \"scoring\" (callVLM rubric pass) or \"identification\" (area auto-detect).',
+            ),
+          requestCount: zod
+            .number()
+            .describe("Number of model calls grouped into this row."),
+          avgLatencyMs: zod
+            .number()
+            .nullable()
+            .describe(
+              "Mean wall-clock duration in milliseconds. Null when no row in this group has a recorded latency.",
+            ),
+          p95LatencyMs: zod
+            .number()
+            .nullable()
+            .describe(
+              "95th percentile latency in milliseconds (PERCENTILE_CONT). Null when no row in this group has a recorded latency.",
+            ),
+          totalPromptTokens: zod
+            .number()
+            .describe(
+              "Sum of prompt_tokens across the grouped rows. 0 when no usage was reported by the proxy.",
+            ),
+          totalCompletionTokens: zod
+            .number()
+            .describe(
+              "Sum of completion_tokens across the grouped rows. 0 when no usage was reported.",
+            ),
+          totalTokens: zod
+            .number()
+            .describe(
+              "Sum of total_tokens across the grouped rows. 0 when no usage was reported.",
+            ),
+          estimatedCostUsd: zod
+            .number()
+            .nullable()
+            .describe(
+              "Rough USD spend for the window using the published gpt-5 family per-token pricing. Null when the modelVersion didn't map to a known pricing family.",
+            ),
+          estimatedCostPerCallUsd: zod
+            .number()
+            .nullable()
+            .describe(
+              "estimatedCostUsd \/ requestCount, rounded to 4 decimal places. Null when pricing was unknown.",
+            ),
+          estimatedTokensPerCall: zod
+            .number()
+            .nullable()
+            .describe(
+              "Average tokens consumed per request (totalTokens \/ requestCount), rounded to a whole token. Null only in the unreachable requestCount==0 case.",
+            ),
+        })
+        .describe(
+          'Aggregate latency + token usage for one (modelVersion, callKind) pair\ninside a rolling time window. callKind is \"scoring\" for rubric audits\nand \"identification\" for the area-detection pass; both share the same\nunderlying ai_scoring_metrics table.\n',
+        ),
+    ),
+  })
+  .describe(
+    "Per-model latency, token usage, and rough USD cost over rolling 7d and\n30d windows. Lets managers see what swapping the underlying model is\ncosting in time and money, with old gpt-5-mini-… rows and the new\ngpt-5-… rows rendered side-by-side so the trade-off is obvious.\n",
+  );
+
+/**
  * @summary Per-area daily score trend over the last N days
  */
 export const getDashboardTrendsQueryDaysDefault = 14;

@@ -239,7 +239,10 @@ router.get("/dashboard/ai-reliability", authMiddleware, requireRole("MANAGER"), 
     // into a single row. We restrict to retried=true AND validation_error IS
     // NOT NULL so a clean call (which writes a row with retried=false and a
     // null error) can never sneak into the breakdown — only actual retries
-    // count toward what's "tripping the AI up".
+    // count toward what's "tripping the AI up". The callKind="scoring"
+    // predicate keeps identification calls out of the breakdown for the
+    // same reason the headline retry-rate filters them: they don't run a
+    // JSON-validation retry loop and would dilute the signal.
     const [stats, errorRows] = await Promise.all([
       computeRetryStatsSince(since),
       db
@@ -253,6 +256,7 @@ router.get("/dashboard/ai-reliability", authMiddleware, requireRole("MANAGER"), 
             gte(aiScoringMetricsTable.createdAt, since),
             eq(aiScoringMetricsTable.retried, true),
             isNotNull(aiScoringMetricsTable.validationError),
+            eq(aiScoringMetricsTable.callKind, "scoring"),
           ),
         )
         .groupBy(aiScoringMetricsTable.validationError)
@@ -279,6 +283,132 @@ router.get("/dashboard/ai-reliability", authMiddleware, requireRole("MANAGER"), 
     last7d: sevenDay,
   });
 });
+
+// Per-model latency + token usage rollup over the last 7d/30d windows.
+//
+// Why this exists: task #165 hard-swapped the underlying model from
+// gpt-5-mini to flagship gpt-5, accepting higher per-call cost and somewhat
+// slower responses. This endpoint surfaces the trade-off in-app so managers
+// can sanity-check whether the quality bump is worth the spend, with old
+// `gpt-5-mini-…-v3` rows and the new `gpt-5-…-v1` rows rendered side-by-side.
+//
+// One row per `modelVersion` per window. Pricing is a rough USD estimate using
+// the published gpt-5 family prompt/completion rates — exact billing lives at
+// the proxy, not here, so we deliberately label the column "estimated".
+//
+// Per-1K-token rates (USD) sourced from the gpt-5 model family pricing as of
+// April 2026. If/when these change, bump the version number in MODEL_PRICING
+// so a stale cost estimate doesn't silently drift.
+type ModelPricing = { promptPer1k: number; completionPer1k: number };
+const MODEL_PRICING: Record<string, ModelPricing> = {
+  "gpt-5": { promptPer1k: 0.005, completionPer1k: 0.015 },
+  "gpt-5-mini": { promptPer1k: 0.00025, completionPer1k: 0.002 },
+};
+// Pricing fallback when a modelVersion string doesn't map to a known family.
+// Returning null (rather than 0) keeps the UI honest about unknown models.
+function pricingFor(modelVersion: string): ModelPricing | null {
+  // Order matters: the more specific "gpt-5-mini" prefix must win over the
+  // generic "gpt-5" check so a mini-flavored row isn't priced as flagship.
+  if (modelVersion.startsWith("gpt-5-mini")) return MODEL_PRICING["gpt-5-mini"]!;
+  if (modelVersion.startsWith("gpt-5")) return MODEL_PRICING["gpt-5"]!;
+  return null;
+}
+
+router.get(
+  "/dashboard/ai-cost",
+  authMiddleware,
+  requireRole("MANAGER"),
+  async (_req, res): Promise<void> => {
+    const now = Date.now();
+    const last7d = new Date(now - 7 * 24 * 60 * 60 * 1000);
+    const last30d = new Date(now - 30 * 24 * 60 * 60 * 1000);
+
+    // Aggregate per-(modelVersion, callKind) inside one window. We use
+    // PERCENTILE_CONT for p95 because the table is small enough that the
+    // extra sort beats maintaining histograms ourselves; the createdAt
+    // index already constrains the input set to the window.
+    async function windowRollup(since: Date) {
+      const rows = await db
+        .select({
+          modelVersion: aiScoringMetricsTable.modelVersion,
+          callKind: aiScoringMetricsTable.callKind,
+          requestCount: count(),
+          // Latency aggregates are computed only over rows with a non-null
+          // latency_ms; legacy rows written before timing was captured drop
+          // out of the average instead of skewing it to 0.
+          avgLatencyMs: sql<number | null>`AVG(${aiScoringMetricsTable.latencyMs})::float8`,
+          p95LatencyMs: sql<number | null>`PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ${aiScoringMetricsTable.latencyMs})::float8`,
+          totalPromptTokens: sql<number>`COALESCE(SUM(${aiScoringMetricsTable.promptTokens}), 0)::bigint`,
+          totalCompletionTokens: sql<number>`COALESCE(SUM(${aiScoringMetricsTable.completionTokens}), 0)::bigint`,
+          totalTokens: sql<number>`COALESCE(SUM(${aiScoringMetricsTable.totalTokens}), 0)::bigint`,
+        })
+        .from(aiScoringMetricsTable)
+        .where(gte(aiScoringMetricsTable.createdAt, since))
+        .groupBy(aiScoringMetricsTable.modelVersion, aiScoringMetricsTable.callKind);
+
+      return rows.map((r) => {
+        const requestCount = Number(r.requestCount ?? 0);
+        const promptTokens = Number(r.totalPromptTokens ?? 0);
+        const completionTokens = Number(r.totalCompletionTokens ?? 0);
+        const totalTokens = Number(r.totalTokens ?? 0);
+        const price = pricingFor(r.modelVersion);
+        const estimatedCostUsd = price
+          ? (promptTokens / 1000) * price.promptPer1k +
+            (completionTokens / 1000) * price.completionPer1k
+          : null;
+        return {
+          modelVersion: r.modelVersion,
+          callKind: r.callKind,
+          requestCount,
+          avgLatencyMs: r.avgLatencyMs == null ? null : Math.round(Number(r.avgLatencyMs)),
+          p95LatencyMs: r.p95LatencyMs == null ? null : Math.round(Number(r.p95LatencyMs)),
+          totalPromptTokens: promptTokens,
+          totalCompletionTokens: completionTokens,
+          totalTokens,
+          // Rounded to 4 decimals — for individual-model lines these are
+          // typically under a dollar; clipping at 4dp avoids floating-point
+          // noise on the wire while keeping cents-level precision.
+          estimatedCostUsd:
+            estimatedCostUsd == null ? null : Math.round(estimatedCostUsd * 10000) / 10000,
+          // null per-call cost when we couldn't price the model at all,
+          // otherwise tokens/request × per-token cost. requestCount==0 is
+          // unreachable here (groupBy only emits rows that exist) but guard
+          // for it defensively so a future code change can't divide by zero.
+          estimatedCostPerCallUsd:
+            estimatedCostUsd == null || requestCount === 0
+              ? null
+              : Math.round((estimatedCostUsd / requestCount) * 10000) / 10000,
+          // Per-call token estimate so managers can compare modelVersions
+          // independent of traffic volume — flagship gpt-5 burns roughly an
+          // order of magnitude more tokens per call than gpt-5-mini, and that
+          // ratio matters more than absolute totals when the windows have
+          // different request counts. Rounded to a whole token; unreachable
+          // requestCount==0 falls back to null defensively.
+          estimatedTokensPerCall:
+            requestCount === 0 ? null : Math.round(totalTokens / requestCount),
+        };
+      })
+      // Sort highest cost first so the UI naturally lands on the model
+      // accounting for most spend; ties broken by request count.
+      .sort((a, b) => {
+        const ac = a.estimatedCostUsd ?? -1;
+        const bc = b.estimatedCostUsd ?? -1;
+        if (ac !== bc) return bc - ac;
+        return b.requestCount - a.requestCount;
+      });
+    }
+
+    const [sevenDay, thirtyDay] = await Promise.all([
+      windowRollup(last7d),
+      windowRollup(last30d),
+    ]);
+
+    res.json({
+      last7d: sevenDay,
+      last30d: thirtyDay,
+    });
+  },
+);
 
 // Per-area daily score trend over the last N days (default 14). For each area
 // we return one point per IST calendar day with the average scorePercent

@@ -29,6 +29,7 @@ import "./preferences.test.js";
 import "./ai-reliability.test.js";
 import "./metrics-retention.test.js";
 import "./ai-retry-monitor.test.js";
+import "./ai-cost.test.js";
 import "./dashboard-area-detection-agreement.test.js";
 import "./error-handler.test.js";
 

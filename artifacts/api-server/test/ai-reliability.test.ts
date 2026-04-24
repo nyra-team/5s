@@ -192,6 +192,47 @@ describe("GET /api/dashboard/ai-reliability", () => {
     }
   });
 
+  test("identification rows do not dilute the scoring retry-rate denominator", async () => {
+    // Regression: ai_scoring_metrics is now shared by both the scoring and
+    // identification pipelines. Identification calls always have
+    // retried=false (no JSON-validation retry loop), so if the reliability
+    // rollup counted them they'd quietly push the retry rate down whenever
+    // identification traffic spiked. The endpoint must filter to
+    // callKind="scoring" to keep this KPI honest.
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    await db
+      .delete(aiScoringMetricsTable)
+      .where(gte(aiScoringMetricsTable.createdAt, sevenDaysAgo));
+
+    // 1 retried scoring call out of 2 scoring calls -> 50% retry rate.
+    // Plus 8 identification calls that should be IGNORED entirely (they'd
+    // otherwise drop the rate to 1/10 = 10%).
+    await db.insert(aiScoringMetricsTable).values([
+      { modelVersion: "gpt-5-factory-v1", retried: false, callKind: "scoring", validationError: null },
+      { modelVersion: "gpt-5-factory-v1", retried: true, callKind: "scoring", validationError: "missing object 'pillar_scores'" },
+      ...Array.from({ length: 8 }, () => ({
+        modelVersion: "gpt-5-identification-v1",
+        retried: false,
+        callKind: "identification" as const,
+        validationError: null,
+      })),
+    ]);
+
+    const manager = await world.createUser("MANAGER");
+    const r = await api<ReliabilityShape>(
+      manager.token,
+      "GET",
+      "/api/dashboard/ai-reliability",
+    );
+    assert.equal(r.status, 200);
+    assert.equal(r.body.last24h.totalCalls, 2);
+    assert.equal(r.body.last24h.retriedCalls, 1);
+    assert.equal(r.body.last24h.retryRate, 0.5);
+    assert.equal(r.body.last7d.totalCalls, 2);
+    assert.equal(r.body.last7d.retriedCalls, 1);
+    assert.equal(r.body.last7d.retryRate, 0.5);
+  });
+
   test("excludes rows older than the rolling 7d window", async () => {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     await db
