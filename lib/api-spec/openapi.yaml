@@ -992,6 +992,42 @@ paths:
               schema:
                 $ref: "#/components/schemas/ModelStatus"
 
+  /facility-settings:
+    get:
+      operationId: getFacilitySettings
+      tags: [settings]
+      summary: Get the effective facility shift schedule (with override provenance)
+      responses:
+        "200":
+          description: Effective shift schedule + sources
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FacilitySettings"
+    put:
+      operationId: updateFacilitySettings
+      tags: [settings]
+      summary: Update DB-backed facility shift schedule overrides (manager only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateFacilitySettingsBody"
+      responses:
+        "200":
+          description: Effective shift schedule after the update
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FacilitySettings"
+        "400":
+          description: Validation failed (bad timezone or out-of-order hours)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /operator-thresholds:
     get:
       operationId: getOperatorThresholds
@@ -1248,6 +1284,109 @@ components:
         - encouragementMinPercent
         - priorBestWindowDays
         - dueSoonThresholdMinutes
+
+    FacilitySettings:
+      type: object
+      description: |
+        Effective facility shift schedule (env > DB > default), plus the
+        per-layer overrides so the manager UI can show provenance.
+      properties:
+        timeZone:
+          type: string
+          description: IANA timezone the shift clock is anchored to.
+        shiftAStartHour:
+          type: integer
+          minimum: 0
+          maximum: 23
+        shiftBStartHour:
+          type: integer
+          minimum: 0
+          maximum: 23
+        shiftCStartHour:
+          type: integer
+          minimum: 0
+          maximum: 23
+        defaults:
+          type: object
+          description: Static fallback values shipped with the build.
+          properties:
+            timeZone:
+              type: string
+            shiftAStartHour:
+              type: integer
+            shiftBStartHour:
+              type: integer
+            shiftCStartHour:
+              type: integer
+          required:
+            - timeZone
+            - shiftAStartHour
+            - shiftBStartHour
+            - shiftCStartHour
+        envOverrides:
+          $ref: "#/components/schemas/FacilitySettingsSources"
+        dbOverrides:
+          $ref: "#/components/schemas/FacilitySettingsSources"
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the DB override row was last touched.
+        updatedByUserId:
+          type: integer
+          nullable: true
+          description: Manager who last touched the DB override row.
+      required:
+        - timeZone
+        - shiftAStartHour
+        - shiftBStartHour
+        - shiftCStartHour
+        - defaults
+        - envOverrides
+        - dbOverrides
+
+    FacilitySettingsSources:
+      type: object
+      properties:
+        timeZone:
+          type: string
+          nullable: true
+        shiftAStartHour:
+          type: integer
+          nullable: true
+        shiftBStartHour:
+          type: integer
+          nullable: true
+        shiftCStartHour:
+          type: integer
+          nullable: true
+
+    UpdateFacilitySettingsBody:
+      type: object
+      description: |
+        Patch for the DB-backed facility settings row. Per-field semantics:
+        omitted = leave existing value, null = clear the override
+        (fall back to env/default), value = set the override.
+      properties:
+        timeZone:
+          type: string
+          nullable: true
+          description: IANA timezone string (e.g. "Asia/Kolkata").
+        shiftAStartHour:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 23
+        shiftBStartHour:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 23
+        shiftCStartHour:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 23
 
     OperatorThresholds:
       type: object

@@ -35,6 +35,7 @@ import type {
   ErrorResponse,
   Escalation,
   EscalationCount,
+  FacilitySettings,
   GetActiveNudgesByAreaParams,
   GetDashboardComplianceParams,
   GetDashboardOperatorDismissesDetailParams,
@@ -68,6 +69,7 @@ import type {
   Submission,
   UpdateAreaBody,
   UpdateAreaProfileBody,
+  UpdateFacilitySettingsBody,
   UpdateNotificationPreferencesBody,
   UpdateOperatorThresholdsBody,
   User,
@@ -4053,6 +4055,168 @@ export function useGetAreaModelStatus<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Get the effective facility shift schedule (with override provenance)
+ */
+export const getGetFacilitySettingsUrl = () => {
+  return `/api/facility-settings`;
+};
+
+export const getFacilitySettings = async (
+  options?: RequestInit,
+): Promise<FacilitySettings> => {
+  return customFetch<FacilitySettings>(getGetFacilitySettingsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFacilitySettingsQueryKey = () => {
+  return [`/api/facility-settings`] as const;
+};
+
+export const getGetFacilitySettingsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFacilitySettings>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFacilitySettings>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetFacilitySettingsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getFacilitySettings>>
+  > = ({ signal }) => getFacilitySettings({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFacilitySettings>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFacilitySettingsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFacilitySettings>>
+>;
+export type GetFacilitySettingsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the effective facility shift schedule (with override provenance)
+ */
+
+export function useGetFacilitySettings<
+  TData = Awaited<ReturnType<typeof getFacilitySettings>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFacilitySettings>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFacilitySettingsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update DB-backed facility shift schedule overrides (manager only)
+ */
+export const getUpdateFacilitySettingsUrl = () => {
+  return `/api/facility-settings`;
+};
+
+export const updateFacilitySettings = async (
+  updateFacilitySettingsBody: UpdateFacilitySettingsBody,
+  options?: RequestInit,
+): Promise<FacilitySettings> => {
+  return customFetch<FacilitySettings>(getUpdateFacilitySettingsUrl(), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateFacilitySettingsBody),
+  });
+};
+
+export const getUpdateFacilitySettingsMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateFacilitySettings>>,
+    TError,
+    { data: BodyType<UpdateFacilitySettingsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateFacilitySettings>>,
+  TError,
+  { data: BodyType<UpdateFacilitySettingsBody> },
+  TContext
+> => {
+  const mutationKey = ["updateFacilitySettings"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateFacilitySettings>>,
+    { data: BodyType<UpdateFacilitySettingsBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return updateFacilitySettings(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateFacilitySettingsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateFacilitySettings>>
+>;
+export type UpdateFacilitySettingsMutationBody =
+  BodyType<UpdateFacilitySettingsBody>;
+export type UpdateFacilitySettingsMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Update DB-backed facility shift schedule overrides (manager only)
+ */
+export const useUpdateFacilitySettings = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateFacilitySettings>>,
+    TError,
+    { data: BodyType<UpdateFacilitySettingsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateFacilitySettings>>,
+  TError,
+  { data: BodyType<UpdateFacilitySettingsBody> },
+  TContext
+> => {
+  return useMutation(getUpdateFacilitySettingsMutationOptions(options));
+};
 
 /**
  * @summary Get the effective operator thresholds (with override provenance)

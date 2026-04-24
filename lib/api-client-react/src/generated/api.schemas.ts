@@ -110,6 +110,82 @@ export interface OperatorThresholdSources {
 /**
  * Static fallback values shipped with the build.
  */
+export type FacilitySettingsDefaults = {
+  timeZone: string;
+  shiftAStartHour: number;
+  shiftBStartHour: number;
+  shiftCStartHour: number;
+};
+
+export interface FacilitySettingsSources {
+  timeZone?: string | null;
+  shiftAStartHour?: number | null;
+  shiftBStartHour?: number | null;
+  shiftCStartHour?: number | null;
+}
+
+/**
+ * Effective facility shift schedule (env > DB > default), plus the
+per-layer overrides so the manager UI can show provenance.
+
+ */
+export interface FacilitySettings {
+  /** IANA timezone the shift clock is anchored to. */
+  timeZone: string;
+  /**
+   * @minimum 0
+   * @maximum 23
+   */
+  shiftAStartHour: number;
+  /**
+   * @minimum 0
+   * @maximum 23
+   */
+  shiftBStartHour: number;
+  /**
+   * @minimum 0
+   * @maximum 23
+   */
+  shiftCStartHour: number;
+  /** Static fallback values shipped with the build. */
+  defaults: FacilitySettingsDefaults;
+  envOverrides: FacilitySettingsSources;
+  dbOverrides: FacilitySettingsSources;
+  /** When the DB override row was last touched. */
+  updatedAt?: string | null;
+  /** Manager who last touched the DB override row. */
+  updatedByUserId?: number | null;
+}
+
+/**
+ * Patch for the DB-backed facility settings row. Per-field semantics:
+omitted = leave existing value, null = clear the override
+(fall back to env/default), value = set the override.
+
+ */
+export interface UpdateFacilitySettingsBody {
+  /** IANA timezone string (e.g. "Asia/Kolkata"). */
+  timeZone?: string | null;
+  /**
+   * @minimum 0
+   * @maximum 23
+   */
+  shiftAStartHour?: number | null;
+  /**
+   * @minimum 0
+   * @maximum 23
+   */
+  shiftBStartHour?: number | null;
+  /**
+   * @minimum 0
+   * @maximum 23
+   */
+  shiftCStartHour?: number | null;
+}
+
+/**
+ * Static fallback values shipped with the build.
+ */
 export type OperatorThresholdsDefaults = {
   encouragementMinPercent: number;
   priorBestWindowDays: number;

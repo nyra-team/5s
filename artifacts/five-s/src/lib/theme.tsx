@@ -1,4 +1,8 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import {
+  DEFAULT_NIGHT_SHIFT_WINDOW,
+  useNightShiftWindow,
+} from "@/lib/facility-settings";
 
 export type ThemeMode = "system" | "light" | "dark" | "auto";
 
@@ -12,51 +16,20 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 const STORAGE_KEY = "five-s-theme";
 
-const DEFAULT_NIGHT_START_HOUR = 22;
-const DEFAULT_NIGHT_END_HOUR = 6;
-const DEFAULT_NIGHT_TZ = "Asia/Kolkata";
-
 export interface NightShiftWindow {
   startHour: number;
   endHour: number;
   timeZone: string;
 }
 
-function parseHour(raw: string | undefined, fallback: number): number {
-  if (raw == null || raw === "") return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return fallback;
-  const h = Math.trunc(n);
-  if (h < 0 || h > 23) return fallback;
-  return h;
-}
-
-function isValidTimeZone(tz: string): boolean {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
- * Read the night-shift window from build-time config so each facility can
- * deploy with its own hours / timezone without code changes. Falls back to the
- * legacy 22:00–06:00 IST window when nothing is configured.
- *
- * Recognised env vars (Vite, prefixed with VITE_):
- *   VITE_NIGHT_SHIFT_START_HOUR   integer 0–23, default 22
- *   VITE_NIGHT_SHIFT_END_HOUR     integer 0–23, default 6
- *   VITE_NIGHT_SHIFT_TZ           IANA timezone, default Asia/Kolkata
+ * Synchronous fallback for places that can't use the React hook (module-load
+ * call sites in older code, tests, the very first render before the API
+ * responds). The DB-backed `useNightShiftWindow()` hook is the authoritative
+ * runtime source — this is just the seed value.
  */
 export function getNightShiftWindow(): NightShiftWindow {
-  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
-  const startHour = parseHour(env.VITE_NIGHT_SHIFT_START_HOUR, DEFAULT_NIGHT_START_HOUR);
-  const endHour = parseHour(env.VITE_NIGHT_SHIFT_END_HOUR, DEFAULT_NIGHT_END_HOUR);
-  const rawTz = env.VITE_NIGHT_SHIFT_TZ;
-  const timeZone = rawTz && isValidTimeZone(rawTz) ? rawTz : DEFAULT_NIGHT_TZ;
-  return { startHour, endHour, timeZone };
+  return DEFAULT_NIGHT_SHIFT_WINDOW;
 }
 
 export interface ShiftLabel {
@@ -162,13 +135,13 @@ function getSystemPref(): "light" | "dark" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function getShiftPref(): "light" | "dark" {
-  return isWithinNightWindow(new Date(), getNightShiftWindow()) ? "dark" : "light";
+function getShiftPref(window: NightShiftWindow): "light" | "dark" {
+  return isWithinNightWindow(new Date(), window) ? "dark" : "light";
 }
 
-function resolveMode(mode: ThemeMode): "light" | "dark" {
+function resolveMode(mode: ThemeMode, window: NightShiftWindow): "light" | "dark" {
   if (mode === "system") return getSystemPref();
-  if (mode === "auto") return getShiftPref();
+  if (mode === "auto") return getShiftPref(window);
   return mode;
 }
 
@@ -186,14 +159,21 @@ function applyTheme(resolved: "light" | "dark") {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  // Live, DB-backed night-shift window. Falls back to the bundled defaults
+  // until the API responds (and on the unauthenticated login screen the
+  // public GET still succeeds). Re-renders the provider whenever a manager
+  // edits the schedule, which re-runs the auto-theme effect below.
+  const nightWindow = useNightShiftWindow();
   const [mode, setModeState] = useState<ThemeMode>(() => readStored());
-  const [resolved, setResolved] = useState<"light" | "dark">(() => resolveMode(readStored()));
+  const [resolved, setResolved] = useState<"light" | "dark">(() =>
+    resolveMode(readStored(), DEFAULT_NIGHT_SHIFT_WINDOW),
+  );
 
   useEffect(() => {
-    const next = resolveMode(mode);
+    const next = resolveMode(mode, nightWindow);
     setResolved(next);
     applyTheme(next);
-  }, [mode]);
+  }, [mode, nightWindow.startHour, nightWindow.endHour, nightWindow.timeZone]);
 
   useEffect(() => {
     if (mode !== "system") return;
@@ -210,7 +190,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (mode !== "auto") return;
     const tick = () => {
-      const next = getShiftPref();
+      const next = getShiftPref(nightWindow);
       setResolved((prev) => {
         if (prev !== next) applyTheme(next);
         return next;
@@ -219,7 +199,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     tick();
     const interval = window.setInterval(tick, 60 * 1000);
     return () => window.clearInterval(interval);
-  }, [mode]);
+  }, [mode, nightWindow.startHour, nightWindow.endHour, nightWindow.timeZone]);
 
   const setMode = (m: ThemeMode) => {
     localStorage.setItem(STORAGE_KEY, m);

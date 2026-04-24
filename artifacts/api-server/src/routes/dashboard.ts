@@ -22,10 +22,11 @@ import { authMiddleware, requireRole } from "../lib/auth";
 import {
   getISTDayRange,
   getISTShiftRange,
-  getShiftConfig,
   getZonedParts,
   formatZonedDate,
+  type ShiftConfig,
 } from "../lib/scoring";
+import { loadEffectiveShiftConfig } from "../lib/facility-settings.js";
 
 const router: IRouter = Router();
 
@@ -33,21 +34,22 @@ const router: IRouter = Router();
 // "today" and per-shift filters match the clock operators see, regardless of
 // where the server is running. A Date passed in (used by an internal call
 // site) is converted via its calendar date in that timezone.
-function normalizeDateInput(input: string | Date | undefined): string | undefined {
+function normalizeDateInput(input: string | Date | undefined, cfg: ShiftConfig): string | undefined {
   if (!input) return undefined;
   if (typeof input === "string") return input;
-  return formatZonedDate(input);
+  return formatZonedDate(input, cfg.timeZone);
 }
 
-function getDayRange(dateStr?: string | Date) {
-  return getISTDayRange(normalizeDateInput(dateStr));
+function getDayRange(cfg: ShiftConfig, dateStr?: string | Date) {
+  return getISTDayRange(normalizeDateInput(dateStr, cfg), cfg);
 }
 
-function getShiftRange(dateStr: string | Date | undefined, shift: string) {
-  return getISTShiftRange(normalizeDateInput(dateStr), shift);
+function getShiftRange(cfg: ShiftConfig, dateStr: string | Date | undefined, shift: string) {
+  return getISTShiftRange(normalizeDateInput(dateStr, cfg), shift, cfg);
 }
 
 router.get("/dashboard/compliance", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
+  const cfg = await loadEffectiveShiftConfig();
   const query = GetDashboardComplianceQueryParams.safeParse(req.query);
   const dateStr = query.success ? query.data.date : undefined;
   const shift = query.success ? query.data.shift : undefined;
@@ -57,14 +59,14 @@ router.get("/dashboard/compliance", authMiddleware, requireRole("MANAGER"), asyn
 
   let conditions;
   if (shift) {
-    const range = getShiftRange(dateStr, shift);
+    const range = getShiftRange(cfg, dateStr, shift);
     conditions = and(
       eq(submissionsTable.shift, shift),
       gte(submissionsTable.createdAt, range.start),
       lt(submissionsTable.createdAt, range.end)
     );
   } else {
-    const { start, end } = getDayRange(dateStr);
+    const { start, end } = getDayRange(cfg, dateStr);
     conditions = and(
       gte(submissionsTable.createdAt, start),
       lt(submissionsTable.createdAt, end)
@@ -90,11 +92,12 @@ router.get("/dashboard/compliance", authMiddleware, requireRole("MANAGER"), asyn
 });
 
 router.get("/dashboard/scores", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
+  const cfg = await loadEffectiveShiftConfig();
   const query = GetDashboardScoresQueryParams.safeParse(req.query);
   const dateStr = query.success ? query.data.date : undefined;
   const groupBy = query.success ? query.data.groupBy : "area";
 
-  const { start, end } = getDayRange(dateStr);
+  const { start, end } = getDayRange(cfg, dateStr);
   const dateCondition = and(
     gte(submissionsTable.createdAt, start),
     lt(submissionsTable.createdAt, end)
@@ -159,7 +162,8 @@ router.get("/dashboard/scores", authMiddleware, requireRole("MANAGER"), async (r
 });
 
 router.get("/dashboard/summary", authMiddleware, requireRole("MANAGER"), async (_req, res): Promise<void> => {
-  const { start, end } = getDayRange();
+  const cfg = await loadEffectiveShiftConfig();
+  const { start, end } = getDayRange(cfg);
 
   const areas = await db.select().from(areasTable);
 
@@ -254,6 +258,7 @@ router.get("/dashboard/ai-reliability", authMiddleware, requireRole("MANAGER"), 
 // reached the TRAINED threshold (stored on `area_profiles.trained_at`) so the
 // UI can highlight when the AI's per-area model graduated from LEARNING.
 router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
+  const cfg = await loadEffectiveShiftConfig();
   const parsed = GetDashboardTrendsQueryParams.safeParse(req.query);
   const days = parsed.success ? parsed.data.days : 14;
   const shift = parsed.success ? parsed.data.shift : undefined;
@@ -264,7 +269,7 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
   // across DST transitions a local day is 23 or 25 hours of UTC, so
   // fixed-millisecond stepping would skip or duplicate days for facilities
   // in DST-observing zones (e.g. America/New_York).
-  const today = getZonedParts();
+  const today = getZonedParts(new Date(), cfg.timeZone);
   const dayLabels: string[] = [];
   for (let i = days - 1; i >= 0; i--) {
     // Date.UTC normalizes negative day-of-month into the previous month/year,
@@ -276,8 +281,8 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
     const d = String(stepped.getUTCDate()).padStart(2, "0");
     dayLabels.push(`${y}-${m}-${d}`);
   }
-  const windowStart = getISTDayRange(dayLabels[0]).start;
-  const windowEnd = getISTDayRange(dayLabels[dayLabels.length - 1]).end;
+  const windowStart = getISTDayRange(dayLabels[0], cfg).start;
+  const windowEnd = getISTDayRange(dayLabels[dayLabels.length - 1], cfg).end;
 
   const areas = await db.select().from(areasTable);
   if (areas.length === 0) {
@@ -285,15 +290,9 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
     return;
   }
 
-  // Use the configured shift timezone (validated at startup via
-  // Intl.DateTimeFormat — never user-controlled) so trend rows bucket by the
-  // same calendar day operators see in their timezone. We inline the tz as a
-  // SQL literal rather than a bound parameter: when each use of istDayExpr is
-  // bound separately, postgres sees two distinct parameter slots in SELECT vs
-  // GROUP BY and can't prove the expressions are equal, raising
-  // "column must appear in the GROUP BY clause" (SQLSTATE 42803). We still
-  // escape single quotes defensively even though the value is validated.
-  const shiftTz = getShiftConfig().timeZone;
+  // Use the configured shift timezone (validated at startup) so trend rows
+  // bucket by the same calendar day operators see in their timezone.
+  const shiftTz = cfg.timeZone;
   const tzLiteral = sql.raw(`'${shiftTz.replace(/'/g, "''")}'`);
   const istDayExpr = sql<string>`to_char(${submissionsTable.createdAt} at time zone ${tzLiteral}, 'YYYY-MM-DD')`;
 
@@ -353,7 +352,7 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
     // instead of replaying submissions on every dashboard load.
     const trainedOnDate =
       status === "TRAINED" && profile?.trainedAt
-        ? normalizeDateInput(profile.trainedAt) ?? null
+        ? normalizeDateInput(profile.trainedAt, cfg) ?? null
         : null;
     return {
       areaId: a.id,
@@ -372,13 +371,13 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
 // shift timezone. We want "last 7 days" to mean "since the start of 6 days
 // before today" in the shift TZ, not 7 * 24h of UTC, so DST transitions don't
 // quietly add or drop a day's worth of dismissals.
-function getDismissWindowStart(days: number): Date {
-  const today = getZonedParts();
+function getDismissWindowStart(days: number, cfg: ShiftConfig): Date {
+  const today = getZonedParts(new Date(), cfg.timeZone);
   const stepped = new Date(Date.UTC(today.year, today.month, today.day - (days - 1)));
   const y = stepped.getUTCFullYear();
   const m = String(stepped.getUTCMonth() + 1).padStart(2, "0");
   const d = String(stepped.getUTCDate()).padStart(2, "0");
-  return getISTDayRange(`${y}-${m}-${d}`).start;
+  return getISTDayRange(`${y}-${m}-${d}`, cfg).start;
 }
 
 const OPERATOR_DISMISS_REASON: NudgeDismissReason = "OPERATOR_DISMISS";
@@ -392,9 +391,10 @@ router.get(
   authMiddleware,
   requireRole("MANAGER"),
   async (req, res): Promise<void> => {
+    const cfg = await loadEffectiveShiftConfig();
     const parsed = GetDashboardOperatorDismissesQueryParams.safeParse(req.query);
     const days = parsed.success ? parsed.data.days : 7;
-    const windowStart = getDismissWindowStart(days);
+    const windowStart = getDismissWindowStart(days, cfg);
 
     const rows = await db
       .select({
@@ -439,13 +439,14 @@ router.get(
   authMiddleware,
   requireRole("MANAGER"),
   async (req, res): Promise<void> => {
+    const cfg = await loadEffectiveShiftConfig();
     const query = GetDashboardOperatorDismissesDetailQueryParams.safeParse(req.query);
     if (!query.success) {
       res.status(400).json({ error: "Invalid query parameters" });
       return;
     }
     const { operatorId, days } = query.data;
-    const windowStart = getDismissWindowStart(days);
+    const windowStart = getDismissWindowStart(days, cfg);
 
     const rows = await db
       .select({

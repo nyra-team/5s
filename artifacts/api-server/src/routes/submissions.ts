@@ -13,7 +13,8 @@ import {
 import { GetSubmissionParams, ListSubmissionsQueryParams } from "@workspace/api-zod";
 import { authMiddleware } from "../lib/auth";
 import { upload } from "../lib/upload";
-import { getCurrentShift, getISTShiftRange, getShiftConfig } from "../lib/scoring";
+import { getCurrentShift, getISTShiftRange, getISTDayRange, getShiftConfig } from "../lib/scoring";
+import { loadEffectiveShiftConfig } from "../lib/facility-settings.js";
 import {
   scoreSubmission,
   type ScoringOutput,
@@ -94,24 +95,17 @@ async function getAssignedAreaIds(userId: number): Promise<number[] | null> {
   return rows.map((r) => r.areaId);
 }
 
-function getShiftDateRange(dateStr?: string | Date, shift?: string) {
-  const date = !dateStr ? new Date() : (dateStr instanceof Date ? dateStr : new Date(dateStr + "T00:00:00"));
-  const y = date.getFullYear();
-  const m = date.getMonth();
-  const d = date.getDate();
-  if (shift === "A") return { start: new Date(y, m, d, 6, 0, 0), end: new Date(y, m, d, 14, 0, 0) };
-  if (shift === "B") return { start: new Date(y, m, d, 14, 0, 0), end: new Date(y, m, d, 22, 0, 0) };
-  if (shift === "C") return { start: new Date(y, m, d, 22, 0, 0), end: new Date(y, m, d + 1, 6, 0, 0) };
-  return { start: new Date(y, m, d, 0, 0, 0), end: new Date(y, m, d + 1, 0, 0, 0) };
-}
 
 router.get("/submissions", authMiddleware, async (req, res): Promise<void> => {
   const query = ListSubmissionsQueryParams.safeParse(req.query);
   const conditions = [];
+  const cfg = await loadEffectiveShiftConfig();
+
   if (query.success && query.data.shift) conditions.push(eq(submissionsTable.shift, query.data.shift));
   if (query.success && query.data.areaId) conditions.push(eq(submissionsTable.areaId, query.data.areaId));
   if (query.success && query.data.date) {
-    const { start, end } = getShiftDateRange(query.data.date);
+    const dateStr = typeof query.data.date === "string" ? query.data.date : query.data.date.toISOString().split("T")[0];
+    const { start, end } = getISTDayRange(dateStr, cfg);
     conditions.push(gte(submissionsTable.createdAt, start));
     conditions.push(lt(submissionsTable.createdAt, end));
   }
@@ -388,7 +382,8 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
   const machineTag = (req.body.machineTag as string | undefined)?.trim() || null;
   const bodyShift = req.body.shift as string | undefined;
   const validShifts = ["A", "B", "C"];
-  const shift = bodyShift && validShifts.includes(bodyShift) ? bodyShift : getCurrentShift().shift;
+  const shiftCfg = await loadEffectiveShiftConfig();
+  const shift = bodyShift && validShifts.includes(bodyShift) ? bodyShift : getCurrentShift(shiftCfg).shift;
 
   const [area] = await db.select().from(areasTable).where(eq(areasTable.id, areaId));
   if (!area) { res.status(404).json({ error: "Area not found", code: "AREA_NOT_FOUND" }); return; }
@@ -636,7 +631,8 @@ router.get("/submissions/:id", authMiddleware, async (req, res): Promise<void> =
 });
 
 router.get("/shift/current", authMiddleware, async (_req, res): Promise<void> => {
-  res.json(getCurrentShift());
+  const cfg = await loadEffectiveShiftConfig();
+  res.json(getCurrentShift(cfg));
 });
 
 // Exposes the facility's configured shift timezone + start hours so the UI can
@@ -762,10 +758,12 @@ router.get("/operator/status", authMiddleware, async (req, res): Promise<void> =
   const { userId } = (req as any).user;
   const queryShift = req.query.shift as string | undefined;
   const validShifts = ["A", "B", "C"];
-  const shift = queryShift && validShifts.includes(queryShift) ? queryShift : getCurrentShift().shift;
+  const cfg = await loadEffectiveShiftConfig();
+  const shift = queryShift && validShifts.includes(queryShift) ? queryShift : getCurrentShift(cfg).shift;
 
-  // Use IST so the per-shift area list aligns with the IST clock the operator sees.
-  const { start, end } = getISTShiftRange(undefined, shift);
+  // Use the configured shift timezone so the per-shift area list aligns
+  // with the clock the operator sees.
+  const { start, end } = getISTShiftRange(undefined, shift, cfg);
 
   // Scope the home grid to the operator's assigned areas. `null` means the
   // operator has no assignments configured at all → fall back to listing

@@ -94,7 +94,7 @@ const DEFAULT_SHIFT_CONFIG: ShiftConfig = {
   startHours: { A: 6, B: 14, C: 22 },
 };
 
-function isValidTimeZone(tz: string): boolean {
+export function isValidTimeZone(tz: string): boolean {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: tz });
     return true;
@@ -203,8 +203,9 @@ function formatHourLabel(h: number): string {
   return `${h12}:00 ${ampm}`;
 }
 
-export function getCurrentShift(): { shift: string; startTime: string; endTime: string } {
-  const cfg = getShiftConfig();
+export function getCurrentShift(
+  cfg: ShiftConfig = getShiftConfig(),
+): { shift: string; startTime: string; endTime: string } {
   const { hour } = getZonedParts(new Date(), cfg.timeZone);
   const { A, B, C } = cfg.startHours;
   if (hour >= A && hour < B) {
@@ -217,8 +218,8 @@ export function getCurrentShift(): { shift: string; startTime: string; endTime: 
 }
 
 /** YYYY-MM-DD calendar date in the configured shift timezone. */
-export function getTodayDateString(): string {
-  return formatZonedDate(new Date());
+export function getTodayDateString(cfg: ShiftConfig = getShiftConfig()): string {
+  return formatZonedDate(new Date(), cfg.timeZone);
 }
 
 /** YYYY-MM-DD label for the calendar date the given instant falls on in the configured timezone. */
@@ -227,19 +228,24 @@ export function formatZonedDate(d: Date, tz: string = getShiftConfig().timeZone)
   return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function parseZonedDate(dateStr?: string): { year: number; month: number; day: number } {
+function parseZonedDate(
+  dateStr: string | undefined,
+  tz: string,
+): { year: number; month: number; day: number } {
   if (dateStr) {
     const [y, m, d] = dateStr.split("-").map(Number);
     return { year: y, month: m - 1, day: d };
   }
-  const p = getZonedParts();
+  const p = getZonedParts(new Date(), tz);
   return { year: p.year, month: p.month, day: p.day };
 }
 
 /** UTC range covering the given calendar day (00:00–24:00) in the configured shift timezone. */
-export function getISTDayRange(dateStr?: string): { start: Date; end: Date } {
-  const cfg = getShiftConfig();
-  const { year, month, day } = parseZonedDate(dateStr);
+export function getISTDayRange(
+  dateStr?: string,
+  cfg: ShiftConfig = getShiftConfig(),
+): { start: Date; end: Date } {
+  const { year, month, day } = parseZonedDate(dateStr, cfg.timeZone);
   return {
     start: zonedToUtc(year, month, day, 0, 0, cfg.timeZone),
     end: zonedToUtc(year, month, day + 1, 0, 0, cfg.timeZone),
@@ -257,10 +263,10 @@ export function getISTDayRange(dateStr?: string): { start: Date; end: Date } {
 export function getISTShiftRange(
   dateStr: string | undefined,
   shift: string,
+  cfg: ShiftConfig = getShiftConfig(),
 ): { start: Date; end: Date } {
-  const cfg = getShiftConfig();
   const { A, B, C } = cfg.startHours;
-  const { year, month, day } = parseZonedDate(dateStr);
+  const { year, month, day } = parseZonedDate(dateStr, cfg.timeZone);
   if (shift === "A") {
     return {
       start: zonedToUtc(year, month, day, A, 0, cfg.timeZone),

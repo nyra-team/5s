@@ -11,3 +11,4 @@ export * from "./operator-settings-audit";
 export * from "./area-operator-settings";
 export * from "./area-assignments";
 export * from "./ai-scoring-metrics";
+export * from "./facility-settings";

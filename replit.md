@@ -1,9 +1,7 @@
 # 5S Compliance App
 
 ## Overview
-A full-stack web application designed for manufacturing environments to improve 5S compliance. The system enables operators to photograph workstations, receiving AI-powered 5S scores and VLM-generated improvement suggestions. Managers can track compliance rates, analyze score trends, manage reference photos, and label submissions for AI model calibration. The project aims to enhance workplace organization and efficiency through intelligent automation and real-time feedback.
-
-This project is a full-stack web application designed for manufacturing environments to automate and track 5S compliance. It enables operators to photograph workstations, receiving AI-powered 5S scores and VLM-generated improvement suggestions. Managers gain a comprehensive dashboard to monitor compliance trends, analyze score trends, manage reference photos, and calibrate the AI model. The core purpose is to improve workplace organization and efficiency through AI-driven insights and streamlined management tools.
+A full-stack web application designed for manufacturing environments to enforce 5S compliance. The system enables operators to photograph workstations, which are then scored by an AI using CLIP embedding similarity against ideal reference photos. VLM-generated suggestions provide location-specific improvement recommendations. Managers can track compliance, analyze score trends, manage reference photos, and label submissions for continuous AI model calibration. The project aims to significantly improve workplace organization and efficiency in manufacturing settings.
 
 ## User Preferences
 
@@ -15,67 +13,52 @@ This project is a full-stack web application designed for manufacturing environm
 - **Documentation**: Keep documentation updated with any changes to the system.
 - **Notifications**: I prefer to be notified of critical system events and performance issues.
 
-
-
 ## System Architecture
 
-The application is built as a monorepo using `pnpm workspaces` with Node.js 24 and TypeScript 5.9, maintaining a clear separation between frontend and backend.
+### UI/UX Decisions
+- **Frontend**: Built with React, Vite, and Tailwind CSS, providing a modern and responsive user interface.
+- **Operator View**: Automatically detects the current shift and guides operators through photographing designated areas. Displays AI-powered 5S scores and actionable, location-specific improvement suggestions.
+- **Manager View**: Features a comprehensive dashboard with compliance percentages, score trends, a submission browser, tools for ideal photo management, and an interface for labeling submissions to calibrate the AI model.
+- **Design Approach**: The UI is designed to be intuitive for both operators and managers, with quick-labeling options and keyboard shortcuts for managers to streamline the triage process. Color schemes and visual feedback are used to highlight compliance status and areas needing attention.
+- **Operator Thresholds Admin**: Operator thresholds are managed via a dedicated manager admin UI with a scope selector that toggles between the global editor and a per-area editor; the per-area editor shows inherited values with "(global)" / "(default)" markers so the manager always knows what they're falling back to.
 
-- **Frontend**: Developed with React, Vite, and Tailwind CSS.
-  - **UI/UX**: The design emphasizes clarity and ease of use for both operators and managers.
-  - **Theming**: Supports automatic light/dark mode switching based on configurable `VITE_NIGHT_SHIFT_START_HOUR`, `VITE_NIGHT_SHIFT_END_HOUR`, and `VITE_NIGHT_SHIFT_TZ`.
-- **Backend**: An Express 5 server handles API requests, authentication, and data management.
-  - **API Definition**: An OpenAPI specification (`lib/api-spec/openapi.yaml`) serves as the single source of truth for all API endpoints.
-  - **API Codegen**: Orval is used to generate React Query hooks and Zod schemas from the OpenAPI spec, ensuring type safety and consistency.
-  - **File Storage**: Uploaded images are stored locally in the `uploads/` directory managed by Multer.
-  - **Authentication**: JWT-based authentication (with email/password and bcryptjs) supports `OPERATOR` and `MANAGER` roles.
-  - **Validation**: Zod and drizzle-zod are used for robust data validation.
-- **Database**: PostgreSQL with Drizzle ORM is used for persistent data storage.
-  - The `ai_scoring_metrics` table tracks VLM call outcomes (model version, retried flag, validation error) for reliability monitoring.
-- **AI/ML Services**:
-  - **ML Service (Python FastAPI)**: A dedicated internal Python service handles core AI functionalities, including CLIP ViT-B/32 embedding generation, cosine similarity calculations for 5S scoring, and Ridge regression for model training using scikit-learn.
-  - **VLM Service**: Utilizes an OpenAI-compatible API (gpt-5-mini via Replit AI Integrations) for generating detailed, location-specific improvement suggestions and per-pillar scores.
-  - **AI Scoring Pipeline**: Integrates CLIP embeddings and VLM output for comprehensive 5S scoring, with configurable scoring modes (CALIBRATED, VLM_BLENDED, SIMILARITY_ONLY, FALLBACK). Managers can label submissions with ground-truth pillar scores to calibrate the AI model.
-- **Shift Management**: The system automatically detects shifts (A, B, C) based on configurable start times (`SHIFT_A_START_HOUR`, `SHIFT_B_START_HOUR`, `SHIFT_C_START_HOUR`) and timezone (`SHIFT_TIMEZONE`).
-- **Notification System**: Supports email (via Resend) and Slack notifications for manager escalations, with grouping capabilities and re-ping reminders for open escalations.
-- **Operator Threshold Tuning**: Key operator-facing parameters (e.g., encouragement thresholds, prior best lookback window, due soon lead time) are runtime-tunable via environment variables, database overrides, and shipped defaults.
-- **Escalation Management**: A system for tracking and managing non-compliant submissions, including auto-escalation based on low scores and re-ping notifications for overdue open escalations.
+### Technical Implementations
+- **Monorepo**: Uses pnpm workspaces for managing multiple packages (frontend, backend, shared libraries).
+- **Backend**: Implemented with Express 5, handling API requests, authentication, and database interactions.
+- **Database**: PostgreSQL with Drizzle ORM for robust data storage and retrieval.
+- **Authentication**: JWT-based authentication with email/password and bcryptjs for secure user access and role management (OPERATOR, MANAGER).
+- **Validation**: Zod is used for schema validation across the application, ensuring data integrity.
+- **API Codegen**: Orval generates API hooks and Zod schemas from an OpenAPI specification, maintaining consistency between frontend and backend.
+- **File Uploads**: Multer handles image uploads, storing them locally.
+- **AI Scoring Pipeline**:
+    - Leverages CLIP ViT-B/32 embeddings to compare submission photos against ideal workstation photos using cosine similarity.
+    - Multiple scoring modes: `CALIBRATED` (using Ridge regression from manager labels), `VLM_BLENDED` (70% VLM, 30% CLIP), `SIMILARITY_ONLY`, and `FALLBACK`.
+    - CLIP similarity is rescaled to a 0-25 score range for granular differentiation.
+    - VLM (gpt-5-mini) provides per-pillar scores (0-5) along with textual issues and recommendations, including location references. VLM scores are blended with CLIP for comprehensive feedback.
+- **Manager Labeling**: Managers provide ground-truth pillar scores for submissions, which are used to train and calibrate the AI model using Ridge regression.
+- **Escalation System**:
+    - Automatically creates escalations for low-scoring submissions (<60%).
+    - Managers receive notifications via email (Resend) and Slack for new and aging escalations, with configurable grouping and re-ping mechanisms.
+    - Escalation notifications are configurable per manager, with options to toggle email/Slack alerts.
+- **Operator Threshold Tuning**: Key operational parameters like `encouragementMinPercent`, `priorBestWindowDays`, and `dueSoonThresholdMinutes` are runtime-tunable. Resolved per field with precedence: environment variables > per-area DB override > global DB override > shipped default. Per-area overrides live in `area_operator_settings` (one row per area) and let managers tighten or relax thresholds for individual workstations without affecting the rest of the plant.
+- **Shift Management**: The system automatically detects operator shifts and displays relevant data. Managers can edit the timezone and Shift A/B/C start hours from the in-app "Shifts" page (`/facility-settings`); env vars (`SHIFT_TIMEZONE`, `SHIFT_A/B/C_START_HOUR`) still take precedence and lock the row for ops-pinned deployments.
+- **Theming**: Dynamic light/dark theme switching. The "Auto" theme reads the DB-backed facility shift schedule (Shift C → Shift A as the night window) so manager edits to the schedule re-shape the operator UI without a redeploy.
 
-**Key Features:**
-- **Role-Based Access:** OPERATOR and MANAGER roles with JWT-based authentication.
-- **Automated Shift Detection:** Operators' views adjust based on auto-detected shifts (A, B, C).
-- **AI-Powered Scoring & Suggestions:** Provides 0-25 5S scores and VLM-generated, location-specific improvement suggestions.
-- **Manager Dashboard:** Offers compliance tracking, score trends, submission browsing (with keyboard shortcuts), ideal photo management, and AI calibration tools.
-- **AI Reliability Monitoring:** A dedicated dashboard panel (`AiReliabilityPanel`) and manager-only endpoint (`GET /api/dashboard/ai-reliability`) surface VLM first-try retry rates over the last 24h and 7d windows to help identify misbehaving models or elevated API costs.
-- **Manager Triage Flow**: A dedicated `/live` manager landing page displays pending areas, overdue checks, low-scoring submissions, and open escalations. It includes inline quick-labeling, detailed submission lists with filtering, and keyboard shortcuts for efficient navigation and action.
-- **Escalation Management:** Automatically escalates low-scoring submissions, with configurable notification channels (email, Slack) and re-ping reminders for open escalations. Supports multi-select and bulk actions (Acknowledge, Resolve, Clear).
-- **Operator Threshold Tuning**: Runtime-tunable parameters for operator-facing cutoffs (e.g., encouragement thresholds, prior best lookback window, due soon lead time). Resolved per field with precedence: environment variables > per-area DB override > global DB override > shipped default. Per-area overrides live in `area_operator_settings` (one row per area) and let managers tighten or relax thresholds for individual workstations without affecting the rest of the plant.
-- **Theming:** Dynamic light/dark theme switching based on configured night shift hours and timezone.
+### Feature Specifications
+- **Roles**: OPERATOR and MANAGER, with distinct access levels.
+- **Shifts**: Supports A, B, and C shifts with configurable start times.
+- **Data Models**: Comprehensive data models for users, areas, submissions, labels, escalations, nudges, area profiles, area schedules, operator settings (global + per-area), facility settings, and AI scoring metrics to support all application functionalities.
+- **Manager Triage Flow**: A dedicated `/live` page for managers to triage pending areas, overdue checks, low-scoring submissions, and open escalations. Includes inline quick-labeling, searchable submission lists, and keyboard shortcuts for efficient workflow.
+- **Notification Grouping**: Batches multiple escalations within a configurable window into a single digest message to reduce notification fatigue.
+- **Escalation Re-pings**: A background scheduler re-notifies managers about unaddressed open escalations, with configurable thresholds and maximum re-ping counts.
+- **AI Reliability Monitoring**: A dedicated dashboard panel (`AiReliabilityPanel`) and manager-only endpoint (`GET /api/dashboard/ai-reliability`) surface VLM first-try retry rates over the last 24h and 7d windows to help identify misbehaving models or elevated API costs.
 
-**UI/UX Decisions:**
-- Frontend built with React and Tailwind CSS for a modern, responsive interface.
-- Manager views include dashboards with charts for compliance and score trends, a submission browser, and an interface for managing ideal photos and labeling submissions.
-- Keyboard shortcuts are implemented for managers in submission lists for efficient navigation and action.
-- Notifications UI allows managers to configure preferences for email and Slack.
-- Operator thresholds are managed via a dedicated manager admin UI with a scope selector that toggles between the global editor and a per-area editor; the per-area editor shows inherited values with "(global)" / "(default)" markers so the manager always knows what they're falling back to.
-
-## External Dependencies
-
-- **Database**: PostgreSQL (Primary database).
-- **AI/ML Service**: Python FastAPI service running CLIP ViT-B/32 (open_clip_torch) and scikit-learn for embeddings, similarity, and model training.
-- **VLM Service**: OpenAI-compatible API via Replit AI Integrations (gpt-5-mini) for visual language model capabilities.
-- **Email Service**: Resend for sending email notifications.
-- **Messaging Service**: Slack for sending notification webhooks.
-- **Package Manager**: pnpm
-- **Frontend Framework**: React
-- **Build Tool**: Vite
-- **Styling**: Tailwind CSS
-- **ORM**: Drizzle ORM
-- **Authentication Libraries**: bcryptjs, jsonwebtoken (for JWT)
-- **Validation Library**: Zod
-- **API Codegen**: Orval
-- **File Upload Middleware**: Multer
-- **Testing Frameworks**: Vitest, Supertest, @testing-library/react
+### System Design Choices
+- **OpenAPI Specification**: A single source of truth for API definitions, driving code generation for client-side hooks and validation schemas.
+- **Monolithic API Server**: The core business logic resides in a single Express server.
+- **Dedicated ML Service**: A separate Python FastAPI service handles AI/ML computations (CLIP embeddings, similarity, Ridge regression).
+- **VLM Integration**: Utilizes an OpenAI-compatible API for advanced VLM capabilities, integrated via Replit AI Integrations.
+- **Robust Error Handling**: Notifications for escalations are fire-and-forget, ensuring they do not block the main request path. AI scoring gracefully falls back to conservative defaults if the AI pipeline is unavailable.
 
 ## Manager workflow notes
 
@@ -113,14 +96,17 @@ The application is built as a monorepo using `pnpm workspaces` with Node.js 24 a
   `encouragementMinPercent` (display % at which a submission is "good"),
   `priorBestWindowDays` (lookback for prior-best per area), and
   `dueSoonThresholdMinutes` ("due soon" lead time for area checks).
-- Precedence: **env var > DB override > shipped default**. Defaults live in
+- Precedence: **env var > per-area DB override > global DB override > shipped default**. Defaults live in
   `artifacts/api-server/src/lib/operator-thresholds.ts` and the parallel
   frontend file `artifacts/five-s/src/lib/operator-thresholds.ts`.
 - Env-var overrides (read once per process): `ENCOURAGEMENT_MIN_PERCENT`,
   `PRIOR_BEST_WINDOW_DAYS`, `DUE_SOON_THRESHOLD_MS` (note: ms, not minutes —
   legacy name preserved). Invalid values fall through to the next layer.
-- DB overrides live in the singleton `operator_settings` row (id=1) with
+- Global DB overrides live in the singleton `operator_settings` row (id=1) with
   three nullable int columns + `updated_by_user_id` / `updated_at`.
+- Per-area DB overrides live in `area_operator_settings` (one row per area)
+  and let managers tighten or relax thresholds for individual workstations
+  without affecting the rest of the plant.
 - Endpoints: `GET /api/operator-thresholds` (any auth) returns the effective
   values plus full provenance (`defaults`, `envOverrides`, `dbOverrides`).
   `PUT /api/operator-thresholds` (manager-only) accepts a partial body —
@@ -131,9 +117,18 @@ The application is built as a monorepo using `pnpm workspaces` with Node.js 24 a
   server-side `/operator/recent` route reloads thresholds per request, so
   admin tweaks pick up on the next call without a process restart.
 - Manager admin UI lives at `/operator-thresholds` (Sliders icon nav tab,
-  manager-only route). Draft state syncs from server only when the saved
-  override values change (content fingerprint), so polling refetches don't
-  wipe in-flight edits.
+  manager-only route) with a scope selector that toggles between the global
+  editor and a per-area editor; the per-area editor shows inherited values
+  with "(global)" / "(default)" markers. Draft state syncs from server only
+  when the saved override values change (content fingerprint), so polling
+  refetches don't wipe in-flight edits.
+
+## Facility shift settings (Task 71)
+
+- Single-row `facility_settings` table backs a layered shift config: env var > DB > shipped default. `loadEffectiveShiftConfig()` in `artifacts/api-server/src/lib/facility-settings.ts` is the canonical reader; all routes that need shift/timezone info call it per request and pass the resulting `cfg` into scoring helpers (`getCurrentShift`, `getISTDayRange`, `getISTShiftRange`, `getTodayDateString`).
+- Endpoints: `GET /api/facility-settings` (public — operational metadata, no PII; needed for the Auto theme on the unauthenticated login screen) and `PUT /api/facility-settings` (manager-only). The PUT validates IANA timezone, integer hours 0–23, and `A < B < C` ordering; bad combinations are rejected outright rather than half-applied.
+- Manager admin UI lives at `/facility-settings` (Shifts nav tab, manager-only). Per-field DB override + env-lock badges + effective values + cross-field ordering check, modeled on `/operator-thresholds`.
+- Frontend Auto theme subscribes to the live DB-backed schedule via `useNightShiftWindow()` in `artifacts/five-s/src/lib/theme.tsx`; build-time `VITE_NIGHT_SHIFT_*` env vars are no longer read.
 
 ## Architecture
 
@@ -153,24 +148,37 @@ The application is built as a monorepo using `pnpm workspaces` with Node.js 24 a
 - **ML Service**: Python FastAPI on port 8100, internal only
 - **Mockup Sandbox**: Vite on port 8081, for component previews
 
-## Frontend Config (Vite env)
-
-- `VITE_NIGHT_SHIFT_START_HOUR` — hour (0-23) the "Auto" theme should switch to dark. Default `22`.
-- `VITE_NIGHT_SHIFT_END_HOUR` — hour (0-23) the "Auto" theme should switch back to light. Default `6`. May be less than the start hour to wrap across midnight.
-- `VITE_NIGHT_SHIFT_TZ` — IANA timezone the night-shift window is evaluated in. Default `Asia/Kolkata`.
-
 ## Backend Shift Config (api-server env)
 
 The API server's notion of "current shift", per-shift dashboard windows, the
 `/shift/current` and `/shift/live` endpoints, and shift-anchored due dates all
-read from these per-facility env vars at startup. Defaults match the legacy
-06/14/22 IST schedule so existing deployments need no changes.
+read through `loadEffectiveShiftConfig()`, which layers env vars > DB > shipped
+defaults. The legacy 06/14/22 IST schedule remains the default so existing
+deployments need no changes.
 
 - `SHIFT_TIMEZONE` — IANA timezone the shift clock is anchored to. Default `Asia/Kolkata`.
 - `SHIFT_A_START_HOUR` — hour (0-23) shift A starts. Default `6`.
 - `SHIFT_B_START_HOUR` — hour (0-23) shift B starts. Default `14`.
 - `SHIFT_C_START_HOUR` — hour (0-23) shift C starts. Default `22`. Shift C wraps across midnight up to the next day's `SHIFT_A_START_HOUR`.
 
-Constraints: must satisfy `SHIFT_A_START_HOUR < SHIFT_B_START_HOUR < SHIFT_C_START_HOUR`. Invalid values silently fall back to the defaults.
+Constraints: must satisfy `SHIFT_A_START_HOUR < SHIFT_B_START_HOUR < SHIFT_C_START_HOUR`. Invalid values silently fall back to the defaults. When env vars are set they lock out the corresponding DB field on the manager `/facility-settings` page (badge + disabled input).
 
-The frontend reads this same config via `GET /shift/config` (cached app-wide through `useShiftConfig()` in `artifacts/five-s/src/lib/shift-config.tsx`). Header clock, live shift header, quiet-hours badge/summary, the quiet-hours time-input labels, and the operator page's shift pill switcher (both the active-shift view and the unknown-shift fallback) all render against the configured timezone and `startHours` (e.g. "Shift A · 7 AM – 3 PM" instead of "6 AM – 2 PM" for a US site). The hook also exposes `shiftLabels`, derived from backend `startHours`, so the operator pills no longer rely on Vite build-time `VITE_NIGHT_SHIFT_*` env (which could drift from the backend). When the call is in flight, the hook falls back to the legacy IST defaults so the UI never blanks.
+The frontend reads this same config via `GET /shift/config` (cached app-wide through `useShiftConfig()` in `artifacts/five-s/src/lib/shift-config.tsx`) and the unauthenticated Auto theme reads `GET /facility-settings` via `useNightShiftWindow()`. Header clock, live shift header, quiet-hours badge/summary, the quiet-hours time-input labels, and the operator page's shift pill switcher (both the active-shift view and the unknown-shift fallback) all render against the configured timezone and `startHours` (e.g. "Shift A · 7 AM – 3 PM" instead of "6 AM – 2 PM" for a US site). The hook also exposes `shiftLabels`, derived from backend `startHours`, so the operator pills no longer rely on Vite build-time `VITE_NIGHT_SHIFT_*` env (which could drift from the backend). When the call is in flight, the hook falls back to the legacy IST defaults so the UI never blanks.
+
+## External Dependencies
+
+- **Database**: PostgreSQL (Primary database).
+- **AI/ML Service**: Python FastAPI service running CLIP ViT-B/32 (open_clip_torch) and scikit-learn for embeddings, similarity, and model training.
+- **VLM Service**: OpenAI-compatible API via Replit AI Integrations (gpt-5-mini) for visual language model capabilities.
+- **Email Service**: Resend for sending email notifications.
+- **Messaging Service**: Slack for sending notification webhooks.
+- **Package Manager**: pnpm
+- **Frontend Framework**: React
+- **Build Tool**: Vite
+- **Styling**: Tailwind CSS
+- **ORM**: Drizzle ORM
+- **Authentication Libraries**: bcryptjs, jsonwebtoken (for JWT)
+- **Validation Library**: Zod
+- **API Codegen**: Orval
+- **File Upload Middleware**: Multer
+- **Testing Frameworks**: Vitest, Supertest, @testing-library/react

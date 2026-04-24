@@ -14,10 +14,10 @@ import {
   getCurrentShift,
   getISTShiftRange,
   getZonedParts,
-  getShiftConfig,
   getTodayDateString,
   formatZonedDate,
 } from "../lib/scoring";
+import { loadEffectiveShiftConfig } from "../lib/facility-settings.js";
 import {
   getLatestActiveNudgeByArea,
   getLatestActiveNudgesByAreaMachine,
@@ -32,16 +32,18 @@ const LOW_SCORE_PERCENT = 60;
 const AREA_BASELINE_KEY = "";
 
 router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, res): Promise<void> => {
-  const cfg = getShiftConfig();
-  const { shift } = getCurrentShift();
+  const cfg = await loadEffectiveShiftConfig();
+  const { shift } = getCurrentShift(cfg);
   // For shift "C" before A-start, getISTShiftRange anchors to "yesterday
   // C-start → today A-start" in the configured shift timezone.
-  const { start, end } = getISTShiftRange(undefined, shift);
-  const date = getTodayDateString();
+  const { start, end } = getISTShiftRange(undefined, shift, cfg);
+  const date = getTodayDateString(cfg);
   // For shift C straddling midnight, label by the calendar day the shift
   // began (in the configured shift timezone).
   const shiftDate =
-    shift === "C" && getZonedParts().hour < cfg.startHours.A ? formatZonedDate(start) : date;
+    shift === "C" && getZonedParts(new Date(), cfg.timeZone).hour < cfg.startHours.A
+      ? formatZonedDate(start, cfg.timeZone)
+      : date;
 
   // Pending areas: areas that have NOT received any submission this shift.
   const submittedThisShift = await db

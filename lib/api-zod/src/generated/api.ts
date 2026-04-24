@@ -1502,6 +1502,165 @@ export const GetAreaModelStatusResponse = zod.object({
 });
 
 /**
+ * @summary Get the effective facility shift schedule (with override provenance)
+ */
+export const getFacilitySettingsResponseShiftAStartHourMin = 0;
+export const getFacilitySettingsResponseShiftAStartHourMax = 23;
+
+export const getFacilitySettingsResponseShiftBStartHourMin = 0;
+export const getFacilitySettingsResponseShiftBStartHourMax = 23;
+
+export const getFacilitySettingsResponseShiftCStartHourMin = 0;
+export const getFacilitySettingsResponseShiftCStartHourMax = 23;
+
+export const GetFacilitySettingsResponse = zod
+  .object({
+    timeZone: zod
+      .string()
+      .describe("IANA timezone the shift clock is anchored to."),
+    shiftAStartHour: zod
+      .number()
+      .min(getFacilitySettingsResponseShiftAStartHourMin)
+      .max(getFacilitySettingsResponseShiftAStartHourMax),
+    shiftBStartHour: zod
+      .number()
+      .min(getFacilitySettingsResponseShiftBStartHourMin)
+      .max(getFacilitySettingsResponseShiftBStartHourMax),
+    shiftCStartHour: zod
+      .number()
+      .min(getFacilitySettingsResponseShiftCStartHourMin)
+      .max(getFacilitySettingsResponseShiftCStartHourMax),
+    defaults: zod
+      .object({
+        timeZone: zod.string(),
+        shiftAStartHour: zod.number(),
+        shiftBStartHour: zod.number(),
+        shiftCStartHour: zod.number(),
+      })
+      .describe("Static fallback values shipped with the build."),
+    envOverrides: zod.object({
+      timeZone: zod.string().nullish(),
+      shiftAStartHour: zod.number().nullish(),
+      shiftBStartHour: zod.number().nullish(),
+      shiftCStartHour: zod.number().nullish(),
+    }),
+    dbOverrides: zod.object({
+      timeZone: zod.string().nullish(),
+      shiftAStartHour: zod.number().nullish(),
+      shiftBStartHour: zod.number().nullish(),
+      shiftCStartHour: zod.number().nullish(),
+    }),
+    updatedAt: zod.coerce
+      .date()
+      .nullish()
+      .describe("When the DB override row was last touched."),
+    updatedByUserId: zod
+      .number()
+      .nullish()
+      .describe("Manager who last touched the DB override row."),
+  })
+  .describe(
+    "Effective facility shift schedule (env > DB > default), plus the\nper-layer overrides so the manager UI can show provenance.\n",
+  );
+
+/**
+ * @summary Update DB-backed facility shift schedule overrides (manager only)
+ */
+export const updateFacilitySettingsBodyShiftAStartHourMin = 0;
+export const updateFacilitySettingsBodyShiftAStartHourMax = 23;
+
+export const updateFacilitySettingsBodyShiftBStartHourMin = 0;
+export const updateFacilitySettingsBodyShiftBStartHourMax = 23;
+
+export const updateFacilitySettingsBodyShiftCStartHourMin = 0;
+export const updateFacilitySettingsBodyShiftCStartHourMax = 23;
+
+export const UpdateFacilitySettingsBody = zod
+  .object({
+    timeZone: zod
+      .string()
+      .nullish()
+      .describe('IANA timezone string (e.g. \"Asia\/Kolkata\").'),
+    shiftAStartHour: zod
+      .number()
+      .min(updateFacilitySettingsBodyShiftAStartHourMin)
+      .max(updateFacilitySettingsBodyShiftAStartHourMax)
+      .nullish(),
+    shiftBStartHour: zod
+      .number()
+      .min(updateFacilitySettingsBodyShiftBStartHourMin)
+      .max(updateFacilitySettingsBodyShiftBStartHourMax)
+      .nullish(),
+    shiftCStartHour: zod
+      .number()
+      .min(updateFacilitySettingsBodyShiftCStartHourMin)
+      .max(updateFacilitySettingsBodyShiftCStartHourMax)
+      .nullish(),
+  })
+  .describe(
+    "Patch for the DB-backed facility settings row. Per-field semantics:\nomitted = leave existing value, null = clear the override\n(fall back to env\/default), value = set the override.\n",
+  );
+
+export const updateFacilitySettingsResponseShiftAStartHourMin = 0;
+export const updateFacilitySettingsResponseShiftAStartHourMax = 23;
+
+export const updateFacilitySettingsResponseShiftBStartHourMin = 0;
+export const updateFacilitySettingsResponseShiftBStartHourMax = 23;
+
+export const updateFacilitySettingsResponseShiftCStartHourMin = 0;
+export const updateFacilitySettingsResponseShiftCStartHourMax = 23;
+
+export const UpdateFacilitySettingsResponse = zod
+  .object({
+    timeZone: zod
+      .string()
+      .describe("IANA timezone the shift clock is anchored to."),
+    shiftAStartHour: zod
+      .number()
+      .min(updateFacilitySettingsResponseShiftAStartHourMin)
+      .max(updateFacilitySettingsResponseShiftAStartHourMax),
+    shiftBStartHour: zod
+      .number()
+      .min(updateFacilitySettingsResponseShiftBStartHourMin)
+      .max(updateFacilitySettingsResponseShiftBStartHourMax),
+    shiftCStartHour: zod
+      .number()
+      .min(updateFacilitySettingsResponseShiftCStartHourMin)
+      .max(updateFacilitySettingsResponseShiftCStartHourMax),
+    defaults: zod
+      .object({
+        timeZone: zod.string(),
+        shiftAStartHour: zod.number(),
+        shiftBStartHour: zod.number(),
+        shiftCStartHour: zod.number(),
+      })
+      .describe("Static fallback values shipped with the build."),
+    envOverrides: zod.object({
+      timeZone: zod.string().nullish(),
+      shiftAStartHour: zod.number().nullish(),
+      shiftBStartHour: zod.number().nullish(),
+      shiftCStartHour: zod.number().nullish(),
+    }),
+    dbOverrides: zod.object({
+      timeZone: zod.string().nullish(),
+      shiftAStartHour: zod.number().nullish(),
+      shiftBStartHour: zod.number().nullish(),
+      shiftCStartHour: zod.number().nullish(),
+    }),
+    updatedAt: zod.coerce
+      .date()
+      .nullish()
+      .describe("When the DB override row was last touched."),
+    updatedByUserId: zod
+      .number()
+      .nullish()
+      .describe("Manager who last touched the DB override row."),
+  })
+  .describe(
+    "Effective facility shift schedule (env > DB > default), plus the\nper-layer overrides so the manager UI can show provenance.\n",
+  );
+
+/**
  * @summary Get the effective operator thresholds (with override provenance)
  */
 export const getOperatorThresholdsResponseEncouragementMinPercentMin = 0;

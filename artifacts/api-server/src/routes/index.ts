@@ -14,6 +14,7 @@ import preferencesRouter from "./preferences";
 import operatorThresholdsRouter from "./operator-thresholds";
 import adminRouter from "./admin";
 import assignmentsRouter from "./assignments";
+import facilitySettingsRouter from "./facility-settings";
 
 const router: IRouter = Router();
 
@@ -32,5 +33,6 @@ router.use(preferencesRouter);
 router.use(operatorThresholdsRouter);
 router.use(adminRouter);
 router.use(assignmentsRouter);
+router.use(facilitySettingsRouter);
 
 export default router;
