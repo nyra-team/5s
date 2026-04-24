@@ -66,6 +66,12 @@ export default defineConfig({
         },
         useDates: true,
         useBigInt: true,
+        components: {
+          schemas: { suffix: "Type" },
+          responses: { suffix: "Type" },
+          parameters: { suffix: "Type" },
+          requestBodies: { suffix: "Type" },
+        },
       },
     },
   },
