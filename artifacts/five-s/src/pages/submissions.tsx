@@ -103,7 +103,17 @@ function PillarBar({ label, value, max = 5, reasoning }: { label: string; value:
   );
 }
 
-function LabelForm({ submissionId, existingLabel, autoFocus }: { submissionId: number; existingLabel?: any; autoFocus?: boolean }) {
+function LabelForm({
+  submissionId,
+  existingLabel,
+  autoFocus,
+  aiReasoning,
+}: {
+  submissionId: number;
+  existingLabel?: any;
+  autoFocus?: boolean;
+  aiReasoning?: Record<string, string> | null;
+}) {
   const { user } = useAuth();
   const isManager = user?.role === "MANAGER";
   const [pillars, setPillars] = useState<Record<string, number>>({
@@ -123,6 +133,7 @@ function LabelForm({ submissionId, existingLabel, autoFocus }: { submissionId: n
   if (!isManager) return null;
   const totalScore = Object.values(pillars).reduce((a, b) => a + b, 0);
   const handleSubmit = () => createLabel.mutate({ data: { submissionId, pillarsJson: pillars as any, totalScore } });
+  const hasAnyReasoning = !!aiReasoning && Object.values(aiReasoning).some((v) => typeof v === "string" && v.trim().length > 0);
 
   return (
     <div ref={formRef} className="rounded-2xl p-5 bg-amber-50/70 dark:bg-amber-500/10" data-testid="form-label">
@@ -130,15 +141,33 @@ function LabelForm({ submissionId, existingLabel, autoFocus }: { submissionId: n
         <Tag className="w-4 h-4 text-amber-700 dark:text-amber-300" />
         <h4 className="font-semibold text-[14px] text-amber-900 dark:text-amber-200">{existingLabel ? "Update label" : "Manager label"}</h4>
       </div>
-      <p className="text-[12.5px] text-amber-800/80 dark:text-amber-300/80 mb-4">Override the AI score with ground-truth pillar scores.</p>
-      <div className="space-y-2.5">
-        {Object.entries(pillars).map(([key, val]) => (
-          <div key={key} className="flex items-center gap-3">
-            <span className="capitalize text-[12.5px] font-medium w-20 text-right text-amber-900 dark:text-amber-200">{key}</span>
-            <input type="range" min={0} max={5} value={val} onChange={(e) => setPillars((p) => ({ ...p, [key]: parseInt(e.target.value) }))} className="flex-1 h-1.5 accent-amber-600 dark:accent-amber-400" />
-            <span className="text-[12.5px] font-semibold w-4 tabular-nums">{val}</span>
-          </div>
-        ))}
+      <p className="text-[12.5px] text-amber-800/80 dark:text-amber-300/80 mb-1">Override the AI score with ground-truth pillar scores.</p>
+      {hasAnyReasoning && (
+        <p className="text-[11.5px] text-amber-800/70 dark:text-amber-300/70 mb-4 inline-flex items-center gap-1.5">
+          <Brain className="w-3 h-3" /> AI reasoning shown below each slider.
+        </p>
+      )}
+      <div className="space-y-3.5">
+        {Object.entries(pillars).map(([key, val]) => {
+          const reason = aiReasoning?.[key];
+          return (
+            <div key={key} className="space-y-1">
+              <div className="flex items-center gap-3">
+                <span className="capitalize text-[12.5px] font-medium w-20 text-right text-amber-900 dark:text-amber-200">{key}</span>
+                <input type="range" min={0} max={5} value={val} onChange={(e) => setPillars((p) => ({ ...p, [key]: parseInt(e.target.value) }))} className="flex-1 h-1.5 accent-amber-600 dark:accent-amber-400" />
+                <span className="text-[12.5px] font-semibold w-4 tabular-nums">{val}</span>
+              </div>
+              {reason && (
+                <p
+                  className="text-[11.5px] leading-snug text-amber-900/75 dark:text-amber-200/75 pl-[92px] pr-7"
+                  data-testid={`label-pillar-reasoning-${key}`}
+                >
+                  {reason}
+                </p>
+              )}
+            </div>
+          );
+        })}
       </div>
       <div className="flex items-center justify-between mt-4">
         <span className="text-[12.5px] font-semibold text-amber-900 dark:text-amber-200">Total: {Math.round(totalScore * 4)}%</span>
@@ -300,7 +329,12 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
             </section>
           )}
 
-          <LabelForm submissionId={sub.id} existingLabel={myLabel} autoFocus={autoFocusLabelForm} />
+          <LabelForm
+            submissionId={sub.id}
+            existingLabel={myLabel}
+            autoFocus={autoFocusLabelForm}
+            aiReasoning={sub.aiReasoningJson as Record<string, string> | null | undefined}
+          />
 
           {modelStatus && (
             <div className="rounded-xl p-4 bg-secondary/60">

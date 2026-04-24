@@ -3,11 +3,17 @@
 ## Overview
 A full-stack web application designed for manufacturing environments to improve 5S compliance. The system enables operators to photograph workstations, receiving AI-powered 5S scores and VLM-generated improvement suggestions. Managers can track compliance rates, analyze score trends, manage reference photos, and label submissions for AI model calibration. The project aims to enhance workplace organization and efficiency through intelligent automation and real-time feedback.
 
-This project is a full-stack web application designed to enhance 5S compliance in manufacturing environments. It enables operators to photograph workstations, receiving AI-powered 5S scores and VLM-generated improvement suggestions. Managers can track compliance, analyze score trends, manage reference photos, and label submissions for AI model calibration. The core purpose is to improve workplace organization and efficiency through AI-driven insights and streamlined management tools.
+This project is a full-stack web application designed to enhance 5S compliance in manufacturing environments. It enables operators to photograph workstations, receive AI-powered 5S scores and VLM-generated improvement suggestions. Managers can track compliance, analyze score trends, manage reference photos, and label submissions for AI model calibration. The core purpose is to improve workplace organization and efficiency through AI-driven insights and streamlined management tools.
 
 ## User Preferences
 
-The user has not specified any preferences.
+- **Communication Style**: I prefer clear and direct communication.
+- **Interaction**: Ask before making major architectural changes or introducing new external dependencies.
+- **Code Style**: Prioritize readability and maintainability.
+- **Workflow**: Emphasize iterative development with clear, small steps.
+- **Testing**: Ensure robust testing for all new features and bug fixes.
+- **Documentation**: Keep documentation updated with any changes to the system.
+- **Notifications**: I prefer to be notified of critical system events and performance issues.
 
 
 
@@ -15,31 +21,30 @@ The user has not specified any preferences.
 
 The application is built as a monorepo using pnpm workspaces, with Node.js 24 and TypeScript 5.9.
 
-**Frontend:**
--   Developed with React, Vite, and Tailwind CSS.
-
-**Backend:**
--   Uses Express 5.
--   Authentication is handled via JWT with email/password and bcryptjs.
--   Data validation uses Zod and drizzle-zod.
--   API client code generation is performed using Orval from an OpenAPI specification.
--   File uploads (images) are managed by Multer and stored locally in an `uploads/` directory.
-
-**Database:**
--   PostgreSQL is used as the database, interfaced with Drizzle ORM.
-
-**AI/ML Services:**
--   A dedicated Python FastAPI service (internal only) handles CLIP ViT-B/32 embeddings, similarity computations, and Ridge regression for AI scoring and model training.
--   An OpenAI-compatible API (via Replit AI Integrations, specifically gpt-5-mini) provides VLM capabilities for generating detailed improvement suggestions and per-pillar scores.
--   AI scoring involves computing CLIP embeddings, comparing them via cosine similarity to ideal reference photos, and applying various scoring modes (CALIBRATED, VLM_BLENDED, SIMILARITY_ONLY, FALLBACK).
--   VLM provides per-pillar scores (0-5) and location-specific issues/recommendations, which are blended with CLIP similarity.
--   Managers can label submissions with ground-truth pillar scores to calibrate the AI model using Ridge regression.
+- **Frontend**: Developed with React, Vite, and Tailwind CSS.
+  - **UI/UX**: The design emphasizes clarity and ease of use for both operators and managers.
+  - **Theming**: Supports automatic light/dark mode switching based on configurable `VITE_NIGHT_SHIFT_START_HOUR`, `VITE_NIGHT_SHIFT_END_HOUR`, and `VITE_NIGHT_SHIFT_TZ`.
+- **Backend**: An Express 5 server handles API requests, authentication, and data management.
+  - **API Definition**: An OpenAPI specification (`lib/api-spec/openapi.yaml`) serves as the single source of truth for all API endpoints.
+  - **API Codegen**: Orval is used to generate React Query hooks and Zod schemas from the OpenAPI spec, ensuring type safety and consistency.
+  - **File Storage**: Uploaded images are stored locally in the `uploads/` directory managed by Multer.
+  - **Authentication**: JWT-based authentication (with email/password and bcryptjs) supports `OPERATOR` and `MANAGER` roles.
+  - **Validation**: Zod and drizzle-zod are used for robust data validation.
+- **Database**: PostgreSQL with Drizzle ORM is used for persistent data storage.
+- **AI/ML Services**:
+  - **ML Service (Python FastAPI)**: A dedicated internal Python service handles core AI functionalities, including CLIP ViT-B/32 embedding generation, cosine similarity calculations for 5S scoring, and Ridge regression for model training using scikit-learn.
+  - **VLM Service**: Utilizes an OpenAI-compatible API (gpt-5-mini via Replit AI Integrations) for generating detailed, location-specific improvement suggestions and per-pillar scores.
+  - **AI Scoring Pipeline**: Integrates CLIP embeddings and VLM output for comprehensive 5S scoring, with configurable scoring modes (CALIBRATED, VLM_BLENDED, SIMILARITY_ONLY, FALLBACK). Managers can label submissions with ground-truth pillar scores to calibrate the AI model.
+- **Shift Management**: The system automatically detects shifts (A, B, C) based on configurable start times (`SHIFT_A_START_HOUR`, `SHIFT_B_START_HOUR`, `SHIFT_C_START_HOUR`) and timezone (`SHIFT_TIMEZONE`).
+- **Notification System**: Supports email (via Resend) and Slack notifications for manager escalations, with grouping capabilities and re-ping reminders for open escalations.
+- **Operator Threshold Tuning**: Key operator-facing parameters (e.g., encouragement thresholds, prior best lookback window, due soon lead time) are runtime-tunable via environment variables, database overrides, and shipped defaults.
+- **Escalation Management**: A system for tracking and managing non-compliant submissions, including auto-escalation based on low scores and re-ping notifications for overdue open escalations.
 
 **Key Features:**
 -   **Role-Based Access:** OPERATOR and MANAGER roles with JWT-based authentication.
 -   **Automated Shift Detection:** Operators' views adjust based on auto-detected shifts (A, B, C).
 -   **AI-Powered Scoring & Suggestions:** Provides 0-25 5S scores and VLM-generated, location-specific improvement suggestions.
--   **Manager Dashboard:** Offers compliance tracking, score trends, submission browsing, ideal photo management, and AI calibration tools.
+-   **Manager Dashboard:** Offers compliance tracking, score trends, submission browsing (with keyboard shortcuts), ideal photo management, and AI calibration tools.
 -   **Escalation Management:** Automatically escalates low-scoring submissions, with configurable notification channels (email, Slack) and re-ping reminders for open escalations.
 -   **Operator Threshold Tuning:** Runtime-tunable parameters for operator-facing cutoffs (e.g., encouragement thresholds, prior best lookback window, due soon lead time). Resolved per field with precedence: environment variables > per-area DB override > global DB override > shipped default. Per-area overrides live in `area_operator_settings` (one row per area) and let managers tighten or relax thresholds for individual workstations without affecting the rest of the plant.
 -   **Theming:** Dynamic light/dark theme switching based on configured night shift hours and timezone.
@@ -59,3 +64,5 @@ The application is built as a monorepo using pnpm workspaces, with Node.js 24 an
 -   **Slack Webhooks**: For sending Slack notifications.
 -   **CLIP ViT-B/32 (open_clip_torch)**: Used in the ML service for image embedding.
 -   **scikit-learn**: Used in the ML service for Ridge regression.
+-   **Multer**: Handles file uploads on the backend.
+-   **bcryptjs**: Used for password hashing and security.
