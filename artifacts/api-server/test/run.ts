@@ -29,6 +29,7 @@ import "./preferences.test.js";
 import "./ai-reliability.test.js";
 import "./metrics-retention.test.js";
 import "./dashboard-area-detection-agreement.test.js";
+import "./error-handler.test.js";
 
 after(async () => {
   await closeServer();
