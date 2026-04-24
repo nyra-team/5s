@@ -3,6 +3,7 @@ import {
   useGetOperatorStatus,
   useCreateSubmission,
   useReuploadSubmission,
+  useIdentifySubmissionArea,
   useGetNextChecks,
   useGetOperatorRecent,
   useGetAreaProfile,
@@ -13,6 +14,8 @@ import {
   getGetSubmissionQueryKey,
   getGetAreaProfileQueryKey,
   AreaStatus,
+  AreaIdentificationCandidate,
+  AreaIdentificationResult,
   RecentSubmission,
   NextCheck,
   Nudge,
@@ -50,6 +53,8 @@ import {
   CalendarClock,
   Bell,
   Save,
+  Search,
+  Check,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -59,6 +64,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Sheet,
@@ -468,6 +474,7 @@ export default function OperatorHome() {
                 <AreaCard
                   status={status}
                   selectedShift={activeShift}
+                  assignedAreas={statuses ?? []}
                   dueState={dueStateFor(areaDueMap.get(status.areaId), Date.now(), thresholds.dueSoonThresholdMs)}
                   dueInfo={areaDueMap.get(status.areaId)}
                   recentForSubmission={
@@ -872,6 +879,7 @@ function RecentDetailDialog({
 export function AreaCard({
   status,
   selectedShift,
+  assignedAreas,
   dueState,
   dueInfo,
   recentForSubmission,
@@ -881,6 +889,7 @@ export function AreaCard({
 }: {
   status: AreaStatus;
   selectedShift: "A" | "B" | "C";
+  assignedAreas: AreaStatus[];
   dueState: DueState;
   dueInfo: NextCheck | undefined;
   recentForSubmission: RecentSubmission | undefined;
@@ -902,16 +911,31 @@ export function AreaCard({
   const draftMetaCheckedRef = useRef(false);
   const draftMediaLoadedRef = useRef(false);
 
+  // Auto-detected area state. The capture sheet runs identification in the
+  // background once media is selected (skipped when there's only one assigned
+  // area, or a re-capture which inherits the original area). The "chosen"
+  // area is what we actually submit with — defaults to the tapped area but
+  // the operator may switch to the AI's suggestion or pick manually.
+  const [chosenAreaId, setChosenAreaId] = useState<number>(status.areaId);
+  const [identification, setIdentification] = useState<AreaIdentificationResult | null>(null);
+  const identifyForFileRef = useRef<File | null>(null);
+
   const recordVideoInputRef = useRef<HTMLInputElement>(null);
   const pickVideoInputRef = useRef<HTMLInputElement>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const createSubmission = useCreateSubmission();
   const reuploadSubmission = useReuploadSubmission();
+  const identifyArea = useIdentifySubmissionArea();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
   const operatorId = user?.id ?? null;
+
+  // Re-capture is scoped to the existing submission's area, so detection is
+  // not meaningful there. With only one assigned area, the suggestion would
+  // be a tautology — skip to keep the sheet uncluttered.
+  const detectionEnabled = !isReuploadMode && assignedAreas.length > 1;
 
   // Lazily fetch the learned profile only when the capture sheet is open, so
   // the operator sees "what good looks like" without paying the cost up-front.
@@ -987,6 +1011,51 @@ export function AreaCard({
     return () => clearTimeout(handle);
   }, [operatorId, status.areaId, status.submitted, isReuploadMode, media, machineTag]);
 
+  // Run area identification once per distinct media file. We key off the File
+  // identity (not just `!!media`) so picking a fresh file re-runs detection,
+  // while a re-render with the same file does not. Re-capture inherits the
+  // existing area, so detection is skipped there.
+  useEffect(() => {
+    if (!detectionEnabled) return;
+    if (!media) return;
+    if (identifyForFileRef.current === media) return;
+    identifyForFileRef.current = media;
+    setIdentification(null);
+    identifyArea.mutate(
+      { data: { media: media as Blob } },
+      {
+        onSuccess: (result) => {
+          // Guard against late responses from a discarded file.
+          if (identifyForFileRef.current !== media) return;
+          setIdentification(result);
+          // The spec's "confirm with one tap" UX: when the AI is confident,
+          // pre-select its top suggestion so a single Submit tap completes
+          // the flow. The operator can still override via the Change picker.
+          // Threshold of 0.4 keeps low-signal guesses from auto-switching
+          // away from the originally tapped area.
+          const top = result.candidates[0];
+          if (
+            result.hasTrainedAreas &&
+            top &&
+            top.confidence >= 0.4 &&
+            assignedAreas.some((a) => a.areaId === top.areaId)
+          ) {
+            setChosenAreaId(top.areaId);
+          }
+        },
+        onError: () => {
+          // Stay silent on the toast — the sheet's detection block already
+          // surfaces the failure inline so the operator can pick manually.
+          if (identifyForFileRef.current !== media) return;
+          setIdentification({ candidates: [], hasTrainedAreas: true, rationale: null });
+        },
+      },
+    );
+    // identifyArea is a stable mutation hook; we intentionally exclude it from
+    // deps to avoid restarting detection on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [media, detectionEnabled, assignedAreas]);
+
   const clearLocalCaptureState = () => {
     setMedia(null);
     setMachineTag("");
@@ -995,6 +1064,9 @@ export function AreaCard({
     setDraftSavedAt(null);
     // Allow a future hydrate attempt if a fresh draft is saved later.
     draftMediaLoadedRef.current = false;
+    setIdentification(null);
+    setChosenAreaId(status.areaId);
+    identifyForFileRef.current = null;
   };
 
   const handleFileSelect = (mode: "create" | "reupload") => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1111,10 +1183,13 @@ export function AreaCard({
         }
       );
     } else {
+      // chosenAreaId is the AI-detected area when detection succeeded and
+      // the operator didn't override it; otherwise it's the originally tapped
+      // area. Either way it's the source of truth for which area gets the row.
       createSubmission.mutate(
         {
           data: {
-            areaId: status.areaId,
+            areaId: chosenAreaId,
             media: media as Blob,
             shift: selectedShift,
             machineTag: tag,
@@ -1288,6 +1363,13 @@ export function AreaCard({
           onTriggerRecord={triggerRecord}
           onTriggerPickVideo={triggerPickVideo}
           onTriggerPhoto={triggerPhoto}
+          detectionEnabled={detectionEnabled}
+          isDetecting={identifyArea.isPending}
+          identification={identification}
+          assignedAreas={assignedAreas}
+          tappedAreaId={status.areaId}
+          chosenAreaId={chosenAreaId}
+          onChangeArea={setChosenAreaId}
         />
 
         <input
@@ -1426,6 +1508,13 @@ export function AreaCard({
         onTriggerRecord={triggerRecord}
         onTriggerPickVideo={triggerPickVideo}
         onTriggerPhoto={triggerPhoto}
+        detectionEnabled={detectionEnabled}
+        isDetecting={identifyArea.isPending}
+        identification={identification}
+        assignedAreas={assignedAreas}
+        tappedAreaId={status.areaId}
+        chosenAreaId={chosenAreaId}
+        onChangeArea={setChosenAreaId}
       />
 
       <input
@@ -1582,6 +1671,13 @@ function CaptureSheet({
   onTriggerRecord,
   onTriggerPickVideo,
   onTriggerPhoto,
+  detectionEnabled,
+  isDetecting,
+  identification,
+  assignedAreas,
+  tappedAreaId,
+  chosenAreaId,
+  onChangeArea,
 }: {
   open: boolean;
   areaName: string;
@@ -1600,9 +1696,19 @@ function CaptureSheet({
   onTriggerRecord: () => void;
   onTriggerPickVideo: () => void;
   onTriggerPhoto: () => void;
+  detectionEnabled: boolean;
+  isDetecting: boolean;
+  identification: AreaIdentificationResult | null;
+  assignedAreas: AreaStatus[];
+  tappedAreaId: number;
+  chosenAreaId: number;
+  onChangeArea: (areaId: number) => void;
 }) {
   const isVideo = !!media && media.type.startsWith("video/");
-  const title = mode === "reupload" ? `Re-capture for ${areaName}` : `Add evidence for ${areaName}`;
+  const chosenAreaName =
+    assignedAreas.find((a) => a.areaId === chosenAreaId)?.areaName ?? areaName;
+  const title =
+    mode === "reupload" ? `Re-capture for ${areaName}` : `Add evidence for ${chosenAreaName}`;
   const description =
     mode === "reupload"
       ? "This will replace the current capture and re-score the submission."
@@ -1656,6 +1762,16 @@ function CaptureSheet({
                   <img src={previewUrl} alt="Preview" className="w-full h-56 object-contain" />
                 )}
               </div>
+              {mode === "create" && detectionEnabled && (
+                <DetectionBlock
+                  isDetecting={isDetecting}
+                  identification={identification}
+                  assignedAreas={assignedAreas}
+                  tappedAreaId={tappedAreaId}
+                  chosenAreaId={chosenAreaId}
+                  onChangeArea={onChangeArea}
+                />
+              )}
             </div>
           ) : (
             <div className="space-y-2">
@@ -1722,6 +1838,229 @@ function CaptureSheet({
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/* --------------------- Auto-detected area block ---------------------- */
+
+// Renders the result of POST /submissions/identify-area against the captured
+// media. Three display modes:
+//   - pending: VLM call in flight ("Detecting area…")
+//   - no trained profiles: skip detection entirely, prompt manual confirm
+//   - results: show top suggestion with confidence + Change picker
+// The "Change" picker lists all assigned areas (not just AI candidates) so
+// the operator can override even when detection completely missed.
+function DetectionBlock({
+  isDetecting,
+  identification,
+  assignedAreas,
+  tappedAreaId,
+  chosenAreaId,
+  onChangeArea,
+}: {
+  isDetecting: boolean;
+  identification: AreaIdentificationResult | null;
+  assignedAreas: AreaStatus[];
+  tappedAreaId: number;
+  chosenAreaId: number;
+  onChangeArea: (areaId: number) => void;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  if (isDetecting) {
+    return (
+      <div
+        className="flex items-center gap-2 rounded-xl border border-dashed border-blue-200 dark:border-blue-500/40 bg-blue-50 dark:bg-blue-500/10 px-3 py-2.5 text-[12.5px] text-blue-800 dark:text-blue-200"
+        data-testid="detection-pending"
+      >
+        <Search className="w-3.5 h-3.5 shrink-0 animate-pulse" />
+        <span className="leading-snug">Detecting area…</span>
+      </div>
+    );
+  }
+
+  // Detection ran and returned no trained profiles — fall back to manual.
+  if (identification && !identification.hasTrainedAreas) {
+    const tapped = assignedAreas.find((a) => a.areaId === tappedAreaId);
+    return (
+      <div
+        className="rounded-xl border border-dashed border-amber-200 dark:border-amber-500/40 bg-amber-50/70 dark:bg-amber-500/10 px-3 py-2.5 space-y-1.5"
+        data-testid="detection-no-profiles"
+      >
+        <div className="flex items-center gap-2 text-[12.5px] font-medium text-amber-900 dark:text-amber-100">
+          <Search className="w-3.5 h-3.5 shrink-0" />
+          <span className="leading-snug">
+            Auto-detect not ready — please confirm the area manually.
+          </span>
+        </div>
+        <AreaPicker
+          assignedAreas={assignedAreas}
+          chosenAreaId={chosenAreaId}
+          tappedAreaId={tappedAreaId}
+          chosenLabel={tapped?.areaName ?? null}
+          onChangeArea={onChangeArea}
+          open={pickerOpen}
+          setOpen={setPickerOpen}
+        />
+      </div>
+    );
+  }
+
+  // Detection succeeded with at least one ranked candidate.
+  const top = identification?.candidates[0] ?? null;
+  if (!top) {
+    return null;
+  }
+  const topName =
+    assignedAreas.find((a) => a.areaId === top.areaId)?.areaName ?? `Area #${top.areaId}`;
+  const confidencePct = Math.round(top.confidence * 100);
+  // Confidence buckets shape the badge color so the operator can tell at a
+  // glance whether to trust the suggestion.
+  const confidenceTone =
+    top.confidence >= 0.7
+      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200"
+      : top.confidence >= 0.4
+        ? "bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-200"
+        : "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200";
+  const matchesChosen = chosenAreaId === top.areaId;
+
+  return (
+    <div
+      className="rounded-xl border border-blue-100 dark:border-blue-500/30 bg-blue-50/70 dark:bg-blue-500/10 px-3 py-2.5 space-y-2"
+      data-testid="detection-result"
+    >
+      <div className="flex items-start gap-2">
+        <Search className="w-3.5 h-3.5 mt-0.5 shrink-0 text-blue-700 dark:text-blue-200" />
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[12.5px] font-medium text-blue-900 dark:text-blue-100">
+              Detected:
+            </span>
+            <span
+              className="text-[13px] font-semibold text-blue-950 dark:text-blue-50 truncate"
+              data-testid="detection-top-name"
+            >
+              {topName}
+            </span>
+            <span
+              className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-full ${confidenceTone}`}
+              data-testid="detection-top-confidence"
+            >
+              {confidencePct}%
+            </span>
+            {matchesChosen && (
+              <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                <Check className="w-3 h-3" /> Using
+              </span>
+            )}
+          </div>
+          {identification?.rationale && (
+            <p className="text-[11.5px] text-blue-900/80 dark:text-blue-100/80 leading-snug">
+              {identification.rationale}
+            </p>
+          )}
+        </div>
+      </div>
+      <AreaPicker
+        assignedAreas={assignedAreas}
+        chosenAreaId={chosenAreaId}
+        tappedAreaId={tappedAreaId}
+        chosenLabel={
+          assignedAreas.find((a) => a.areaId === chosenAreaId)?.areaName ?? null
+        }
+        onChangeArea={onChangeArea}
+        open={pickerOpen}
+        setOpen={setPickerOpen}
+      />
+    </div>
+  );
+}
+
+function AreaPicker({
+  assignedAreas,
+  chosenAreaId,
+  tappedAreaId,
+  chosenLabel,
+  onChangeArea,
+  open,
+  setOpen,
+}: {
+  assignedAreas: AreaStatus[];
+  chosenAreaId: number;
+  tappedAreaId: number;
+  chosenLabel: string | null;
+  onChangeArea: (areaId: number) => void;
+  open: boolean;
+  setOpen: (v: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button
+          type="button"
+          className="text-[12px] font-semibold underline underline-offset-2 text-blue-800 dark:text-blue-200 hover:text-blue-950 dark:hover:text-blue-50 min-h-[28px]"
+          data-testid="button-change-area"
+        >
+          Change{chosenLabel ? ` (currently ${chosenLabel})` : ""}
+        </button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-sm rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-base">Choose area</DialogTitle>
+          <DialogDescription>
+            Pick the area this capture belongs to. The submission will be saved against the
+            selected area.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="mt-1 max-h-[55vh] overflow-y-auto -mx-1 px-1">
+          <ul className="space-y-1.5">
+            {assignedAreas.map((a) => {
+              const selected = a.areaId === chosenAreaId;
+              const original = a.areaId === tappedAreaId;
+              return (
+                <li key={a.areaId}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChangeArea(a.areaId);
+                      setOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-left text-[13.5px] transition-colors ${
+                      selected
+                        ? "bg-primary/10 border border-primary/40 text-foreground"
+                        : "bg-secondary/60 hover:bg-secondary border border-transparent"
+                    }`}
+                    data-testid={`option-area-${a.areaId}`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium truncate">{a.areaName}</div>
+                      {original && (
+                        <div className="text-[11px] text-muted-foreground">Originally tapped</div>
+                      )}
+                    </div>
+                    {selected ? (
+                      <Check className="w-4 h-4 text-primary shrink-0" />
+                    ) : (
+                      <span className="w-4 h-4 shrink-0" />
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+        <div className="flex justify-end pt-2">
+          <Button
+            variant="outline"
+            className="rounded-xl"
+            onClick={() => setOpen(false)}
+            data-testid="button-area-picker-close"
+          >
+            <X className="w-4 h-4 mr-1.5" /> Close
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

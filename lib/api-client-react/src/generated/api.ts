@@ -18,6 +18,7 @@ import type {
 
 import type {
   Area,
+  AreaIdentificationResult,
   AreaProfile,
   AreaStatus,
   AreaTrend,
@@ -38,6 +39,7 @@ import type {
   GetOperatorRecentParams,
   GetOperatorStatusParams,
   HealthStatus,
+  IdentifySubmissionAreaBody,
   Label,
   ListEscalationsParams,
   ListSubmissionsParams,
@@ -1066,6 +1068,100 @@ export const useCreateSubmission = <
   TContext
 > => {
   return useMutation(getCreateSubmissionMutationOptions(options));
+};
+
+/**
+ * @summary Identify which of the operator's trained areas the submitted media most likely shows
+ */
+export const getIdentifySubmissionAreaUrl = () => {
+  return `/api/submissions/identify-area`;
+};
+
+export const identifySubmissionArea = async (
+  identifySubmissionAreaBody: IdentifySubmissionAreaBody,
+  options?: RequestInit,
+): Promise<AreaIdentificationResult> => {
+  const formData = new FormData();
+  if (identifySubmissionAreaBody.media !== undefined) {
+    formData.append(`media`, identifySubmissionAreaBody.media);
+  }
+  if (identifySubmissionAreaBody.photo !== undefined) {
+    formData.append(`photo`, identifySubmissionAreaBody.photo);
+  }
+
+  return customFetch<AreaIdentificationResult>(getIdentifySubmissionAreaUrl(), {
+    ...options,
+    method: "POST",
+    body: formData,
+  });
+};
+
+export const getIdentifySubmissionAreaMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof identifySubmissionArea>>,
+    TError,
+    { data: BodyType<IdentifySubmissionAreaBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof identifySubmissionArea>>,
+  TError,
+  { data: BodyType<IdentifySubmissionAreaBody> },
+  TContext
+> => {
+  const mutationKey = ["identifySubmissionArea"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof identifySubmissionArea>>,
+    { data: BodyType<IdentifySubmissionAreaBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return identifySubmissionArea(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type IdentifySubmissionAreaMutationResult = NonNullable<
+  Awaited<ReturnType<typeof identifySubmissionArea>>
+>;
+export type IdentifySubmissionAreaMutationBody =
+  BodyType<IdentifySubmissionAreaBody>;
+export type IdentifySubmissionAreaMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Identify which of the operator's trained areas the submitted media most likely shows
+ */
+export const useIdentifySubmissionArea = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof identifySubmissionArea>>,
+    TError,
+    { data: BodyType<IdentifySubmissionAreaBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof identifySubmissionArea>>,
+  TError,
+  { data: BodyType<IdentifySubmissionAreaBody> },
+  TContext
+> => {
+  return useMutation(getIdentifySubmissionAreaMutationOptions(options));
 };
 
 /**

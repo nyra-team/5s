@@ -295,6 +295,48 @@ export const CreateSubmissionBody = zod.object({
 });
 
 /**
+ * @summary Identify which of the operator's trained areas the submitted media most likely shows
+ */
+export const IdentifySubmissionAreaBody = zod.object({
+  media: zod
+    .instanceof(File)
+    .optional()
+    .describe("Video (preferred) or image file. Use this OR `photo`."),
+  photo: zod
+    .instanceof(File)
+    .optional()
+    .describe("Legacy image-only field (still accepted)."),
+});
+
+export const identifySubmissionAreaResponseCandidatesItemConfidenceMin = 0;
+export const identifySubmissionAreaResponseCandidatesItemConfidenceMax = 1;
+
+export const IdentifySubmissionAreaResponse = zod.object({
+  candidates: zod
+    .array(
+      zod.object({
+        areaId: zod.number(),
+        areaName: zod.string(),
+        confidence: zod
+          .number()
+          .min(identifySubmissionAreaResponseCandidatesItemConfidenceMin)
+          .max(identifySubmissionAreaResponseCandidatesItemConfidenceMax)
+          .describe("Confidence score in [0, 1]."),
+      }),
+    )
+    .describe("Trained-area matches ranked from most to least likely."),
+  hasTrainedAreas: zod
+    .boolean()
+    .describe(
+      "False when no trained area profile exists yet, signaling the UI to fall back to manual selection.",
+    ),
+  rationale: zod
+    .string()
+    .nullish()
+    .describe("Optional short note from the AI explaining the top match."),
+});
+
+/**
  * @summary Get a single submission
  */
 export const GetSubmissionParams = zod.object({

@@ -297,6 +297,34 @@ paths:
               schema:
                 $ref: "#/components/schemas/Submission"
 
+  /submissions/identify-area:
+    post:
+      operationId: identifySubmissionArea
+      tags: [submissions]
+      summary: Identify which of the operator's trained areas the submitted media most likely shows
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                media:
+                  type: string
+                  format: binary
+                  description: Video (preferred) or image file. Use this OR `photo`.
+                photo:
+                  type: string
+                  format: binary
+                  description: Legacy image-only field (still accepted).
+      responses:
+        "200":
+          description: Ranked candidate areas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaIdentificationResult"
+
   /submissions/{id}:
     get:
       operationId: getSubmission
@@ -1142,6 +1170,37 @@ components:
         commonIssues:
           type: array
           items: { type: string }
+
+    AreaIdentificationCandidate:
+      type: object
+      properties:
+        areaId:
+          type: integer
+        areaName:
+          type: string
+        confidence:
+          type: number
+          description: Confidence score in [0, 1].
+          minimum: 0
+          maximum: 1
+      required: [areaId, areaName, confidence]
+
+    AreaIdentificationResult:
+      type: object
+      properties:
+        candidates:
+          type: array
+          description: Trained-area matches ranked from most to least likely.
+          items:
+            $ref: "#/components/schemas/AreaIdentificationCandidate"
+        hasTrainedAreas:
+          type: boolean
+          description: False when no trained area profile exists yet, signaling the UI to fall back to manual selection.
+        rationale:
+          type: string
+          nullable: true
+          description: Optional short note from the AI explaining the top match.
+      required: [candidates, hasTrainedAreas]
 
     Submission:
       type: object

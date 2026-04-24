@@ -18,6 +18,7 @@ import "./labels.test.js";
 import "./live.test.js";
 import "./submissions.test.js";
 import "./reasoning.test.js";
+import "./identify-area.test.js";
 
 after(async () => {
   await closeServer();

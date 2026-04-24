@@ -254,6 +254,26 @@ export interface UpdateAreaProfileBody {
   commonIssues?: string[];
 }
 
+export interface AreaIdentificationCandidate {
+  areaId: number;
+  areaName: string;
+  /**
+   * Confidence score in [0, 1].
+   * @minimum 0
+   * @maximum 1
+   */
+  confidence: number;
+}
+
+export interface AreaIdentificationResult {
+  /** Trained-area matches ranked from most to least likely. */
+  candidates: AreaIdentificationCandidate[];
+  /** False when no trained area profile exists yet, signaling the UI to fall back to manual selection. */
+  hasTrainedAreas: boolean;
+  /** Optional short note from the AI explaining the top match. */
+  rationale?: string | null;
+}
+
 export type SubmissionShift =
   (typeof SubmissionShift)[keyof typeof SubmissionShift];
 
@@ -708,6 +728,13 @@ export type CreateSubmissionBody = {
   shift?: CreateSubmissionBodyShift;
   /** Optional sub-area / machine being captured. */
   machineTag?: string;
+};
+
+export type IdentifySubmissionAreaBody = {
+  /** Video (preferred) or image file. Use this OR `photo`. */
+  media?: Blob;
+  /** Legacy image-only field (still accepted). */
+  photo?: Blob;
 };
 
 export type ReuploadSubmissionBodyShift =

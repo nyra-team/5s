@@ -19,6 +19,7 @@ import {
   AI_UNAVAILABLE_FALLBACK_ACTION,
   isNoOpFallbackSuggestion,
 } from "../lib/ai-scoring.js";
+import { identifyArea, type IdentificationAreaProfile } from "../lib/ai-identification.js";
 import { isVideoFile } from "../lib/keyframes.js";
 import { ingestProfileExtract, getOrCreateProfile, TRAINING_THRESHOLD } from "../lib/learning";
 import { recordCheck } from "../lib/schedule";
@@ -256,6 +257,72 @@ async function maybeCreateEscalation(args: {
     }).catch((err) => logger.error({ err, escalationId: created.id }, "notify: unhandled error"));
   }
 }
+
+router.post("/submissions/identify-area", authMiddleware, uploadFields, async (req, res): Promise<void> => {
+  const file = extractFile(req);
+  if (!file) { res.status(400).json({ error: "Media file is required (use field 'media' or 'photo')" }); return; }
+
+  // Pull every area's profile and keep only those that have completed the
+  // learning phase. Identification against a still-LEARNING profile would be
+  // mostly noise, and the spec says fall back to manual selection in that
+  // case rather than guessing. We deliberately scope to ALL areas (not just
+  // the operator's submissions history) because the task's "assigned areas"
+  // model doesn't exist yet — every operator can submit for any area, so
+  // every TRAINED profile is a valid candidate.
+  const rows = await db
+    .select({
+      areaId: areasTable.id,
+      areaName: areasTable.name,
+      status: areaProfilesTable.status,
+      summary: areaProfilesTable.summary,
+      itemsJson: areaProfilesTable.itemsJson,
+      machinesJson: areaProfilesTable.machinesJson,
+      layoutJson: areaProfilesTable.layoutJson,
+    })
+    .from(areasTable)
+    .innerJoin(areaProfilesTable, eq(areaProfilesTable.areaId, areasTable.id))
+    .where(eq(areaProfilesTable.status, "TRAINED"));
+
+  if (rows.length === 0) {
+    res.json({ candidates: [], hasTrainedAreas: false, rationale: null });
+    return;
+  }
+
+  const profiles: IdentificationAreaProfile[] = rows.map((r) => ({
+    areaId: r.areaId,
+    areaName: r.areaName,
+    summary: r.summary,
+    items: Array.isArray(r.itemsJson) ? (r.itemsJson as string[]) : [],
+    machines: Array.isArray(r.machinesJson) ? (r.machinesJson as string[]) : [],
+    layout: Array.isArray(r.layoutJson) ? (r.layoutJson as string[]) : [],
+  }));
+
+  const mediaType: "image" | "video" = isVideoFile(file) ? "video" : "image";
+  const absPath = path.resolve(process.cwd(), "uploads", file.filename);
+
+  try {
+    const result = await identifyArea({
+      mediaAbsPath: absPath,
+      mediaType,
+      profiles,
+    });
+    res.json({
+      candidates: result.candidates,
+      hasTrainedAreas: true,
+      rationale: result.rationale,
+    });
+  } catch (err) {
+    logger.error({ err }, "Area identification failed");
+    // Surface as an empty-candidates result rather than a 500: the operator
+    // flow simply falls back to manual area selection in either case, and
+    // returning 200 keeps the UI's non-blocking detection state clean.
+    res.json({
+      candidates: [],
+      hasTrainedAreas: true,
+      rationale: null,
+    });
+  }
+});
 
 router.post("/submissions", authMiddleware, uploadFields, async (req, res): Promise<void> => {
   const { userId } = (req as any).user;
