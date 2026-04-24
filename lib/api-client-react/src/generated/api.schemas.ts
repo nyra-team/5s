@@ -634,6 +634,30 @@ export interface OperatorDismissedNudge {
   dismissedAt: string;
 }
 
+/**
+ * Retry-rate stats for one rolling time window of AI scoring calls.
+ */
+export interface AiReliabilityWindow {
+  /** Number of VLM scoring calls completed inside this window. */
+  totalCalls: number;
+  /** How many of those required a second VLM call to produce valid JSON. */
+  retriedCalls: number;
+  /** retriedCalls / totalCalls, expressed as a 0-1 decimal. 0 when totalCalls is 0. */
+  retryRate: number;
+}
+
+/**
+ * How reliably the AI scoring model is producing valid JSON on its first
+attempt. Lets managers/engineers spot at a glance whether the model
+is misbehaving today (e.g. 30% of audits silently retried, doubling
+the API spend) by comparing the rolling 24h window to the 7d baseline.
+
+ */
+export interface DashboardAiReliability {
+  last24h: AiReliabilityWindow;
+  last7d: AiReliabilityWindow;
+}
+
 export type CurrentShiftShift =
   (typeof CurrentShiftShift)[keyof typeof CurrentShiftShift];
 

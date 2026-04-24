@@ -8,6 +8,7 @@ import {
   areaProfilesTable,
   nudgesTable,
   usersTable,
+  aiScoringMetricsTable,
 } from "@workspace/db";
 import type { NudgeDismissReason } from "@workspace/db";
 import {
@@ -205,6 +206,45 @@ router.get("/dashboard/summary", authMiddleware, requireRole("MANAGER"), async (
     todayCompliance: compliance,
     totalSubmissions: totalStats?.count ?? 0,
     openEscalations: openEsc?.count ?? 0,
+  });
+});
+
+// Surfaces how often the VLM scoring pipeline had to retry its first
+// response because the JSON failed validation. We aggregate over a rolling
+// 24h and 7d window so the dashboard can compare today against the recent
+// baseline at a glance — a sudden 24h spike means the model is misbehaving
+// and we're paying ~2x per audit.
+router.get("/dashboard/ai-reliability", authMiddleware, requireRole("MANAGER"), async (_req, res): Promise<void> => {
+  const now = Date.now();
+  const last24h = new Date(now - 24 * 60 * 60 * 1000);
+  const last7d = new Date(now - 7 * 24 * 60 * 60 * 1000);
+
+  // One round-trip per window keeps the read cheap; the metrics table is
+  // append-only and indexed on created_at so the count + filtered count
+  // both use the same b-tree scan.
+  async function windowStats(since: Date) {
+    const [row] = await db
+      .select({
+        totalCalls: count(),
+        retriedCalls: sql<number>`COALESCE(SUM(CASE WHEN ${aiScoringMetricsTable.retried} THEN 1 ELSE 0 END), 0)`,
+      })
+      .from(aiScoringMetricsTable)
+      .where(gte(aiScoringMetricsTable.createdAt, since));
+
+    const totalCalls = Number(row?.totalCalls ?? 0);
+    const retriedCalls = Number(row?.retriedCalls ?? 0);
+    const retryRate = totalCalls > 0 ? retriedCalls / totalCalls : 0;
+    return { totalCalls, retriedCalls, retryRate };
+  }
+
+  const [twentyFourHour, sevenDay] = await Promise.all([
+    windowStats(last24h),
+    windowStats(last7d),
+  ]);
+
+  res.json({
+    last24h: twentyFourHour,
+    last7d: sevenDay,
   });
 });
 

@@ -3,7 +3,7 @@ import { logger } from "./logger.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { extractKeyframes, compressForVLM, type KeyframeMetrics } from "./keyframes.js";
-import type { EnvironmentType } from "@workspace/db";
+import { db, aiScoringMetricsTable, type EnvironmentType } from "@workspace/db";
 
 type Severity = "high" | "medium" | "low";
 
@@ -379,6 +379,34 @@ interface CallVlmOptions {
   environmentType: EnvironmentType | undefined;
 }
 
+// Cap on the validation message we persist so a verbose model error can't
+// bloat a row. Aggregates only need the boolean retried flag — the message
+// is kept for engineering spelunking, not for display.
+const VALIDATION_ERROR_MAX = 500;
+
+/**
+ * Append one row to `ai_scoring_metrics` describing the outcome of a VLM
+ * call. Logging the metric is best-effort: a DB hiccup must never break
+ * scoring, so we swallow errors and emit a warning instead.
+ */
+async function recordScoringMetric(
+  modelVersion: string,
+  retried: boolean,
+  validationError: string | null,
+): Promise<void> {
+  try {
+    await db.insert(aiScoringMetricsTable).values({
+      modelVersion,
+      retried,
+      validationError: validationError
+        ? validationError.slice(0, VALIDATION_ERROR_MAX)
+        : null,
+    });
+  } catch (err) {
+    logger.warn({ err }, "failed to record AI scoring metric");
+  }
+}
+
 async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
   const { framePaths, areaName, machineTag, learnedProfile, environmentType } = opts;
   const modelVersion = `gpt-5-mini-${environmentType ?? "factory"}-v3`;
@@ -438,17 +466,28 @@ async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
     validationError = `response was not valid JSON: ${(err as Error).message}`;
   }
 
-  // One automatic retry with a stricter prompt naming exactly what was wrong.
-  // We keep the original user content/images so the model isn't asked to
-  // re-imagine anything — only to re-emit valid JSON.
-  if (validationError) {
-    logger.warn({ validationError, modelVersion }, "VLM JSON validation failed; retrying once");
-    const retryMessages: any[] = [
-      ...messages,
-      { role: "assistant", content: firstText },
-      {
-        role: "user",
-        content:
+  // Capture whether the first attempt was clean BEFORE the retry mutates
+  // `validationError`. We persist a single metric row per callVLM at the
+  // bottom of this function reflecting first-attempt outcome — that's what
+  // the dashboard's retry-rate stat reads from.
+  const firstAttemptError = validationError;
+  // Use try/finally so the metric row is written even if the retry HTTP call
+  // itself throws (network error, upstream 5xx, etc). Otherwise the dashboard
+  // would silently undercount retries during exactly the kind of upstream
+  // instability we want it to surface.
+  let metricRecorded = false;
+  try {
+    // One automatic retry with a stricter prompt naming exactly what was wrong.
+    // We keep the original user content/images so the model isn't asked to
+    // re-imagine anything — only to re-emit valid JSON.
+    if (validationError) {
+      logger.warn({ validationError, modelVersion }, "VLM JSON validation failed; retrying once");
+      const retryMessages: any[] = [
+        ...messages,
+        { role: "assistant", content: firstText },
+        {
+          role: "user",
+          content:
 `Your previous JSON failed validation: ${validationError}.
 
 Re-emit the COMPLETE response as valid JSON in exactly the documented shape. The required fields are:
@@ -459,19 +498,28 @@ Re-emit the COMPLETE response as valid JSON in exactly the documented shape. The
 - "profile": object
 
 Do not include any prose outside the JSON object.`,
-      },
-    ];
+        },
+      ];
 
-    const retryResp = await openai.chat.completions.create({ ...baseRequest, messages: retryMessages });
-    const retryText = retryResp.choices[0]?.message?.content || "{}";
-    try {
-      parsed = JSON.parse(retryText);
-      validationError = validateVlmJson(parsed);
-    } catch (err) {
-      validationError = `retry was not valid JSON: ${(err as Error).message}`;
+      const retryResp = await openai.chat.completions.create({ ...baseRequest, messages: retryMessages });
+      const retryText = retryResp.choices[0]?.message?.content || "{}";
+      try {
+        parsed = JSON.parse(retryText);
+        validationError = validateVlmJson(parsed);
+      } catch (err) {
+        validationError = `retry was not valid JSON: ${(err as Error).message}`;
+      }
+      if (validationError) {
+        await recordScoringMetric(modelVersion, true, firstAttemptError);
+        metricRecorded = true;
+        throw new Error(`VLM returned invalid JSON after one retry: ${validationError}`);
+      }
     }
-    if (validationError) {
-      throw new Error(`VLM returned invalid JSON after one retry: ${validationError}`);
+  } finally {
+    if (!metricRecorded) {
+      // One row per callVLM. We don't block on this — failing to log a metric
+      // must never break scoring (recordScoringMetric swallows its own errors).
+      await recordScoringMetric(modelVersion, firstAttemptError !== null, firstAttemptError);
     }
   }
 

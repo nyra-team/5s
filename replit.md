@@ -31,6 +31,7 @@ The application is built as a monorepo using `pnpm workspaces` with Node.js 24 a
   - **Authentication**: JWT-based authentication (with email/password and bcryptjs) supports `OPERATOR` and `MANAGER` roles.
   - **Validation**: Zod and drizzle-zod are used for robust data validation.
 - **Database**: PostgreSQL with Drizzle ORM is used for persistent data storage.
+  - The `ai_scoring_metrics` table tracks VLM call outcomes (model version, retried flag, validation error) for reliability monitoring.
 - **AI/ML Services**:
   - **ML Service (Python FastAPI)**: A dedicated internal Python service handles core AI functionalities, including CLIP ViT-B/32 embedding generation, cosine similarity calculations for 5S scoring, and Ridge regression for model training using scikit-learn.
   - **VLM Service**: Utilizes an OpenAI-compatible API (gpt-5-mini via Replit AI Integrations) for generating detailed, location-specific improvement suggestions and per-pillar scores.
@@ -45,6 +46,7 @@ The application is built as a monorepo using `pnpm workspaces` with Node.js 24 a
 - **Automated Shift Detection:** Operators' views adjust based on auto-detected shifts (A, B, C).
 - **AI-Powered Scoring & Suggestions:** Provides 0-25 5S scores and VLM-generated, location-specific improvement suggestions.
 - **Manager Dashboard:** Offers compliance tracking, score trends, submission browsing (with keyboard shortcuts), ideal photo management, and AI calibration tools.
+- **AI Reliability Monitoring:** A dedicated dashboard panel (`AiReliabilityPanel`) and manager-only endpoint (`GET /api/dashboard/ai-reliability`) surface VLM first-try retry rates over the last 24h and 7d windows to help identify misbehaving models or elevated API costs.
 - **Manager Triage Flow**: A dedicated `/live` manager landing page displays pending areas, overdue checks, low-scoring submissions, and open escalations. It includes inline quick-labeling, detailed submission lists with filtering, and keyboard shortcuts for efficient navigation and action.
 - **Escalation Management:** Automatically escalates low-scoring submissions, with configurable notification channels (email, Slack) and re-ping reminders for open escalations. Supports multi-select and bulk actions (Acknowledge, Resolve, Clear).
 - **Operator Threshold Tuning**: Runtime-tunable parameters for operator-facing cutoffs (e.g., encouragement thresholds, prior best lookback window, due soon lead time). Resolved per field with precedence: environment variables > per-area DB override > global DB override > shipped default. Per-area overrides live in `area_operator_settings` (one row per area) and let managers tighten or relax thresholds for individual workstations without affecting the rest of the plant.

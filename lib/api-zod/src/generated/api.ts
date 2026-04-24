@@ -596,6 +596,58 @@ export const GetDashboardSummaryResponse = zod.object({
 });
 
 /**
+ * @summary AI scoring retry rate over recent windows
+ */
+export const GetDashboardAiReliabilityResponse = zod
+  .object({
+    last24h: zod
+      .object({
+        totalCalls: zod
+          .number()
+          .describe(
+            "Number of VLM scoring calls completed inside this window.",
+          ),
+        retriedCalls: zod
+          .number()
+          .describe(
+            "How many of those required a second VLM call to produce valid JSON.",
+          ),
+        retryRate: zod
+          .number()
+          .describe(
+            "retriedCalls \/ totalCalls, expressed as a 0-1 decimal. 0 when totalCalls is 0.",
+          ),
+      })
+      .describe(
+        "Retry-rate stats for one rolling time window of AI scoring calls.",
+      ),
+    last7d: zod
+      .object({
+        totalCalls: zod
+          .number()
+          .describe(
+            "Number of VLM scoring calls completed inside this window.",
+          ),
+        retriedCalls: zod
+          .number()
+          .describe(
+            "How many of those required a second VLM call to produce valid JSON.",
+          ),
+        retryRate: zod
+          .number()
+          .describe(
+            "retriedCalls \/ totalCalls, expressed as a 0-1 decimal. 0 when totalCalls is 0.",
+          ),
+      })
+      .describe(
+        "Retry-rate stats for one rolling time window of AI scoring calls.",
+      ),
+  })
+  .describe(
+    "How reliably the AI scoring model is producing valid JSON on its first\nattempt. Lets managers\/engineers spot at a glance whether the model\nis misbehaving today (e.g. 30% of audits silently retried, doubling\nthe API spend) by comparing the rolling 24h window to the 7d baseline.\n",
+  );
+
+/**
  * @summary Per-area daily score trend over the last N days
  */
 export const getDashboardTrendsQueryDaysDefault = 14;

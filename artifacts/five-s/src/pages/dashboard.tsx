@@ -1,6 +1,6 @@
-import { useGetDashboardCompliance, useGetDashboardScores, useGetDashboardSummary, useListAreas, useGetAreaProfile, useGetDashboardTrends, useGetDashboardOperatorDismisses, useGetDashboardOperatorDismissesDetail, getGetDashboardOperatorDismissesDetailQueryKey, type AreaTrend, type GetDashboardTrendsShift, type OperatorDismissSummary } from "@workspace/api-client-react";
+import { useGetDashboardCompliance, useGetDashboardScores, useGetDashboardSummary, useListAreas, useGetAreaProfile, useGetDashboardTrends, useGetDashboardOperatorDismisses, useGetDashboardOperatorDismissesDetail, getGetDashboardOperatorDismissesDetailQueryKey, useGetDashboardAiReliability, type AreaTrend, type GetDashboardTrendsShift, type OperatorDismissSummary } from "@workspace/api-client-react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from "recharts";
-import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle } from "lucide-react";
+import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle, Repeat } from "lucide-react";
 import { format, parseISO, formatDistanceToNow } from "date-fns";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
@@ -126,6 +126,8 @@ export default function Dashboard() {
         </Link>
       </section>
 
+      <AiReliabilityPanel />
+
       <LearningStatusPanel />
 
       <OperatorDismissPanel />
@@ -203,6 +205,126 @@ export default function Dashboard() {
         </div>
       </section>
     </div>
+  );
+}
+
+// Surfaces how often the AI scoring model's first response failed our JSON
+// shape check and we had to spend a second API call retrying it. A clean
+// model rarely retries (<5%); a misbehaving model spikes into double digits
+// and silently doubles per-audit cost.
+function formatRetryRate(rate: number): string {
+  if (!Number.isFinite(rate) || rate <= 0) return "0%";
+  const pct = rate * 100;
+  // Sub-1% is meaningful (we don't want to round 0.4% down to "0%" and miss
+  // the signal entirely), but anything above that we render as a whole %.
+  if (pct < 1) return `${pct.toFixed(1)}%`;
+  return `${Math.round(pct)}%`;
+}
+
+function AiReliabilityPanel() {
+  const { data, isLoading } = useGetDashboardAiReliability();
+
+  if (isLoading || !data) {
+    return (
+      <section className="bg-card rounded-2xl shadow-soft p-6" data-testid="ai-reliability">
+        <div className="h-20 bg-secondary rounded-xl animate-pulse" />
+      </section>
+    );
+  }
+
+  const last24h = data.last24h;
+  const last7d = data.last7d;
+
+  // Severity tone for the headline pill: green when healthy, amber if 5%+ of
+  // calls retried in the last day, red if 15%+ — a model returning bad JSON
+  // 15% of the time means the rubric or the model itself needs attention.
+  const rate24 = last24h.retryRate;
+  const tone: "good" | "warn" | "bad" =
+    rate24 >= 0.15 ? "bad" : rate24 >= 0.05 ? "warn" : "good";
+  const pillClass =
+    tone === "bad"
+      ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+      : tone === "warn"
+      ? "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+      : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300";
+  const iconClass =
+    tone === "bad"
+      ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+      : tone === "warn"
+      ? "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+      : "bg-primary/10 text-primary";
+
+  const status =
+    tone === "bad"
+      ? "Model misbehaving"
+      : tone === "warn"
+      ? "Slightly elevated"
+      : "Healthy";
+
+  const noDataYet = last24h.totalCalls === 0 && last7d.totalCalls === 0;
+
+  return (
+    <section className="bg-card rounded-2xl shadow-soft p-6" data-testid="ai-reliability">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-5">
+        <div>
+          <p className="eyebrow">AI scoring</p>
+          <h2 className="text-lg font-semibold tracking-tight mt-1">
+            First-try retry rate
+          </h2>
+          <p className="text-[13px] text-muted-foreground mt-1 max-w-xl">
+            How often the AI's first answer didn't match the expected shape and
+            had to be retried (every retry doubles the API cost for that audit).
+          </p>
+        </div>
+        <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${iconClass}`}>
+          <Repeat className="w-4 h-4" />
+        </div>
+      </div>
+      {noDataYet ? (
+        <p className="text-[13px] text-muted-foreground" data-testid="ai-reliability-empty">
+          No AI scoring activity yet — submit an audit to start tracking.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="rounded-xl bg-secondary/40 px-4 py-3" data-testid="ai-reliability-24h">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[12px] font-medium text-muted-foreground uppercase tracking-wide">
+                Last 24h
+              </p>
+              <span className={`text-[10.5px] font-medium px-2 py-0.5 rounded-full ${pillClass}`}>
+                {status}
+              </span>
+            </div>
+            <div className="flex items-baseline gap-2 mt-2">
+              <span className="text-[26px] leading-none font-semibold tabular-nums">
+                {formatRetryRate(last24h.retryRate)}
+              </span>
+              <span className="text-[11.5px] text-muted-foreground">
+                {last24h.retriedCalls} of {last24h.totalCalls} call{last24h.totalCalls === 1 ? "" : "s"} retried
+              </span>
+            </div>
+          </div>
+          <div className="rounded-xl bg-secondary/40 px-4 py-3" data-testid="ai-reliability-7d">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[12px] font-medium text-muted-foreground uppercase tracking-wide">
+                Last 7 days
+              </p>
+              <span className="text-[10.5px] font-medium text-muted-foreground">
+                Baseline
+              </span>
+            </div>
+            <div className="flex items-baseline gap-2 mt-2">
+              <span className="text-[26px] leading-none font-semibold tabular-nums">
+                {formatRetryRate(last7d.retryRate)}
+              </span>
+              <span className="text-[11.5px] text-muted-foreground">
+                {last7d.retriedCalls} of {last7d.totalCalls} call{last7d.totalCalls === 1 ? "" : "s"} retried
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

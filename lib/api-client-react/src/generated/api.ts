@@ -30,6 +30,7 @@ import type {
   CreateNudgeBody,
   CreateSubmissionBody,
   CurrentShift,
+  DashboardAiReliability,
   DashboardSummary,
   ErrorResponse,
   Escalation,
@@ -1873,6 +1874,85 @@ export function useGetDashboardSummary<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetDashboardSummaryQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary AI scoring retry rate over recent windows
+ */
+export const getGetDashboardAiReliabilityUrl = () => {
+  return `/api/dashboard/ai-reliability`;
+};
+
+export const getDashboardAiReliability = async (
+  options?: RequestInit,
+): Promise<DashboardAiReliability> => {
+  return customFetch<DashboardAiReliability>(
+    getGetDashboardAiReliabilityUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetDashboardAiReliabilityQueryKey = () => {
+  return [`/api/dashboard/ai-reliability`] as const;
+};
+
+export const getGetDashboardAiReliabilityQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDashboardAiReliability>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDashboardAiReliability>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDashboardAiReliabilityQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDashboardAiReliability>>
+  > = ({ signal }) => getDashboardAiReliability({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDashboardAiReliability>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDashboardAiReliabilityQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDashboardAiReliability>>
+>;
+export type GetDashboardAiReliabilityQueryError = ErrorType<unknown>;
+
+/**
+ * @summary AI scoring retry rate over recent windows
+ */
+
+export function useGetDashboardAiReliability<
+  TData = Awaited<ReturnType<typeof getDashboardAiReliability>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDashboardAiReliability>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDashboardAiReliabilityQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

@@ -505,6 +505,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/DashboardSummary"
 
+  /dashboard/ai-reliability:
+    get:
+      operationId: getDashboardAiReliability
+      tags: [dashboard]
+      summary: AI scoring retry rate over recent windows
+      responses:
+        "200":
+          description: Retry-rate stats for the AI scoring pipeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardAiReliability"
+
   /dashboard/trends:
     get:
       operationId: getDashboardTrends
@@ -1990,6 +2003,35 @@ components:
           type: string
           format: date-time
       required: [nudgeId, areaId, areaName, machine, shift, message, createdAt, dismissedAt]
+
+    AiReliabilityWindow:
+      type: object
+      description: Retry-rate stats for one rolling time window of AI scoring calls.
+      properties:
+        totalCalls:
+          type: integer
+          description: Number of VLM scoring calls completed inside this window.
+        retriedCalls:
+          type: integer
+          description: How many of those required a second VLM call to produce valid JSON.
+        retryRate:
+          type: number
+          description: retriedCalls / totalCalls, expressed as a 0-1 decimal. 0 when totalCalls is 0.
+      required: [totalCalls, retriedCalls, retryRate]
+
+    DashboardAiReliability:
+      type: object
+      description: |
+        How reliably the AI scoring model is producing valid JSON on its first
+        attempt. Lets managers/engineers spot at a glance whether the model
+        is misbehaving today (e.g. 30% of audits silently retried, doubling
+        the API spend) by comparing the rolling 24h window to the 7d baseline.
+      properties:
+        last24h:
+          $ref: "#/components/schemas/AiReliabilityWindow"
+        last7d:
+          $ref: "#/components/schemas/AiReliabilityWindow"
+      required: [last24h, last7d]
 
     CurrentShift:
       type: object
