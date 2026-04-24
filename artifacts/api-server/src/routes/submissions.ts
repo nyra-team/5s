@@ -328,10 +328,17 @@ router.post("/submissions/identify-area", authMiddleware, uploadFields, async (r
 router.post("/submissions", authMiddleware, uploadFields, async (req, res): Promise<void> => {
   const { userId } = (req as any).user;
   const areaId = parseInt(req.body.areaId, 10);
-  if (isNaN(areaId)) { res.status(400).json({ error: "areaId is required" }); return; }
+  if (isNaN(areaId)) { res.status(400).json({ error: "areaId is required", code: "AREA_REQUIRED" }); return; }
 
   const file = extractFile(req);
-  if (!file) { res.status(400).json({ error: "Media file is required (use field 'media' or 'photo')" }); return; }
+  if (!file) {
+    res.status(400).json({
+      error: "Media file is required (use field 'media' or 'photo')",
+      code: "MEDIA_REQUIRED",
+      hint: "Pick a photo or video before submitting.",
+    });
+    return;
+  }
 
   const machineTag = (req.body.machineTag as string | undefined)?.trim() || null;
   const bodyShift = req.body.shift as string | undefined;
@@ -339,14 +346,24 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
   const shift = bodyShift && validShifts.includes(bodyShift) ? bodyShift : getCurrentShift().shift;
 
   const [area] = await db.select().from(areasTable).where(eq(areasTable.id, areaId));
-  if (!area) { res.status(404).json({ error: "Area not found" }); return; }
+  if (!area) { res.status(404).json({ error: "Area not found", code: "AREA_NOT_FOUND" }); return; }
 
   let pipeline;
   try {
     pipeline = await runScoringPipeline({ areaId, areaName: area.name, environmentType: area.environmentType, file, machineTag });
   } catch (err) {
+    // Pipeline only throws on infrastructure-level problems (e.g. profile load
+    // fails); the VLM itself falls back to an empty result instead of
+    // throwing. We mark this as SCORING_FAILED so the operator UI knows the
+    // upload didn't land — they should retry — and we suggest checking the
+    // capture quality, which is the only knob they actually control.
     logger.error({ err }, "Scoring pipeline failed");
-    res.status(500).json({ error: "Failed to score submission" });
+    res.status(502).json({
+      error: "Failed to score submission",
+      code: "SCORING_FAILED",
+      hint: "We couldn't analyse this capture. Try again with brighter lighting and a steadier angle.",
+      retryable: true,
+    });
     return;
   }
 
@@ -431,14 +448,27 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
 router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req, res): Promise<void> => {
   const { userId } = (req as any).user;
   const id = parseInt(String(req.params.id), 10);
-  if (isNaN(id)) { res.status(400).json({ error: "Invalid submission id" }); return; }
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid submission id", code: "INVALID_ID" }); return; }
 
   const [existing] = await db.select().from(submissionsTable).where(eq(submissionsTable.id, id));
-  if (!existing) { res.status(404).json({ error: "Submission not found" }); return; }
-  if (existing.userId !== userId) { res.status(403).json({ error: "You can only re-upload your own submissions" }); return; }
+  if (!existing) { res.status(404).json({ error: "Submission not found", code: "SUBMISSION_NOT_FOUND" }); return; }
+  if (existing.userId !== userId) {
+    res.status(403).json({
+      error: "You can only re-upload your own submissions",
+      code: "FORBIDDEN",
+    });
+    return;
+  }
 
   const file = extractFile(req);
-  if (!file) { res.status(400).json({ error: "Media file is required" }); return; }
+  if (!file) {
+    res.status(400).json({
+      error: "Media file is required",
+      code: "MEDIA_REQUIRED",
+      hint: "Pick a photo or video before re-uploading.",
+    });
+    return;
+  }
 
   const machineTag = (req.body.machineTag as string | undefined)?.trim() || existing.machineTag || null;
   const bodyShift = req.body.shift as string | undefined;
@@ -451,8 +481,15 @@ router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req
   try {
     pipeline = await runScoringPipeline({ areaId: existing.areaId, areaName: area?.name ?? "Unknown", environmentType: area?.environmentType ?? "factory", file, machineTag });
   } catch (err) {
+    // See create handler — same SCORING_FAILED contract so the operator UI
+    // can present an actionable retry hint instead of a generic toast.
     logger.error({ err }, "Scoring pipeline failed on reupload");
-    res.status(500).json({ error: "Failed to score submission" });
+    res.status(502).json({
+      error: "Failed to score submission",
+      code: "SCORING_FAILED",
+      hint: "We couldn't analyse this capture. Try again with brighter lighting and a steadier angle.",
+      retryable: true,
+    });
     return;
   }
 

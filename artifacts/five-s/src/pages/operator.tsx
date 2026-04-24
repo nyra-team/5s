@@ -101,6 +101,79 @@ function scoreTone(percent: number) {
   return { text: "text-rose-700 dark:text-rose-300", bg: "bg-rose-50 dark:bg-rose-500/15" };
 }
 
+export interface UploadErrorToast {
+  title: string;
+  description: string;
+  variant: "destructive";
+}
+
+/**
+ * Build the toast payload for a failed createSubmission / reuploadSubmission
+ * call. Inspects the (orval-generated) ApiError thrown by customFetch for the
+ * structured `{ code, hint, error }` envelope our /submissions endpoints
+ * attach so the operator gets an actionable next step instead of the generic
+ * "Submission failed". Exported for unit testing.
+ *
+ * Distinguishes:
+ * - Network failure (no `status` on the error)        → "check your connection"
+ * - SCORING_FAILED                                    → "couldn't score" + capture hint
+ * - MEDIA_REQUIRED / FORBIDDEN / SUBMISSION_NOT_FOUND → preserve the API hint/error
+ * - Anything else                                     → fall back to the API
+ *                                                       message if present
+ */
+export function buildUploadErrorToast(err: unknown, fallbackTitle: string): UploadErrorToast {
+  const e = err as { status?: number; data?: unknown; message?: string } | null;
+  const data = (e && typeof e === "object" ? e.data : null) as
+    | { code?: string; hint?: string; error?: string; message?: string }
+    | null;
+  const code = typeof data?.code === "string" ? data.code : null;
+  const hint = typeof data?.hint === "string" ? data.hint : null;
+  const apiMessage =
+    (typeof data?.error === "string" && data.error) ||
+    (typeof data?.message === "string" && data.message) ||
+    null;
+
+  if (e && typeof e.status !== "number") {
+    return {
+      variant: "destructive",
+      title: fallbackTitle,
+      description: "Couldn't reach the server. Check your connection and try again.",
+    };
+  }
+
+  if (code === "SCORING_FAILED") {
+    return {
+      variant: "destructive",
+      title: "Couldn't score your capture",
+      description:
+        hint ??
+        "The scoring service couldn't analyse this capture. Try again with brighter lighting and a steadier angle.",
+    };
+  }
+
+  if (code === "MEDIA_REQUIRED") {
+    return {
+      variant: "destructive",
+      title: fallbackTitle,
+      description: hint ?? apiMessage ?? "Pick a photo or video before submitting.",
+    };
+  }
+
+  if (code === "FORBIDDEN" || code === "SUBMISSION_NOT_FOUND") {
+    return {
+      variant: "destructive",
+      title: fallbackTitle,
+      description: apiMessage ?? "You can't update this submission.",
+    };
+  }
+
+  return {
+    variant: "destructive",
+    title: fallbackTitle,
+    description: hint ?? apiMessage ?? "There was an error uploading. Please try again.",
+  };
+}
+
 // Lightweight, keyword-driven severity inference for AI suggestion strings.
 // The model returns plain text actions today (no per-suggestion severity
 // field in the API contract), so we infer one client-side using the same
@@ -1131,9 +1204,23 @@ export function AreaCard({
     clearLocalCaptureState();
   };
 
+  const onUploadError = (err: unknown, fallbackTitle: string) => {
+    toast(buildUploadErrorToast(err, fallbackTitle));
+  };
+
   const onSuccess = (msg: string, result?: Submission) => {
     const topSuggestion = result?.suggestionsJson?.[0];
-    if (result && topSuggestion) {
+    // FALLBACK = the upload landed and the row was saved, but the VLM didn't
+    // produce a real score. Surface that distinctly so the operator knows to
+    // re-capture rather than thinking they got a real "0%" audit.
+    if (result?.scoringMode === "FALLBACK") {
+      toast({
+        variant: "destructive",
+        title: `${msg} — couldn't be scored`,
+        description:
+          "Saved your capture, but our scoring service couldn't grade it. Try re-uploading with brighter lighting and a steadier angle.",
+      });
+    } else if (result && topSuggestion) {
       const percent = Math.round(result.scoreTotal * 4);
       const tone = scoreTone(percent);
       toast({
@@ -1175,12 +1262,7 @@ export function AreaCard({
         },
         {
           onSuccess: (data) => onSuccess("Walk-through re-uploaded", data),
-          onError: () =>
-            toast({
-              variant: "destructive",
-              title: "Re-upload failed",
-              description: "There was an error uploading. Please try again.",
-            }),
+          onError: (err) => onUploadError(err, "Re-upload failed"),
         }
       );
     } else {
@@ -1198,12 +1280,7 @@ export function AreaCard({
         },
         {
           onSuccess: (data) => onSuccess("Submitted", data),
-          onError: () =>
-            toast({
-              variant: "destructive",
-              title: "Submission failed",
-              description: "There was an error uploading. Please try again.",
-            }),
+          onError: (err) => onUploadError(err, "Submission failed"),
         }
       );
     }
