@@ -47,7 +47,7 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
+- `pnpm --filter @workspace/db run push` — push DB schema changes. **Dev/staging only — destructive.** Runs non-interactively and uses `--force` (will drop columns/tables removed from the schema). Do NOT run against production. A `prepare-push` step first drops legacy tables/columns that drizzle-kit would otherwise prompt to rename (currently `ideal_photos` table and `submissions.similarity_to_ideal` column), then `drizzle-kit push --force` applies the diff. Add new legacy entries to `lib/db/scripts/prepare-push.mjs` whenever a table/column is removed from `lib/db/src/schema/*` so future schema changes stay non-interactive.
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 - `pnpm --filter @workspace/api-server run test` — run API integration tests (vitest + supertest, hits the dev DB; isolates by tagging fixtures with a per-run prefix)
 - `pnpm --filter @workspace/five-s run test` — run frontend component tests (vitest + jsdom + @testing-library/react)
@@ -58,12 +58,12 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 
 - **users**: id, email, password_hash, role (OPERATOR/MANAGER)
 - **areas**: id, name (6 manufacturing areas)
-- **ideal_photos**: id, area_id, image_url, embedding_json, created_at
-- **submissions**: id, area_id, user_id, shift, score_total, score_json, suggestions_json, image_url, embedding_hash, similarity_to_ideal, ai_total_score, ai_pillars_json, ai_recommendations_json, ai_issues_json, model_version, scoring_mode, created_at
+- **submissions**: id, area_id, user_id, shift, score_total, score_json, suggestions_json, image_url, media_type, keyframes_json, machine_tag, failing_pillars_json, embedding_hash, ai_total_score, ai_pillars_json, ai_recommendations_json, ai_issues_json, model_version, scoring_mode, created_at
 - **labels**: id, submission_id, labeled_by_user_id, pillars_json, total_score, created_at
 - **escalations**: id, submission_id, area_id, operator_id, score_total, score_percent, failing_pillars_json, recommended_actions_json, evidence_urls_json, status (OPEN/ACKNOWLEDGED/RESOLVED), acknowledged/resolved metadata
 - **nudges**: id, area_id, machine, shift, operator_id, manager_id, dismissed_at, created_at — manager-to-operator pings de-duped per area+machine+shift while undismissed
-- **area_profiles / area_schedules**: learned area metadata + per-machine cadence
+- **area_profiles**: id, area_id (unique), status (LEARNING/ACTIVE), submissions_count, summary, items_json, machines_json, layout_json, common_issues_json, updated_at — one row per area, learned metadata about the workspace
+- **area_schedules**: per-machine cadence learned alongside `area_profiles`
 
 ## Manager triage flow (Task 20)
 
