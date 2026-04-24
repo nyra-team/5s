@@ -13,8 +13,10 @@ import { authMiddleware, requireRole } from "../lib/auth";
 import {
   getCurrentShift,
   getISTShiftRange,
-  getISTParts,
+  getZonedParts,
+  getShiftConfig,
   getTodayDateString,
+  formatZonedDate,
 } from "../lib/scoring";
 import {
   getLatestActiveNudgeByArea,
@@ -28,14 +30,16 @@ const LOW_SCORE_PERCENT = 60;
 const AREA_BASELINE_KEY = "";
 
 router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, res): Promise<void> => {
+  const cfg = getShiftConfig();
   const { shift } = getCurrentShift();
-  // For shift "C" before 6 AM IST, getISTShiftRange anchors to "yesterday 22:00 IST → today 06:00 IST".
+  // For shift "C" before A-start, getISTShiftRange anchors to "yesterday
+  // C-start → today A-start" in the configured shift timezone.
   const { start, end } = getISTShiftRange(undefined, shift);
   const date = getTodayDateString();
-  // For shift C straddling midnight, label by the IST day the shift began.
-  const shiftDate = shift === "C" && getISTParts().hour < 6
-    ? new Date(start.getTime() + (5 * 60 + 30) * 60 * 1000).toISOString().slice(0, 10)
-    : date;
+  // For shift C straddling midnight, label by the calendar day the shift
+  // began (in the configured shift timezone).
+  const shiftDate =
+    shift === "C" && getZonedParts().hour < cfg.startHours.A ? formatZonedDate(start) : date;
 
   // Pending areas: areas that have NOT received any submission this shift.
   const submittedThisShift = await db

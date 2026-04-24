@@ -7,23 +7,24 @@ import {
   GetDashboardTrendsQueryParams,
 } from "@workspace/api-zod";
 import { authMiddleware, requireRole } from "../lib/auth";
-import { getCurrentShift, getTodayDateString, getISTDayRange, getISTShiftRange } from "../lib/scoring";
+import {
+  getISTDayRange,
+  getISTShiftRange,
+  getShiftConfig,
+  getZonedParts,
+  formatZonedDate,
+} from "../lib/scoring";
 
 const router: IRouter = Router();
 
-// Date ranges are anchored to IST so "today" and per-shift filters match the
-// IST clock operators see, regardless of where the server is running. A Date
-// passed in (used by an internal call site) is converted via its IST calendar
-// date.
+// Date ranges are anchored to the facility's configured shift timezone so
+// "today" and per-shift filters match the clock operators see, regardless of
+// where the server is running. A Date passed in (used by an internal call
+// site) is converted via its calendar date in that timezone.
 function normalizeDateInput(input: string | Date | undefined): string | undefined {
   if (!input) return undefined;
   if (typeof input === "string") return input;
-  // If a Date is passed, treat it as the IST calendar date of that instant.
-  const shifted = new Date(input.getTime() + (5 * 60 + 30) * 60 * 1000);
-  const y = shifted.getUTCFullYear();
-  const m = String(shifted.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(shifted.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return formatZonedDate(input);
 }
 
 function getDayRange(dateStr?: string | Date) {
@@ -206,16 +207,26 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
   const days = parsed.success ? parsed.data.days : 14;
   const shift = parsed.success ? parsed.data.shift : undefined;
 
-  // Window end = end of today (IST), window start = start of the day (today - days + 1).
-  const todayRange = getISTDayRange();
-  const windowEnd = todayRange.end;
-  const startRange = getISTDayRange(
-    (() => {
-      const d = new Date(todayRange.start.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
-      return normalizeDateInput(d);
-    })()
-  );
-  const windowStart = startRange.start;
+  // Build the contiguous list of calendar-day labels the chart needs
+  // (oldest → today) by walking backwards from today using calendar-day
+  // arithmetic on YMD parts. We deliberately do NOT step by 24h UTC chunks:
+  // across DST transitions a local day is 23 or 25 hours of UTC, so
+  // fixed-millisecond stepping would skip or duplicate days for facilities
+  // in DST-observing zones (e.g. America/New_York).
+  const today = getZonedParts();
+  const dayLabels: string[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    // Date.UTC normalizes negative day-of-month into the previous month/year,
+    // and the YMD result is independent of UTC vs local clock — we only use
+    // it to advance calendar dates.
+    const stepped = new Date(Date.UTC(today.year, today.month, today.day - i));
+    const y = stepped.getUTCFullYear();
+    const m = String(stepped.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(stepped.getUTCDate()).padStart(2, "0");
+    dayLabels.push(`${y}-${m}-${d}`);
+  }
+  const windowStart = getISTDayRange(dayLabels[0]).start;
+  const windowEnd = getISTDayRange(dayLabels[dayLabels.length - 1]).end;
 
   const areas = await db.select().from(areasTable);
   if (areas.length === 0) {
@@ -223,7 +234,10 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
     return;
   }
 
-  const istDayExpr = sql<string>`to_char(${submissionsTable.createdAt} at time zone 'Asia/Kolkata', 'YYYY-MM-DD')`;
+  // Use the configured shift timezone (validated at startup) so trend rows
+  // bucket by the same calendar day operators see in their timezone.
+  const shiftTz = getShiftConfig().timeZone;
+  const istDayExpr = sql<string>`to_char(${submissionsTable.createdAt} at time zone ${shiftTz}, 'YYYY-MM-DD')`;
 
   // When a shift filter is provided, every day's average reflects only that
   // shift's submissions; the date window itself is unchanged.
@@ -257,14 +271,6 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
       count: r.count,
     });
     byArea.set(r.areaId, inner);
-  }
-
-  // Build the contiguous list of IST date strings the chart needs (oldest → today).
-  const dayLabels: string[] = [];
-  for (let i = 0; i < days; i++) {
-    const dayStart = new Date(windowStart.getTime() + i * 24 * 60 * 60 * 1000);
-    const label = normalizeDateInput(dayStart);
-    if (label) dayLabels.push(label);
   }
 
   const profiles = await db.select().from(areaProfilesTable);

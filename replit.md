@@ -118,3 +118,17 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - `VITE_NIGHT_SHIFT_START_HOUR` — hour (0-23) the "Auto" theme should switch to dark. Default `22`.
 - `VITE_NIGHT_SHIFT_END_HOUR` — hour (0-23) the "Auto" theme should switch back to light. Default `6`. May be less than the start hour to wrap across midnight.
 - `VITE_NIGHT_SHIFT_TZ` — IANA timezone the night-shift window is evaluated in. Default `Asia/Kolkata`.
+
+## Backend Shift Config (api-server env)
+
+The API server's notion of "current shift", per-shift dashboard windows, the
+`/shift/current` and `/shift/live` endpoints, and shift-anchored due dates all
+read from these per-facility env vars at startup. Defaults match the legacy
+06/14/22 IST schedule so existing deployments need no changes.
+
+- `SHIFT_TIMEZONE` — IANA timezone the shift clock is anchored to. Default `Asia/Kolkata`.
+- `SHIFT_A_START_HOUR` — hour (0-23) shift A starts. Default `6`.
+- `SHIFT_B_START_HOUR` — hour (0-23) shift B starts. Default `14`.
+- `SHIFT_C_START_HOUR` — hour (0-23) shift C starts. Default `22`. Shift C wraps across midnight up to the next day's `SHIFT_A_START_HOUR`.
+
+Constraints: must satisfy `SHIFT_A_START_HOUR < SHIFT_B_START_HOUR < SHIFT_C_START_HOUR`. Invalid values silently fall back to the defaults.
