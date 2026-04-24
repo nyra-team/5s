@@ -2074,6 +2074,84 @@ export function AreaCard({
 
 /* ----------------------------- Nudge banner ------------------------------ */
 
+// How long the "Nudge dismissed · Undo" toast stays open before it auto-
+// closes. Operators on a busy floor can miss the silent disappearance, so
+// we surface this same value to a visible countdown bar + numeric label
+// rendered inside the toast (see UndoCountdown* below) and to the
+// `setTimeout` that actually closes the toast — keeping all three in lock-
+// step is what guarantees the indicator hits zero exactly when the toast
+// goes away.
+const NUDGE_UNDO_TOAST_MS = 6000;
+
+/**
+ * Thin progress bar that drains from 100% → 0% over `durationMs`, rendered
+ * inside the Undo toast description so the operator can see how much time
+ * is left to tap Undo. Self-managed: it captures the current time on mount
+ * and ticks every 100 ms, so it stays aligned with the parent's
+ * `setTimeout(dismiss, durationMs)` even though the two are separate
+ * timers (both anchor on the same React mount tick).
+ */
+function UndoCountdownBar({ durationMs }: { durationMs: number }) {
+  const [remaining, setRemaining] = useState(durationMs);
+  useEffect(() => {
+    const start = Date.now();
+    const id = window.setInterval(() => {
+      const left = Math.max(0, durationMs - (Date.now() - start));
+      setRemaining(left);
+      if (left === 0) window.clearInterval(id);
+    }, 100);
+    return () => window.clearInterval(id);
+  }, [durationMs]);
+  const pct = (remaining / durationMs) * 100;
+  return (
+    <div
+      role="progressbar"
+      aria-label="Time remaining to undo"
+      aria-valuemin={0}
+      aria-valuemax={Math.ceil(durationMs / 1000)}
+      aria-valuenow={Math.ceil(remaining / 1000)}
+      className="mt-2 h-1 w-full overflow-hidden rounded-full bg-foreground/10"
+      data-testid="nudge-undo-countdown-bar"
+    >
+      <div
+        className="h-full bg-foreground/40 transition-[width] duration-100 ease-linear"
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Numeric "(Ns…)" suffix shown on the Undo action button, kept on its own
+ * 1 Hz interval (rather than reusing the bar's 100 ms tick) so the label
+ * doesn't flicker every frame. Counts down to "0s" right as the toast
+ * auto-dismisses.
+ */
+function UndoCountdownLabel({ durationMs }: { durationMs: number }) {
+  const [secondsLeft, setSecondsLeft] = useState(Math.ceil(durationMs / 1000));
+  useEffect(() => {
+    const start = Date.now();
+    const id = window.setInterval(() => {
+      const left = Math.max(0, durationMs - (Date.now() - start));
+      setSecondsLeft(Math.ceil(left / 1000));
+      if (left === 0) window.clearInterval(id);
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [durationMs]);
+  return (
+    <span className="inline-flex items-center">
+      Undo
+      <span
+        className="ml-1 text-xs font-normal opacity-70 tabular-nums"
+        data-testid="nudge-undo-countdown-label"
+        aria-hidden="true"
+      >
+        ({secondsLeft}s…)
+      </span>
+    </span>
+  );
+}
+
 // Renders the manager's prompts inline on a pending area card. Picks the most
 // recent active nudge as the primary message; if there are multiple (rare —
 // area-level + machine-specific), shows a compact "+N more" hint instead of
@@ -2138,25 +2216,42 @@ function NudgeBanner({
           // refers to the right row even if `nudges` has since changed.
           const dismissedNudgeId = primary.id;
           const t = toast({
+            // Radix's ToastProvider defaults `duration` to 5000ms — without
+            // this override the toast would auto-close a full second before
+            // the inline countdown hit zero, which is the exact "vanished
+            // without warning" surprise this whole feature is meant to
+            // remove. Pin both the Radix close timer and the visual
+            // countdown to the same NUDGE_UNDO_TOAST_MS budget so they
+            // finish in lock-step.
+            duration: NUDGE_UNDO_TOAST_MS,
             title: "Nudge dismissed",
-            description: primary.machine
-              ? `Cleared “${primary.machine}” reminder.`
-              : "Cleared the manager's reminder.",
+            description: (
+              <div>
+                <p>
+                  {primary.machine
+                    ? `Cleared “${primary.machine}” reminder.`
+                    : "Cleared the manager's reminder."}
+                </p>
+                <UndoCountdownBar durationMs={NUDGE_UNDO_TOAST_MS} />
+              </div>
+            ),
             action: (
               <ToastAction
                 altText="Undo dismiss"
                 data-testid={`button-undo-dismiss-nudge-${dismissedNudgeId}`}
                 onClick={() => handleUndo(dismissedNudgeId)}
               >
-                Undo
+                <UndoCountdownLabel durationMs={NUDGE_UNDO_TOAST_MS} />
               </ToastAction>
             ),
           });
-          // The shadcn useToast `TOAST_REMOVE_DELAY` is effectively infinite,
-          // so we own the lifetime here: auto-close after ~6s. Calling
-          // `dismiss` on an already-closed toast is a no-op, so this is safe
-          // even if the user tapped Undo first.
-          window.setTimeout(() => t.dismiss(), 6000);
+          // Defensive backstop in case Radix's own auto-close timer is
+          // paused (e.g. the user has been hovering the toast, which Radix
+          // treats as "keep alive"). The shadcn useToast `TOAST_REMOVE_DELAY`
+          // is effectively infinite, so without this the toast could linger
+          // far past the countdown reaching zero. Calling `dismiss` on an
+          // already-closed toast is a no-op.
+          window.setTimeout(() => t.dismiss(), NUDGE_UNDO_TOAST_MS + 250);
         },
         onError: () =>
           toast({
