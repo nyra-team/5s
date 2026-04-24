@@ -437,6 +437,30 @@ async function dispatch(
   await markEscalationsNotified(events.map((e) => e.escalationId));
 }
 
+export interface RecoverySweepResult {
+  /** Number of un-notified rows this process atomically claimed (recent + too-old). */
+  claimed: number;
+  /**
+   * Number of recent (in-window) rows for which we invoked `dispatch()`. This
+   * is the right counter for "exactly-once across concurrent sweeps" — every
+   * claimed in-window row gets exactly one dispatch attempt, owned by exactly
+   * one process. Whether the underlying provider (Slack webhook, Resend) then
+   * succeeds is a separate concern; failures are logged inside `dispatch()`
+   * and counted in `dispatchFailures`.
+   */
+  dispatchAttempted: number;
+  /**
+   * Number of per-area `dispatch()` invocations that threw. The grouped
+   * dispatch path uses `Promise.allSettled` internally, so this is normally 0
+   * even when one provider is misbehaving; it goes non-zero only on
+   * unexpected exceptions outside the settled batch (e.g. a DB failure while
+   * loading manager preferences).
+   */
+  dispatchFailures: number;
+  /** Number of rows older than the recovery window that were marked undeliverable. */
+  skippedTooOld: number;
+}
+
 /**
  * On API startup, find any escalations that were created recently but never
  * had a notification dispatched (their `notified_at` is still NULL). This
@@ -446,8 +470,25 @@ async function dispatch(
  *
  * Escalations older than the recovery window are explicitly logged as
  * undeliverable and stamped notified_at = now() so we don't re-warn forever.
+ *
+ * Concurrency safety:
+ * If two API server processes start at the same time (rolling deploy, an
+ * accidental second replica) they would both run this sweep and a naive
+ * `SELECT ... WHERE notified_at IS NULL` would hand both processes the same
+ * rows, double-emailing managers. We instead claim ownership atomically with
+ *   `UPDATE escalations SET notified_at = now() WHERE notified_at IS NULL ... RETURNING id`
+ * Postgres serializes the writes; the second process sees `notified_at` is
+ * already set and the row is excluded from its RETURNING set. Each row is
+ * dispatched by exactly one process.
+ *
+ * Trade-off: stamping `notified_at` BEFORE we attempt dispatch means a
+ * dispatch failure (e.g. transient Slack/email outage) is not retried by
+ * the next startup sweep. We accept that — the previous "stamp after
+ * dispatch" design left the door open to double-sends on every concurrent
+ * boot, which is the louder user-visible failure. Managers auditing the
+ * trail can still find the in-process error logs from `dispatch()`.
  */
-export async function recoverPendingEscalationNotifications(): Promise<void> {
+export async function recoverPendingEscalationNotifications(): Promise<RecoverySweepResult> {
   const lookbackMs = recoveryWindowMs();
   const cutoff = new Date(Date.now() - lookbackMs);
   // Only consider escalations created strictly before this process started
@@ -456,7 +497,33 @@ export async function recoverPendingEscalationNotifications(): Promise<void> {
   // dispatch and double-send to managers.
   const bootCutoff = new Date();
 
-  let unnotified: Array<{
+  // Atomically claim every unnotified row in scope. Concurrent sweeps from
+  // a sibling process see the rows we won as already-notified and won't
+  // try to dispatch them. The returned IDs are the ones THIS process owns.
+  let claimedIds: number[];
+  try {
+    const claimedRows = await db
+      .update(escalationsTable)
+      .set({ notifiedAt: new Date() })
+      .where(
+        and(
+          isNull(escalationsTable.notifiedAt),
+          lt(escalationsTable.createdAt, bootCutoff),
+        ),
+      )
+      .returning({ id: escalationsTable.id });
+    claimedIds = claimedRows.map((r) => r.id);
+  } catch (err) {
+    logger.error({ err }, "notify: startup recovery sweep failed to claim escalations");
+    return { claimed: 0, dispatchAttempted: 0, dispatchFailures: 0, skippedTooOld: 0 };
+  }
+
+  if (claimedIds.length === 0) {
+    logger.info("notify: startup recovery sweep found no unnotified escalations");
+    return { claimed: 0, dispatchAttempted: 0, dispatchFailures: 0, skippedTooOld: 0 };
+  }
+
+  let claimedRows: Array<{
     escalationId: number;
     submissionId: number;
     areaId: number;
@@ -468,7 +535,7 @@ export async function recoverPendingEscalationNotifications(): Promise<void> {
     createdAt: Date;
   }>;
   try {
-    unnotified = await db
+    claimedRows = await db
       .select({
         escalationId: escalationsTable.id,
         submissionId: escalationsTable.submissionId,
@@ -483,28 +550,31 @@ export async function recoverPendingEscalationNotifications(): Promise<void> {
       .from(escalationsTable)
       .innerJoin(areasTable, eq(escalationsTable.areaId, areasTable.id))
       .innerJoin(usersTable, eq(escalationsTable.operatorId, usersTable.id))
-      .where(
-        and(
-          isNull(escalationsTable.notifiedAt),
-          lt(escalationsTable.createdAt, bootCutoff),
-        ),
-      );
+      .where(inArray(escalationsTable.id, claimedIds));
   } catch (err) {
-    logger.error({ err }, "notify: startup recovery sweep failed to query escalations");
-    return;
+    // We've already stamped notified_at in the claim step above, so these
+    // rows are now invisible to future recovery sweeps (in this process or
+    // any other). Log loudly so an operator can dig out the IDs from the
+    // claim that we never managed to dispatch.
+    logger.error(
+      { err, claimedIds },
+      "notify: startup recovery — failed to load joined data for claimed escalations (alerts lost)",
+    );
+    return {
+      claimed: claimedIds.length,
+      dispatchAttempted: 0,
+      dispatchFailures: 0,
+      skippedTooOld: 0,
+    };
   }
 
-  if (unnotified.length === 0) {
-    logger.info("notify: startup recovery sweep found no unnotified escalations");
-    return;
-  }
-
-  const tooOld = unnotified.filter((row) => row.createdAt < cutoff);
-  const recent = unnotified.filter((row) => row.createdAt >= cutoff);
+  const tooOld = claimedRows.filter((row) => row.createdAt < cutoff);
+  const recent = claimedRows.filter((row) => row.createdAt >= cutoff);
 
   if (tooOld.length > 0) {
     // Explicitly log so a manager auditing "why didn't I get an alert?" can
-    // see the trail. We still stamp notified_at so we don't re-log forever.
+    // see the trail. notified_at was already stamped by the atomic claim
+    // above so we don't re-log these on the next restart.
     for (const row of tooOld) {
       logger.warn(
         {
@@ -517,10 +587,16 @@ export async function recoverPendingEscalationNotifications(): Promise<void> {
         "notify: undeliverable — escalation older than recovery window, marking notified",
       );
     }
-    await markEscalationsNotified(tooOld.map((r) => r.escalationId));
   }
 
-  if (recent.length === 0) return;
+  if (recent.length === 0) {
+    return {
+      claimed: claimedIds.length,
+      dispatchAttempted: 0,
+      dispatchFailures: 0,
+      skippedTooOld: tooOld.length,
+    };
+  }
 
   const byArea = new Map<number, EscalationNotification[]>();
   for (const row of recent) {
@@ -553,16 +629,31 @@ export async function recoverPendingEscalationNotifications(): Promise<void> {
     "notify: startup recovery — re-dispatching unnotified escalations",
   );
 
+  // Track per-area dispatch outcomes. `dispatchAttempted` is the right
+  // counter for "exactly-once across concurrent sweeps" — every claimed
+  // in-window row is fed to dispatch() exactly once by exactly one process.
+  // `dispatchFailures` is the count of in-window rows whose dispatch call
+  // raised an unexpected exception (the grouped path uses Promise.allSettled
+  // internally so this is normally 0 even with a flaky provider).
+  let dispatchFailures = 0;
   for (const events of byArea.values()) {
     try {
       await dispatch(events, null);
     } catch (err) {
+      dispatchFailures += events.length;
       logger.error(
         { err, areaId: events[0].areaId, count: events.length },
-        "notify: startup recovery dispatch failed (will retry on next restart)",
+        "notify: startup recovery dispatch failed (alerts lost — already claimed)",
       );
     }
   }
+
+  return {
+    claimed: claimedIds.length,
+    dispatchAttempted: recent.length,
+    dispatchFailures,
+    skippedTooOld: tooOld.length,
+  };
 }
 
 function formatPillars(pillars: string[]): string {

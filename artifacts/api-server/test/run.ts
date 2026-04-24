@@ -23,6 +23,7 @@ import "./backfill-reasoning.test.js";
 import "./identify-area.test.js";
 import "./reping-scheduler.test.js";
 import "./sweep.test.js";
+import "./recover-pending-notifications.test.js";
 
 after(async () => {
   await closeServer();
