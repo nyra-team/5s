@@ -1,7 +1,7 @@
-import { useGetDashboardCompliance, useGetDashboardScores, useGetDashboardSummary, useListAreas, useGetAreaProfile, useGetDashboardTrends, type AreaTrend, type GetDashboardTrendsShift } from "@workspace/api-client-react";
+import { useGetDashboardCompliance, useGetDashboardScores, useGetDashboardSummary, useListAreas, useGetAreaProfile, useGetDashboardTrends, useGetDashboardOperatorDismisses, useGetDashboardOperatorDismissesDetail, getGetDashboardOperatorDismissesDetailQueryKey, type AreaTrend, type GetDashboardTrendsShift, type OperatorDismissSummary } from "@workspace/api-client-react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from "recharts";
-import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp } from "lucide-react";
-import { format, parseISO } from "date-fns";
+import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle } from "lucide-react";
+import { format, parseISO, formatDistanceToNow } from "date-fns";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -127,6 +127,8 @@ export default function Dashboard() {
       </section>
 
       <LearningStatusPanel />
+
+      <OperatorDismissPanel />
 
       <LearningTrendPanel />
 
@@ -536,5 +538,219 @@ function AreaTrendCard({ trend }: { trend: AreaTrend }) {
         </p>
       )}
     </div>
+  );
+}
+
+type DismissDays = 7 | 14 | 30;
+const DISMISS_DAYS_OPTIONS: DismissDays[] = [7, 14, 30];
+
+// Remember the manager's chosen dismiss-history window between visits.
+const DISMISS_DAYS_KEY = "fivesh.dashboard.dismissDays";
+
+function readPersistedDismissDays(): DismissDays {
+  if (typeof window === "undefined") return 7;
+  try {
+    const raw = window.localStorage.getItem(DISMISS_DAYS_KEY);
+    if (!raw) return 7;
+    const n = Number(raw) as DismissDays;
+    return DISMISS_DAYS_OPTIONS.includes(n) ? n : 7;
+  } catch { return 7; }
+}
+
+// Per-operator history of nudges they cleared without re-capturing evidence.
+// Surfaces repeat "swipe-away" patterns so managers can coach the right people
+// instead of guessing from the live shift snapshot. Each row is expandable
+// into the underlying nudges (area, machine, when).
+function OperatorDismissPanel() {
+  const [days, setDays] = useState<DismissDays>(readPersistedDismissDays);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try { window.localStorage.setItem(DISMISS_DAYS_KEY, String(days)); } catch { /* quota / private mode */ }
+  }, [days]);
+
+  // Collapse any open drill-down when the window changes — the previously
+  // selected operator may no longer be in the new list.
+  useEffect(() => { setExpandedId(null); }, [days]);
+
+  const { data: rows, isLoading } = useGetDashboardOperatorDismisses({ days });
+
+  return (
+    <section
+      className="bg-card rounded-2xl shadow-soft p-6"
+      data-testid="dashboard-operator-dismisses"
+    >
+      <div className="flex flex-col gap-4 mb-5 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="eyebrow">Operator behaviour</p>
+          <h2 className="text-lg font-semibold tracking-tight mt-1">
+            Dismissed without re-capturing ({days} days)
+          </h2>
+          <p className="text-[13px] text-muted-foreground mt-1">
+            Operators ranked by how many nudges they swiped away without submitting fresh evidence. Tap a row to see what was silenced.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 lg:flex-shrink-0" data-testid="dismiss-days-toggle">
+          <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+            Window
+          </span>
+          <ToggleGroup
+            type="single"
+            size="sm"
+            value={String(days)}
+            onValueChange={(v) => {
+              if (!v) return;
+              const next = Number(v) as DismissDays;
+              if (DISMISS_DAYS_OPTIONS.includes(next)) setDays(next);
+            }}
+            className="gap-0 rounded-lg border border-border bg-secondary/40 p-0.5"
+          >
+            {DISMISS_DAYS_OPTIONS.map((d) => (
+              <ToggleGroupItem
+                key={d}
+                value={String(d)}
+                aria-label={`${d} days`}
+                data-testid={`dismiss-days-${d}`}
+                className="h-7 px-2.5 text-[12px] data-[state=on]:bg-card data-[state=on]:shadow-soft"
+              >
+                {d}d
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          <div className="hidden lg:flex w-8 h-8 rounded-full bg-amber-50 dark:bg-amber-500/15 items-center justify-center">
+            <XCircle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+          </div>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="h-20 bg-secondary rounded-xl animate-pulse" />
+      ) : !rows || rows.length === 0 ? (
+        <div
+          className="rounded-xl bg-secondary/30 px-4 py-6 text-center text-[13px] text-muted-foreground"
+          data-testid="dashboard-operator-dismisses-empty"
+        >
+          No dismissals without re-capture in the last {days} days. Operators are following up on every nudge.
+        </div>
+      ) : (
+        <ul className="divide-y divide-border rounded-xl bg-secondary/20 overflow-hidden">
+          {rows.map((row) => (
+            <OperatorDismissRow
+              key={row.operatorId}
+              row={row}
+              days={days}
+              expanded={expandedId === row.operatorId}
+              onToggle={() =>
+                setExpandedId(expandedId === row.operatorId ? null : row.operatorId)
+              }
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function OperatorDismissRow({
+  row,
+  days,
+  expanded,
+  onToggle,
+}: {
+  row: OperatorDismissSummary;
+  days: number;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  // Only fetch the drill-down once the row is opened. React Query caches it,
+  // so subsequent expansions of the same row are instant.
+  const detailParams = { operatorId: row.operatorId, days };
+  const { data: detail, isLoading } = useGetDashboardOperatorDismissesDetail(
+    detailParams,
+    {
+      query: {
+        enabled: expanded,
+        queryKey: getGetDashboardOperatorDismissesDetailQueryKey(detailParams),
+      },
+    },
+  );
+
+  const lastDismissed = new Date(row.lastDismissedAt);
+
+  return (
+    <li data-testid={`operator-dismiss-row-${row.operatorId}`}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-secondary/40 transition-colors"
+      >
+        <span className="w-6 flex justify-center text-muted-foreground">
+          {expanded ? (
+            <ChevronDown className="w-4 h-4" />
+          ) : (
+            <ChevronRight className="w-4 h-4" />
+          )}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13.5px] font-medium truncate">{row.operatorEmail}</p>
+          <p className="text-[11.5px] text-muted-foreground">
+            Last dismissal {formatDistanceToNow(lastDismissed, { addSuffix: true })}
+          </p>
+        </div>
+        <span
+          className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300 tabular-nums"
+          data-testid={`operator-dismiss-count-${row.operatorId}`}
+        >
+          {row.dismissCount} dismiss{row.dismissCount === 1 ? "" : "es"}
+        </span>
+      </button>
+      {expanded && (
+        <div
+          className="px-4 pb-4 pl-13"
+          data-testid={`operator-dismiss-detail-${row.operatorId}`}
+        >
+          {isLoading ? (
+            <div className="h-12 bg-secondary rounded-lg animate-pulse" />
+          ) : !detail || detail.length === 0 ? (
+            <p className="text-[12px] text-muted-foreground italic">
+              Nothing to drill into in this window.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {detail.map((n) => {
+                const dismissedAt = new Date(n.dismissedAt);
+                return (
+                  <li
+                    key={n.nudgeId}
+                    className="rounded-lg bg-card border border-border px-3 py-2 flex items-start justify-between gap-3"
+                    data-testid={`operator-dismiss-nudge-${n.nudgeId}`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[12.5px] font-medium truncate">
+                        {n.areaName}
+                        {n.machine ? ` · ${n.machine}` : ""}
+                        <span className="ml-2 text-[10.5px] font-normal text-muted-foreground">
+                          Shift {n.shift}
+                        </span>
+                      </p>
+                      {n.message && (
+                        <p className="text-[11.5px] text-muted-foreground truncate mt-0.5">
+                          “{n.message}”
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-muted-foreground whitespace-nowrap tabular-nums">
+                      {format(dismissedAt, "MMM d, HH:mm")}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+    </li>
   );
 }

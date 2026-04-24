@@ -607,6 +607,66 @@ export const GetDashboardTrendsResponse = zod.array(
 );
 
 /**
+ * Aggregates nudges with dismissReason=OPERATOR_DISMISS over the last N days, grouped by the operator who silenced them. Helps managers spot operators who habitually swipe nudges away instead of submitting fresh evidence.
+ * @summary Operators ranked by nudges they dismissed without re-capturing
+ */
+export const getDashboardOperatorDismissesQueryDaysDefault = 7;
+export const getDashboardOperatorDismissesQueryDaysMax = 90;
+
+export const GetDashboardOperatorDismissesQueryParams = zod.object({
+  days: zod.coerce
+    .number()
+    .min(1)
+    .max(getDashboardOperatorDismissesQueryDaysMax)
+    .default(getDashboardOperatorDismissesQueryDaysDefault),
+});
+
+export const GetDashboardOperatorDismissesResponseItem = zod.object({
+  operatorId: zod.number(),
+  operatorEmail: zod.string(),
+  dismissCount: zod
+    .number()
+    .describe(
+      "Number of nudges this operator dismissed (reason=OPERATOR_DISMISS) within the window.",
+    ),
+  lastDismissedAt: zod.coerce
+    .date()
+    .describe("Most recent dismissal timestamp in the window."),
+});
+export const GetDashboardOperatorDismissesResponse = zod.array(
+  GetDashboardOperatorDismissesResponseItem,
+);
+
+/**
+ * @summary Drill-down list of an operator's dismissed-without-submit nudges
+ */
+export const getDashboardOperatorDismissesDetailQueryDaysDefault = 7;
+export const getDashboardOperatorDismissesDetailQueryDaysMax = 90;
+
+export const GetDashboardOperatorDismissesDetailQueryParams = zod.object({
+  operatorId: zod.coerce.number(),
+  days: zod.coerce
+    .number()
+    .min(1)
+    .max(getDashboardOperatorDismissesDetailQueryDaysMax)
+    .default(getDashboardOperatorDismissesDetailQueryDaysDefault),
+});
+
+export const GetDashboardOperatorDismissesDetailResponseItem = zod.object({
+  nudgeId: zod.number(),
+  areaId: zod.number(),
+  areaName: zod.string(),
+  machine: zod.string().nullable(),
+  shift: zod.string(),
+  message: zod.string().nullable(),
+  createdAt: zod.coerce.date(),
+  dismissedAt: zod.coerce.date(),
+});
+export const GetDashboardOperatorDismissesDetailResponse = zod.array(
+  GetDashboardOperatorDismissesDetailResponseItem,
+);
+
+/**
  * @summary Get the current shift based on server time
  */
 export const GetCurrentShiftResponse = zod.object({

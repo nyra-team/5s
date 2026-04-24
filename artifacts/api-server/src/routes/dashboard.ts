@@ -1,10 +1,21 @@
 import { Router, type IRouter } from "express";
-import { eq, and, gte, lt, sql, count, avg } from "drizzle-orm";
-import { db, submissionsTable, areasTable, escalationsTable, areaProfilesTable } from "@workspace/db";
+import { eq, and, gte, lt, sql, count, avg, desc, max, isNotNull } from "drizzle-orm";
+import {
+  db,
+  submissionsTable,
+  areasTable,
+  escalationsTable,
+  areaProfilesTable,
+  nudgesTable,
+  usersTable,
+} from "@workspace/db";
+import type { NudgeDismissReason } from "@workspace/db";
 import {
   GetDashboardComplianceQueryParams,
   GetDashboardScoresQueryParams,
   GetDashboardTrendsQueryParams,
+  GetDashboardOperatorDismissesQueryParams,
+  GetDashboardOperatorDismissesDetailQueryParams,
 } from "@workspace/api-zod";
 import { authMiddleware, requireRole } from "../lib/auth";
 import {
@@ -315,5 +326,122 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
 
   res.json(result);
 });
+
+// Compute the Date that is `days` calendar-day boundaries ago in the configured
+// shift timezone. We want "last 7 days" to mean "since the start of 6 days
+// before today" in the shift TZ, not 7 * 24h of UTC, so DST transitions don't
+// quietly add or drop a day's worth of dismissals.
+function getDismissWindowStart(days: number): Date {
+  const today = getZonedParts();
+  const stepped = new Date(Date.UTC(today.year, today.month, today.day - (days - 1)));
+  const y = stepped.getUTCFullYear();
+  const m = String(stepped.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(stepped.getUTCDate()).padStart(2, "0");
+  return getISTDayRange(`${y}-${m}-${d}`).start;
+}
+
+const OPERATOR_DISMISS_REASON: NudgeDismissReason = "OPERATOR_DISMISS";
+
+// Per-operator aggregate of nudges they dismissed without re-capturing
+// (dismissReason=OPERATOR_DISMISS), within the last N days. Only operators
+// who actually have at least one such dismissal in the window are returned,
+// so the list focuses managers on the people exhibiting the pattern.
+router.get(
+  "/dashboard/operator-dismisses",
+  authMiddleware,
+  requireRole("MANAGER"),
+  async (req, res): Promise<void> => {
+    const parsed = GetDashboardOperatorDismissesQueryParams.safeParse(req.query);
+    const days = parsed.success ? parsed.data.days : 7;
+    const windowStart = getDismissWindowStart(days);
+
+    const rows = await db
+      .select({
+        operatorId: usersTable.id,
+        operatorEmail: usersTable.email,
+        dismissCount: count(nudgesTable.id),
+        lastDismissedAt: max(nudgesTable.dismissedAt),
+      })
+      .from(nudgesTable)
+      .innerJoin(usersTable, eq(nudgesTable.dismissedByUserId, usersTable.id))
+      .where(
+        and(
+          eq(nudgesTable.dismissReason, OPERATOR_DISMISS_REASON),
+          isNotNull(nudgesTable.dismissedAt),
+          isNotNull(nudgesTable.dismissedByUserId),
+          gte(nudgesTable.dismissedAt, windowStart),
+        ),
+      )
+      .groupBy(usersTable.id, usersTable.email)
+      .orderBy(desc(count(nudgesTable.id)), desc(max(nudgesTable.dismissedAt)));
+
+    res.json(
+      rows.map((r) => ({
+        operatorId: r.operatorId,
+        operatorEmail: r.operatorEmail,
+        dismissCount: r.dismissCount,
+        // max() returns Date | null in drizzle types; the isNotNull guard above
+        // makes the null case impossible, but coerce defensively for the wire.
+        lastDismissedAt: r.lastDismissedAt ?? new Date(0),
+      })),
+    );
+  },
+);
+
+// Drill-down: every nudge a single operator dismissed-without-submit in the
+// window, newest first, with area name + machine + when so the dashboard
+// can show the manager exactly what was silenced. operatorId rides in the
+// query string (not the path) so the generated zod params type doesn't
+// collide with the React client's combined query-params type.
+router.get(
+  "/dashboard/operator-dismisses/detail",
+  authMiddleware,
+  requireRole("MANAGER"),
+  async (req, res): Promise<void> => {
+    const query = GetDashboardOperatorDismissesDetailQueryParams.safeParse(req.query);
+    if (!query.success) {
+      res.status(400).json({ error: "Invalid query parameters" });
+      return;
+    }
+    const { operatorId, days } = query.data;
+    const windowStart = getDismissWindowStart(days);
+
+    const rows = await db
+      .select({
+        nudgeId: nudgesTable.id,
+        areaId: nudgesTable.areaId,
+        areaName: areasTable.name,
+        machine: nudgesTable.machine,
+        shift: nudgesTable.shift,
+        message: nudgesTable.message,
+        createdAt: nudgesTable.createdAt,
+        dismissedAt: nudgesTable.dismissedAt,
+      })
+      .from(nudgesTable)
+      .innerJoin(areasTable, eq(nudgesTable.areaId, areasTable.id))
+      .where(
+        and(
+          eq(nudgesTable.dismissReason, OPERATOR_DISMISS_REASON),
+          eq(nudgesTable.dismissedByUserId, operatorId),
+          isNotNull(nudgesTable.dismissedAt),
+          gte(nudgesTable.dismissedAt, windowStart),
+        ),
+      )
+      .orderBy(desc(nudgesTable.dismissedAt));
+
+    res.json(
+      rows.map((r) => ({
+        nudgeId: r.nudgeId,
+        areaId: r.areaId,
+        areaName: r.areaName,
+        machine: r.machine,
+        shift: r.shift,
+        message: r.message,
+        createdAt: r.createdAt,
+        dismissedAt: r.dismissedAt ?? new Date(0),
+      })),
+    );
+  },
+);
 
 export default router;

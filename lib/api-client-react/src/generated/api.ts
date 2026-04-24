@@ -35,6 +35,8 @@ import type {
   EscalationCount,
   GetActiveNudgesByAreaParams,
   GetDashboardComplianceParams,
+  GetDashboardOperatorDismissesDetailParams,
+  GetDashboardOperatorDismissesParams,
   GetDashboardScoresParams,
   GetDashboardTrendsParams,
   GetOperatorRecentParams,
@@ -51,6 +53,8 @@ import type {
   NextCheck,
   NotificationPreferences,
   Nudge,
+  OperatorDismissSummary,
+  OperatorDismissedNudge,
   OperatorThresholds,
   QuickApproveLabelBody,
   RecentSubmission,
@@ -1713,6 +1717,226 @@ export function useGetDashboardTrends<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetDashboardTrendsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Aggregates nudges with dismissReason=OPERATOR_DISMISS over the last N days, grouped by the operator who silenced them. Helps managers spot operators who habitually swipe nudges away instead of submitting fresh evidence.
+ * @summary Operators ranked by nudges they dismissed without re-capturing
+ */
+export const getGetDashboardOperatorDismissesUrl = (
+  params?: GetDashboardOperatorDismissesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/dashboard/operator-dismisses?${stringifiedParams}`
+    : `/api/dashboard/operator-dismisses`;
+};
+
+export const getDashboardOperatorDismisses = async (
+  params?: GetDashboardOperatorDismissesParams,
+  options?: RequestInit,
+): Promise<OperatorDismissSummary[]> => {
+  return customFetch<OperatorDismissSummary[]>(
+    getGetDashboardOperatorDismissesUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetDashboardOperatorDismissesQueryKey = (
+  params?: GetDashboardOperatorDismissesParams,
+) => {
+  return [
+    `/api/dashboard/operator-dismisses`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetDashboardOperatorDismissesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDashboardOperatorDismisses>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetDashboardOperatorDismissesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDashboardOperatorDismisses>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDashboardOperatorDismissesQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDashboardOperatorDismisses>>
+  > = ({ signal }) =>
+    getDashboardOperatorDismisses(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDashboardOperatorDismisses>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDashboardOperatorDismissesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDashboardOperatorDismisses>>
+>;
+export type GetDashboardOperatorDismissesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Operators ranked by nudges they dismissed without re-capturing
+ */
+
+export function useGetDashboardOperatorDismisses<
+  TData = Awaited<ReturnType<typeof getDashboardOperatorDismisses>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetDashboardOperatorDismissesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDashboardOperatorDismisses>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDashboardOperatorDismissesQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Drill-down list of an operator's dismissed-without-submit nudges
+ */
+export const getGetDashboardOperatorDismissesDetailUrl = (
+  params: GetDashboardOperatorDismissesDetailParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/dashboard/operator-dismisses/detail?${stringifiedParams}`
+    : `/api/dashboard/operator-dismisses/detail`;
+};
+
+export const getDashboardOperatorDismissesDetail = async (
+  params: GetDashboardOperatorDismissesDetailParams,
+  options?: RequestInit,
+): Promise<OperatorDismissedNudge[]> => {
+  return customFetch<OperatorDismissedNudge[]>(
+    getGetDashboardOperatorDismissesDetailUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetDashboardOperatorDismissesDetailQueryKey = (
+  params?: GetDashboardOperatorDismissesDetailParams,
+) => {
+  return [
+    `/api/dashboard/operator-dismisses/detail`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetDashboardOperatorDismissesDetailQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDashboardOperatorDismissesDetail>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetDashboardOperatorDismissesDetailParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDashboardOperatorDismissesDetail>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetDashboardOperatorDismissesDetailQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDashboardOperatorDismissesDetail>>
+  > = ({ signal }) =>
+    getDashboardOperatorDismissesDetail(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDashboardOperatorDismissesDetail>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDashboardOperatorDismissesDetailQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDashboardOperatorDismissesDetail>>
+>;
+export type GetDashboardOperatorDismissesDetailQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Drill-down list of an operator's dismissed-without-submit nudges
+ */
+
+export function useGetDashboardOperatorDismissesDetail<
+  TData = Awaited<ReturnType<typeof getDashboardOperatorDismissesDetail>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetDashboardOperatorDismissesDetailParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDashboardOperatorDismissesDetail>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDashboardOperatorDismissesDetailQueryOptions(
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

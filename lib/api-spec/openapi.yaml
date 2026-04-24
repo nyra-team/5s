@@ -473,6 +473,62 @@ paths:
                 items:
                   $ref: "#/components/schemas/AreaTrend"
 
+  /dashboard/operator-dismisses:
+    get:
+      operationId: getDashboardOperatorDismisses
+      tags: [dashboard]
+      summary: Operators ranked by nudges they dismissed without re-capturing
+      description: >-
+        Aggregates nudges with dismissReason=OPERATOR_DISMISS over the last N
+        days, grouped by the operator who silenced them. Helps managers spot
+        operators who habitually swipe nudges away instead of submitting fresh
+        evidence.
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 7
+      responses:
+        "200":
+          description: One row per operator with at least one OPERATOR_DISMISS in the window
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OperatorDismissSummary"
+
+  /dashboard/operator-dismisses/detail:
+    get:
+      operationId: getDashboardOperatorDismissesDetail
+      tags: [dashboard]
+      summary: Drill-down list of an operator's dismissed-without-submit nudges
+      parameters:
+        - name: operatorId
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: days
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 7
+      responses:
+        "200":
+          description: Newest first list of nudges this operator silenced in the window
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OperatorDismissedNudge"
+
   /shift/current:
     get:
       operationId: getCurrentShift
@@ -1758,6 +1814,47 @@ components:
         - todayCompliance
         - totalSubmissions
         - openEscalations
+
+    OperatorDismissSummary:
+      type: object
+      properties:
+        operatorId:
+          type: integer
+        operatorEmail:
+          type: string
+        dismissCount:
+          type: integer
+          description: Number of nudges this operator dismissed (reason=OPERATOR_DISMISS) within the window.
+        lastDismissedAt:
+          type: string
+          format: date-time
+          description: Most recent dismissal timestamp in the window.
+      required: [operatorId, operatorEmail, dismissCount, lastDismissedAt]
+
+    OperatorDismissedNudge:
+      type: object
+      properties:
+        nudgeId:
+          type: integer
+        areaId:
+          type: integer
+        areaName:
+          type: string
+        machine:
+          type: string
+          nullable: true
+        shift:
+          type: string
+        message:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        dismissedAt:
+          type: string
+          format: date-time
+      required: [nudgeId, areaId, areaName, machine, shift, message, createdAt, dismissedAt]
 
     CurrentShift:
       type: object

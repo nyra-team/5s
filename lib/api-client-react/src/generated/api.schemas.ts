@@ -600,6 +600,26 @@ export interface DashboardSummary {
   openEscalations: number;
 }
 
+export interface OperatorDismissSummary {
+  operatorId: number;
+  operatorEmail: string;
+  /** Number of nudges this operator dismissed (reason=OPERATOR_DISMISS) within the window. */
+  dismissCount: number;
+  /** Most recent dismissal timestamp in the window. */
+  lastDismissedAt: string;
+}
+
+export interface OperatorDismissedNudge {
+  nudgeId: number;
+  areaId: number;
+  areaName: string;
+  machine: string | null;
+  shift: string;
+  message: string | null;
+  createdAt: string;
+  dismissedAt: string;
+}
+
 export type CurrentShiftShift =
   (typeof CurrentShiftShift)[keyof typeof CurrentShiftShift];
 
@@ -936,6 +956,23 @@ export const GetDashboardTrendsShift = {
   B: "B",
   C: "C",
 } as const;
+
+export type GetDashboardOperatorDismissesParams = {
+  /**
+   * @minimum 1
+   * @maximum 90
+   */
+  days?: number;
+};
+
+export type GetDashboardOperatorDismissesDetailParams = {
+  operatorId: number;
+  /**
+   * @minimum 1
+   * @maximum 90
+   */
+  days?: number;
+};
 
 export type GetOperatorStatusParams = {
   shift?: GetOperatorStatusShift;

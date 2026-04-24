@@ -1,12 +1,15 @@
 # 5S Compliance App
 
 ## Overview
+A full-stack web application designed for manufacturing environments to improve 5S compliance. The system enables operators to photograph workstations, receiving AI-powered 5S scores and VLM-generated improvement suggestions. Managers can track compliance rates, analyze score trends, manage reference photos, and label submissions for AI model calibration. The project aims to enhance workplace organization and efficiency through intelligent automation and real-time feedback.
 
 This project is a full-stack web application designed to enhance 5S compliance in manufacturing environments. It enables operators to photograph workstations, receiving AI-powered 5S scores and VLM-generated improvement suggestions. Managers can track compliance, analyze score trends, manage reference photos, and label submissions for AI model calibration. The core purpose is to improve workplace organization and efficiency through AI-driven insights and streamlined management tools.
 
 ## User Preferences
 
 The user has not specified any preferences.
+
+
 
 ## System Architecture
 
