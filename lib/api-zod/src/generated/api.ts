@@ -46,6 +46,11 @@ export const GetMeResponse = zod.object({
 export const ListAreasResponseItem = zod.object({
   id: zod.number(),
   name: zod.string(),
+  environmentType: zod
+    .enum(["factory", "warehouse", "home"])
+    .describe(
+      "The kind of physical setting this area represents. Drives the AI rubric used to score submissions.",
+    ),
 });
 export const ListAreasResponse = zod.array(ListAreasResponseItem);
 
@@ -54,6 +59,10 @@ export const ListAreasResponse = zod.array(ListAreasResponseItem);
  */
 export const CreateAreaBody = zod.object({
   name: zod.string(),
+  environmentType: zod
+    .enum(["factory", "warehouse", "home"])
+    .optional()
+    .describe('Optional. Defaults to \"factory\".'),
 });
 
 /**
@@ -65,11 +74,17 @@ export const UpdateAreaParams = zod.object({
 
 export const UpdateAreaBody = zod.object({
   name: zod.string(),
+  environmentType: zod.enum(["factory", "warehouse", "home"]).optional(),
 });
 
 export const UpdateAreaResponse = zod.object({
   id: zod.number(),
   name: zod.string(),
+  environmentType: zod
+    .enum(["factory", "warehouse", "home"])
+    .describe(
+      "The kind of physical setting this area represents. Drives the AI rubric used to score submissions.",
+    ),
 });
 
 /**
@@ -218,6 +233,7 @@ export const ListSubmissionsResponseItem = zod.object({
         why: zod.string(),
         location: zod.string(),
         principle: zod.string().nullish(),
+        severity: zod.enum(["high", "medium", "low"]).nullish(),
       }),
     )
     .nullish(),
@@ -229,6 +245,7 @@ export const ListSubmissionsResponseItem = zod.object({
         location: zod.string(),
         pillar: zod.string().nullish(),
         principle: zod.string().nullish(),
+        severity: zod.enum(["high", "medium", "low"]).nullish(),
       }),
     )
     .nullish(),
@@ -310,6 +327,7 @@ export const GetSubmissionResponse = zod.object({
         why: zod.string(),
         location: zod.string(),
         principle: zod.string().nullish(),
+        severity: zod.enum(["high", "medium", "low"]).nullish(),
       }),
     )
     .nullish(),
@@ -321,6 +339,7 @@ export const GetSubmissionResponse = zod.object({
         location: zod.string(),
         pillar: zod.string().nullish(),
         principle: zod.string().nullish(),
+        severity: zod.enum(["high", "medium", "low"]).nullish(),
       }),
     )
     .nullish(),
@@ -388,6 +407,7 @@ export const ReuploadSubmissionResponse = zod.object({
         why: zod.string(),
         location: zod.string(),
         principle: zod.string().nullish(),
+        severity: zod.enum(["high", "medium", "low"]).nullish(),
       }),
     )
     .nullish(),
@@ -399,6 +419,7 @@ export const ReuploadSubmissionResponse = zod.object({
         location: zod.string(),
         pillar: zod.string().nullish(),
         principle: zod.string().nullish(),
+        severity: zod.enum(["high", "medium", "low"]).nullish(),
       }),
     )
     .nullish(),
@@ -480,6 +501,7 @@ export const GetDashboardTrendsQueryParams = zod.object({
 export const GetDashboardTrendsResponseItem = zod.object({
   areaId: zod.number(),
   areaName: zod.string(),
+  environmentType: zod.enum(["factory", "warehouse", "home"]),
   status: zod.enum(["LEARNING", "TRAINED"]),
   trainedOnDate: zod.coerce.date().nullish(),
   points: zod.array(
@@ -558,6 +580,7 @@ export const GetOperatorStatusResponseItem = zod.object({
             why: zod.string(),
             location: zod.string(),
             principle: zod.string().nullish(),
+            severity: zod.enum(["high", "medium", "low"]).nullish(),
           }),
         )
         .nullish(),
@@ -569,6 +592,7 @@ export const GetOperatorStatusResponseItem = zod.object({
             location: zod.string(),
             pillar: zod.string().nullish(),
             principle: zod.string().nullish(),
+            severity: zod.enum(["high", "medium", "low"]).nullish(),
           }),
         )
         .nullish(),

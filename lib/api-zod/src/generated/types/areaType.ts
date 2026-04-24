@@ -5,8 +5,11 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { AreaTypeEnvironmentType } from "./areaTypeEnvironmentType";
 
 export interface AreaType {
   id: number;
   name: string;
+  /** The kind of physical setting this area represents. Drives the AI rubric used to score submissions. */
+  environmentType: AreaTypeEnvironmentType;
 }

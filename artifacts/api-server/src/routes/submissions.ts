@@ -154,6 +154,7 @@ function extractFile(req: any) {
 async function runScoringPipeline(opts: {
   areaId: number;
   areaName: string;
+  environmentType: string;
   file: Express.Multer.File;
   machineTag: string | null;
 }): Promise<{
@@ -175,12 +176,17 @@ async function runScoringPipeline(opts: {
     summary: profile.summary,
   };
 
+  const envType: "factory" | "warehouse" | "home" =
+    opts.environmentType === "warehouse" ? "warehouse" :
+    opts.environmentType === "home" ? "home" : "factory";
+
   const scoring = await scoreSubmission({
     areaId: opts.areaId,
     areaName: opts.areaName,
     mediaAbsPath: absPath,
     mediaType,
     machineTag: opts.machineTag,
+    environmentType: envType,
     learnedProfile,
   });
 
@@ -265,7 +271,7 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
 
   let pipeline;
   try {
-    pipeline = await runScoringPipeline({ areaId, areaName: area.name, file, machineTag });
+    pipeline = await runScoringPipeline({ areaId, areaName: area.name, environmentType: area.environmentType, file, machineTag });
   } catch (err) {
     logger.error({ err }, "Scoring pipeline failed");
     res.status(500).json({ error: "Failed to score submission" });
@@ -370,7 +376,7 @@ router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req
 
   let pipeline;
   try {
-    pipeline = await runScoringPipeline({ areaId: existing.areaId, areaName: area?.name ?? "Unknown", file, machineTag });
+    pipeline = await runScoringPipeline({ areaId: existing.areaId, areaName: area?.name ?? "Unknown", environmentType: area?.environmentType ?? "factory", file, machineTag });
   } catch (err) {
     logger.error({ err }, "Scoring pipeline failed on reupload");
     res.status(500).json({ error: "Failed to score submission" });

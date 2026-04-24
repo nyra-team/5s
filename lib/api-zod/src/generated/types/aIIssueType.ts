@@ -5,6 +5,7 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { AIIssueTypeSeverity } from "./aIIssueTypeSeverity";
 
 export interface AIIssueType {
   issue: string;
@@ -12,4 +13,5 @@ export interface AIIssueType {
   location: string;
   pillar?: string | null;
   principle?: string | null;
+  severity?: AIIssueTypeSeverity;
 }

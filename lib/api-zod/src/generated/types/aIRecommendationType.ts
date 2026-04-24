@@ -5,10 +5,12 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { AIRecommendationTypeSeverity } from "./aIRecommendationTypeSeverity";
 
 export interface AIRecommendationType {
   action: string;
   why: string;
   location: string;
   principle?: string | null;
+  severity?: AIRecommendationTypeSeverity;
 }

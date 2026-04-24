@@ -5,7 +5,10 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { CreateAreaBodyTypeEnvironmentType } from "./createAreaBodyTypeEnvironmentType";
 
 export interface CreateAreaBodyType {
   name: string;
+  /** Optional. Defaults to "factory". */
+  environmentType?: CreateAreaBodyTypeEnvironmentType;
 }

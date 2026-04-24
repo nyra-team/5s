@@ -3,6 +3,9 @@ import { logger } from "./logger.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { extractKeyframes, compressForVLM } from "./keyframes.js";
+import type { EnvironmentType } from "@workspace/db";
+
+type Severity = "high" | "medium" | "low";
 
 interface VLMIssue {
   issue: string;
@@ -10,6 +13,7 @@ interface VLMIssue {
   location: string;
   pillar?: string;
   principle?: string;
+  severity?: Severity;
 }
 
 interface VLMRecommendation {
@@ -17,6 +21,7 @@ interface VLMRecommendation {
   why: string;
   location: string;
   principle?: string;
+  severity?: Severity;
 }
 
 interface VLMPillarScores {
@@ -53,6 +58,8 @@ export interface ScoringInput {
   mediaAbsPath: string;
   mediaType: "image" | "video";
   machineTag?: string | null;
+  /** What kind of physical setting this area is. Selects the rubric. */
+  environmentType?: EnvironmentType;
   /** Existing learned profile to ground the analysis against, if any */
   learnedProfile?: {
     status: "LEARNING" | "TRAINED";
@@ -68,9 +75,7 @@ export interface ScoringOutput extends AIScoringResult {
   keyframeUrls: string[];
 }
 
-const MODEL_VERSION = "gpt-5-mini-5sgmp-v3";
-
-const FIVE_S_GMP_RUBRIC = `
+const FACTORY_RUBRIC = `
 You are a strict 5S + GMP auditor for a manufacturing facility. Score with rigor and consistency: identical evidence must always produce the same score.
 
 5S pillars (each rated 0–5):
@@ -128,17 +133,77 @@ Scoring discipline:
 - For EACH pillar, FIRST write a brief reasoning string under "reasoning" naming the specific evidence (frame numbers, locations) that drives the score. THEN choose the number. Do not commit to a number until the reasoning is written.
 - Score by the worst observable evidence in that pillar — clutter, exposed product, missing labels, unworn PPE, undated logs are all serious.
 - If evidence is unclear, lean toward the lower anchor.
+`.trim();
 
-For each ISSUE you cite, name the pillar (sort/set/shine/standardize/sustain) AND the 5S/GMP principle that it violates.
-For each RECOMMENDATION, name the principle it restores.
-Reference EVIDENCE by frame number (e.g. "frame 2: open container of powder, no lid") and a coarse location (left/right/top/bottom/center).
+const WAREHOUSE_RUBRIC = `
+You are a strict 5S auditor for a WAREHOUSE / distribution centre. Score with rigor.
+
+5S pillars (rate 0-5 each based on visible evidence):
+- SORT (Seiri): only inventory and equipment that belongs is present; no orphan pallets, broken packaging, abandoned dunnage or personal items.
+- SET IN ORDER (Seiton): racking is laid out logically; bin locations and pick labels are clear; aisles unobstructed; floor markings define pedestrian/forklift lanes; pallets squared on bays.
+- SHINE (Seiso): floors swept, no spills, no broken pallets/shrink-wrap on the ground; racking and MHE (forklifts, pallet jacks) clean and undamaged.
+- STANDARDIZE (Seiketsu): visual standards (rack labels, location codes, weight limits, fire-exit signage, lane lines, slot markings) are present and consistent.
+- SUSTAIN (Shitsuke): evidence of routine — completed cycle counts, daily MHE checks, sign-offs on inspection sheets, hi-vis worn.
+
+WAREHOUSE-specific principles to apply (cite when violated):
+- AISLE CLEARANCE: pick aisles and forklift paths free of obstructions; no goods stacked in cross-aisles.
+- RACKING SAFETY: no overhanging loads, no damaged uprights/beams, weight rating respected, pallets fully on beams.
+- LABELLING & SLOTTING: every bay/level has a location code; SKUs in the right slot; pick labels readable.
+- FLOOR MARKING: yellow/red taped lanes, hazard zones, and pedestrian crossings clearly defined.
+- FIRE & EXIT: extinguishers and exit doors unblocked, signage visible from the aisle.
+
+Do NOT cite food-GMP principles (no hairnets, no batch records, no calibration tags) — they don't apply here.
+
+Scoring discipline:
+- For EACH pillar, FIRST write a brief reasoning string under "reasoning" naming the specific evidence (frame numbers, locations) that drives the score. THEN choose the number. Do not commit to a number until the reasoning is written.
+- Score by the worst observable evidence in that pillar — blocked aisles, damaged racking, unlabeled bays, unworn hi-vis are all serious.
+- If evidence is unclear, lean toward the lower anchor.
+`.trim();
+
+const HOME_RUBRIC = `
+You are a friendly home-organisation coach. Apply a LIGHTWEIGHT 5S to a domestic space (kitchen, garage, study, bedroom, etc.). Be encouraging but honest.
+
+5S pillars (rate 0-5 each based on visible evidence):
+- SORT: only items that belong in this space are present; obvious clutter, expired items, duplicates, or things "dumped" here are flagged.
+- SET IN ORDER: items have a sensible home; like-with-like; frequently used things within reach; clear surfaces.
+- SHINE: surfaces, floors, and visible appliances are clean; no spills, dust bunnies, sticky marks, dishes piled up.
+- STANDARDIZE: simple visual cues — labels on jars/boxes/drawers, hooks for keys, baskets for categories, a place for the bin.
+- SUSTAIN: signs the system is being kept up — recently tidied, no half-finished projects left out, surfaces stay clear.
+
+Domestic principles to apply (cite when violated):
+- CLUTTER: piles of paper, mail, unworn clothes, random small items on surfaces.
+- STORAGE: open shelves jammed, drawers overflowing, things stacked precariously.
+- CLEANING: visible dirt, dishes, laundry, dust, spills, full bins.
+- LABELLING: containers without labels, mystery jars, unlabelled boxes.
+- SAFETY AT HOME: trip hazards, blocked exits, exposed wires, items stored above eye level that could fall.
+
+Do NOT use industrial language. Do NOT mention PPE, hairnets, GMP, batch records, calibration, forklifts, racking, or shadow boards. Speak like a helpful friend, not an auditor.
+
+Scoring discipline:
+- For EACH pillar, FIRST write a brief reasoning string under "reasoning" naming the specific evidence (frame numbers, locations) that drives the score. THEN choose the number. Do not commit to a number until the reasoning is written.
+- Score by the worst observable evidence in that pillar — piles, dirty surfaces, blocked walkways are all serious.
+- If evidence is unclear, lean toward the lower anchor.
+`.trim();
+
+const COMMON_INSTRUCTIONS = `
+For each ISSUE you cite:
+- Name the pillar (sort/set/shine/standardize/sustain) AND the principle that it violates.
+- Reference EVIDENCE by frame number AND describe the specific object you saw (e.g. "frame 2: red toolbox on the workbench, no shadow outline beneath it") plus a coarse location (left/right/top/bottom/center).
+- Assign a severity: "high" (safety / immediate action), "medium" (clear standard violation), or "low" (minor / cosmetic).
+
+For each RECOMMENDATION:
+- Give a concrete, actionable "how to fix it" step that someone could do today without specialist training (e.g. "buy 25mm yellow vinyl tape and outline the toolbox on the bench" rather than "improve organisation").
+- Name the principle the action restores.
+- Reuse the same severity as the matching issue.
+
+PRIORITISE the top 3 most severe issues. List up to 3 issues and up to 3 matching recommendations — quality over quantity.
 
 Also extract a structured PROFILE of what is visible in the area:
-- items: recurring/notable items (e.g. "5L oil cans", "torque wrench set")
-- machines: named pieces of equipment (e.g. "Mixer #2", "Conveyor A")
-- layout: spatial notes (e.g. "tool board on rear wall", "PPE station near entrance")
-- observedIssues: short phrases describing recurring conditions (e.g. "unlabeled chemical bottles")
-- summary: one short paragraph describing the area as observed
+- items: recurring/notable items (use plain words appropriate to the environment)
+- machines: named pieces of equipment / appliances visible (e.g. "Mixer #2", "Conveyor A", or for Home: "kettle", "washing machine")
+- layout: spatial notes (e.g. "tool board on rear wall", "fridge to the left of the sink")
+- observedIssues: short phrases describing recurring conditions (e.g. "unlabeled jars", "pallets stacked above safe height")
+- summary: one short paragraph describing the area as observed, written in the appropriate register for the environment
 
 Output ONLY valid JSON in this exact shape:
 {
@@ -150,11 +215,27 @@ Output ONLY valid JSON in this exact shape:
     "sustain": "..."
   },
   "pillar_scores": { "sort": 0-5, "set": 0-5, "shine": 0-5, "standardize": 0-5, "sustain": 0-5 },
-  "issues": [{ "issue": "...", "evidence": "frame N: ...", "location": "left|right|top|bottom|center", "pillar": "sort|set|shine|standardize|sustain", "principle": "..." }],
-  "recommendations": [{ "action": "...", "why": "...", "location": "...", "principle": "..." }],
+  "issues": [{ "issue": "...", "evidence": "frame N: ...", "location": "left|right|top|bottom|center", "pillar": "sort|set|shine|standardize|sustain", "principle": "...", "severity": "high|medium|low" }],
+  "recommendations": [{ "action": "...", "why": "...", "location": "...", "principle": "...", "severity": "high|medium|low" }],
   "profile": { "items": ["..."], "machines": ["..."], "layout": ["..."], "observedIssues": ["..."], "summary": "..." }
 }
 `.trim();
+
+function getRubric(environmentType: EnvironmentType | undefined): string {
+  const env = environmentType ?? "factory";
+  const base =
+    env === "warehouse" ? WAREHOUSE_RUBRIC :
+    env === "home" ? HOME_RUBRIC :
+    FACTORY_RUBRIC;
+  return `${base}\n\n${COMMON_INSTRUCTIONS}`;
+}
+
+function getEnvironmentLabel(environmentType: EnvironmentType | undefined): string {
+  const env = environmentType ?? "factory";
+  if (env === "warehouse") return "warehouse / distribution centre";
+  if (env === "home") return "domestic / home space";
+  return "manufacturing facility";
+}
 
 function imageToBase64(imagePath: string): string {
   const buf = fs.readFileSync(imagePath);
@@ -163,6 +244,12 @@ function imageToBase64(imagePath: string): string {
 
 function clamp05(n: any): number {
   return Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
+}
+
+function normalizeSeverity(s: any): Severity | undefined {
+  if (typeof s !== "string") return undefined;
+  const v = s.toLowerCase();
+  return v === "high" || v === "medium" || v === "low" ? v : undefined;
 }
 
 /**
@@ -232,10 +319,13 @@ interface CallVlmOptions {
   areaName: string;
   machineTag: string | null | undefined;
   learnedProfile: ScoringInput["learnedProfile"];
+  environmentType: EnvironmentType | undefined;
 }
 
 async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
-  const { framePaths, areaName, machineTag, learnedProfile } = opts;
+  const { framePaths, areaName, machineTag, learnedProfile, environmentType } = opts;
+  const modelVersion = `gpt-5-mini-${environmentType ?? "factory"}-v3`;
+
   const profileBlock = learnedProfile && learnedProfile.status === "TRAINED"
     ? `\nLEARNED AREA PROFILE (this area's own norm — score deviations from it as well):
 - Summary: ${learnedProfile.summary ?? "(none)"}
@@ -243,12 +333,13 @@ async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
 - Known machines: ${learnedProfile.machines.join(", ") || "(none)"}
 - Layout notes: ${learnedProfile.layout.join("; ") || "(none)"}
 - Recurring issues to watch: ${learnedProfile.commonIssues.join("; ") || "(none)"}\n`
-    : "\n(No trained profile yet for this area — score on universal 5S+GMP only.)\n";
+    : "\n(No trained profile yet for this area — score on the rubric only.)\n";
 
   const machineLine = machineTag ? `\nThe operator tagged this capture as: "${machineTag}".` : "";
+  const envLabel = getEnvironmentLabel(environmentType);
 
   const userText =
-`Area: "${areaName}".${machineLine}\n${profileBlock}\nThe operator submitted ${framePaths.length} frame(s) from a walk-through. Audit the AREA AS A WHOLE across all frames.`;
+`Area: "${areaName}".\nEnvironment: ${envLabel}.${machineLine}\n${profileBlock}\nThe operator submitted ${framePaths.length} frame(s) from a walk-through. Audit the AREA AS A WHOLE across all frames. Ground EVERY observation in something you can actually see in a specific frame — never invent details.`;
 
   const baseContent: any[] = [{ type: "text", text: userText }];
 
@@ -273,7 +364,7 @@ async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
   };
 
   const messages: any[] = [
-    { role: "system", content: FIVE_S_GMP_RUBRIC },
+    { role: "system", content: getRubric(environmentType) },
     { role: "user", content: baseContent },
   ];
 
@@ -294,7 +385,7 @@ async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
   // We keep the original user content/images so the model isn't asked to
   // re-imagine anything — only to re-emit valid JSON.
   if (validationError) {
-    logger.warn({ validationError, modelVersion: MODEL_VERSION }, "VLM JSON validation failed; retrying once");
+    logger.warn({ validationError, modelVersion }, "VLM JSON validation failed; retrying once");
     const retryMessages: any[] = [
       ...messages,
       { role: "assistant", content: firstText },
@@ -343,6 +434,7 @@ Do not include any prose outside the JSON object.`,
         location: String(i.location ?? "general"),
         pillar: i.pillar ? String(i.pillar) : undefined,
         principle: i.principle ? String(i.principle) : undefined,
+        severity: normalizeSeverity(i.severity),
       }))
     : [];
 
@@ -352,6 +444,7 @@ Do not include any prose outside the JSON object.`,
         why: String(r.why ?? ""),
         location: String(r.location ?? "general"),
         principle: r.principle ? String(r.principle) : undefined,
+        severity: normalizeSeverity(r.severity),
       }))
     : [];
 
@@ -376,7 +469,7 @@ Do not include any prose outside the JSON object.`,
     aiRecommendationsJson: recs,
     aiIssuesJson: issues,
     failingPillars: failing,
-    modelVersion: MODEL_VERSION,
+    modelVersion,
     scoringMode: "VLM_RUBRIC",
     profile,
   };
@@ -437,6 +530,7 @@ export async function scoreSubmission(input: ScoringInput): Promise<ScoringOutpu
         areaName: input.areaName,
         machineTag: input.machineTag,
         learnedProfile: input.learnedProfile,
+        environmentType: input.environmentType,
       });
       return { ...result, keyframeUrls: frameUrls };
     } catch (err) {
@@ -456,6 +550,7 @@ export async function scoreSubmission(input: ScoringInput): Promise<ScoringOutpu
       areaName: input.areaName,
       machineTag: input.machineTag,
       learnedProfile: input.learnedProfile,
+      environmentType: input.environmentType,
     });
     return { ...result, keyframeUrls: frameUrls };
   } catch (err) {

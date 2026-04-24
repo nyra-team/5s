@@ -6,11 +6,13 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AreaTrendPointType } from "./areaTrendPointType";
+import type { AreaTrendTypeEnvironmentType } from "./areaTrendTypeEnvironmentType";
 import type { AreaTrendTypeStatus } from "./areaTrendTypeStatus";
 
 export interface AreaTrendType {
   areaId: number;
   areaName: string;
+  environmentType: AreaTrendTypeEnvironmentType;
   status: AreaTrendTypeStatus;
   trainedOnDate?: Date | null;
   points: AreaTrendPointType[];

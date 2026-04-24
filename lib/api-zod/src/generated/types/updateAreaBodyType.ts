@@ -5,7 +5,9 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { UpdateAreaBodyTypeEnvironmentType } from "./updateAreaBodyTypeEnvironmentType";
 
 export interface UpdateAreaBodyType {
   name: string;
+  environmentType?: UpdateAreaBodyTypeEnvironmentType;
 }

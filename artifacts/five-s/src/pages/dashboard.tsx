@@ -5,6 +5,7 @@ import { format, parseISO } from "date-fns";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { EnvironmentBadge, normalizeEnvironment } from "@/lib/environment";
 
 function HeroStat({
   label,
@@ -231,14 +232,19 @@ function LearningStatusPanel() {
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {areas.map((a) => (
-          <LearningChip key={a.id} areaId={a.id} areaName={a.name} />
+          <LearningChip
+            key={a.id}
+            areaId={a.id}
+            areaName={a.name}
+            environmentType={normalizeEnvironment(a.environmentType)}
+          />
         ))}
       </div>
     </section>
   );
 }
 
-function LearningChip({ areaId, areaName }: { areaId: number; areaName: string }) {
+function LearningChip({ areaId, areaName, environmentType }: { areaId: number; areaName: string; environmentType: ReturnType<typeof normalizeEnvironment> }) {
   const { data: profile } = useGetAreaProfile(areaId);
   const submissions = profile?.submissionsCount ?? 0;
   const isTrained = profile?.status === "TRAINED";
@@ -258,7 +264,10 @@ function LearningChip({ areaId, areaName }: { areaId: number; areaName: string }
         <Sparkles className="w-4 h-4" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-[13px] font-medium truncate">{areaName}</p>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <p className="text-[13px] font-medium truncate">{areaName}</p>
+          <EnvironmentBadge type={environmentType} size="xs" testId={`badge-environment-${areaId}`} />
+        </div>
         {isTrained ? (
           <p className="text-[11.5px] text-muted-foreground">Trained · {submissions} walk-throughs</p>
         ) : (
@@ -454,7 +463,10 @@ function AreaTrendCard({ trend }: { trend: AreaTrend }) {
       data-testid={`dashboard-trend-${trend.areaId}`}
     >
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[13px] font-medium truncate">{trend.areaName}</p>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <p className="text-[13px] font-medium truncate">{trend.areaName}</p>
+          <EnvironmentBadge type={normalizeEnvironment(trend.environmentType)} size="xs" />
+        </div>
         <span
           className={`text-[10.5px] font-medium px-2 py-0.5 rounded-full ${
             isTrained

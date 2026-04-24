@@ -15,8 +15,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
   Plus, Pencil, Trash2, Check, X, BookOpen, RefreshCw, Sparkles, Wrench, Workflow, AlertCircle, Save, Edit3,
 } from "lucide-react";
+import { EnvironmentBadge, ENVIRONMENT_LABELS, type EnvironmentType } from "@/lib/environment";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -31,17 +35,19 @@ export default function Areas() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [newAreaName, setNewAreaName] = useState("");
+  const [newEnvType, setNewEnvType] = useState<EnvironmentType>("factory");
   const [showAddForm, setShowAddForm] = useState(false);
 
   const handleCreate = () => {
     if (!newAreaName.trim()) return;
     createArea.mutate(
-      { data: { name: newAreaName.trim() } },
+      { data: { name: newAreaName.trim(), environmentType: newEnvType } },
       {
         onSuccess: () => {
           toast({ title: "Area created", description: `"${newAreaName.trim()}" has been added.` });
           queryClient.invalidateQueries({ queryKey: getListAreasQueryKey() });
           setNewAreaName("");
+          setNewEnvType("factory");
           setShowAddForm(false);
         },
         onError: () => toast({ variant: "destructive", title: "Failed", description: "Could not create area." }),
@@ -89,10 +95,26 @@ export default function Areas() {
                 data-testid="input-new-area-name"
               />
             </div>
+            <div className="w-full sm:w-44">
+              <label className="eyebrow mb-1.5 block">Environment</label>
+              <Select value={newEnvType} onValueChange={(v) => setNewEnvType(v as EnvironmentType)}>
+                <SelectTrigger
+                  className="h-11 rounded-xl bg-secondary/60 border-transparent focus-visible:bg-card focus-visible:border-ring"
+                  data-testid="select-new-area-environment"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="factory" data-testid="option-environment-factory">{ENVIRONMENT_LABELS.factory}</SelectItem>
+                  <SelectItem value="warehouse" data-testid="option-environment-warehouse">{ENVIRONMENT_LABELS.warehouse}</SelectItem>
+                  <SelectItem value="home" data-testid="option-environment-home">{ENVIRONMENT_LABELS.home}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <Button onClick={handleCreate} disabled={createArea.isPending || !newAreaName.trim()} className="rounded-full h-11 px-5" data-testid="button-save-area">
               <Check className="w-4 h-4 mr-1" /> {createArea.isPending ? "Saving…" : "Save"}
             </Button>
-            <Button variant="outline" onClick={() => { setShowAddForm(false); setNewAreaName(""); }} className="rounded-full h-11 w-11 p-0" data-testid="button-cancel-add">
+            <Button variant="outline" onClick={() => { setShowAddForm(false); setNewAreaName(""); setNewEnvType("factory"); }} className="rounded-full h-11 w-11 p-0" data-testid="button-cancel-add">
               <X className="w-4 h-4" />
             </Button>
           </div>
@@ -126,6 +148,9 @@ function AreaConfigCard({ area }: { area: Area }) {
 
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(area.name);
+  const [editEnvType, setEditEnvType] = useState<EnvironmentType>(
+    (area.environmentType as EnvironmentType) ?? "factory"
+  );
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -171,19 +196,36 @@ function AreaConfigCard({ area }: { area: Area }) {
     );
   };
 
-  const handleRename = () => {
-    if (!editName.trim() || editName.trim() === area.name) {
-      setIsEditing(false); setEditName(area.name); return;
+  const currentEnvType = (area.environmentType as EnvironmentType) ?? "factory";
+
+  const handleSaveEdits = () => {
+    const trimmedName = editName.trim();
+    const nameChanged = trimmedName.length > 0 && trimmedName !== area.name;
+    const envChanged = editEnvType !== currentEnvType;
+    if (!nameChanged && !envChanged) {
+      setIsEditing(false);
+      setEditName(area.name);
+      setEditEnvType(currentEnvType);
+      return;
+    }
+    if (!trimmedName) {
+      setEditName(area.name);
+      return;
     }
     updateArea.mutate(
-      { id: area.id, data: { name: editName.trim() } },
+      { id: area.id, data: { name: trimmedName, environmentType: editEnvType } },
       {
         onSuccess: () => {
-          toast({ title: "Area renamed", description: `Renamed to "${editName.trim()}".` });
+          toast({
+            title: "Area updated",
+            description: nameChanged
+              ? `Renamed to "${trimmedName}"${envChanged ? ` · environment now ${ENVIRONMENT_LABELS[editEnvType]}` : ""}.`
+              : `Environment set to ${ENVIRONMENT_LABELS[editEnvType]}.`,
+          });
           queryClient.invalidateQueries({ queryKey: getListAreasQueryKey() });
           setIsEditing(false);
         },
-        onError: () => toast({ variant: "destructive", title: "Rename failed", description: "Could not rename the area." }),
+        onError: () => toast({ variant: "destructive", title: "Save failed", description: "Could not update the area." }),
       }
     );
   };
@@ -225,35 +267,57 @@ function AreaConfigCard({ area }: { area: Area }) {
   return (
     <>
       <div className="bg-card rounded-2xl shadow-soft transition-all duration-150 hover:shadow-elevated active:scale-[0.99] motion-reduce:active:scale-100 motion-reduce:transition-none flex flex-col p-5 sm:p-6" data-testid={`card-area-${area.id}`}>
-        <div className="flex items-center justify-between gap-2 mb-5">
+        <div className="flex items-start justify-between gap-2 mb-5">
           {isEditing ? (
-            <div className="flex items-center gap-2 flex-1">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-1">
               <Input
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") handleRename();
-                  if (e.key === "Escape") { setIsEditing(false); setEditName(area.name); }
+                  if (e.key === "Enter") handleSaveEdits();
+                  if (e.key === "Escape") {
+                    setIsEditing(false);
+                    setEditName(area.name);
+                    setEditEnvType(currentEnvType);
+                  }
                 }}
                 autoFocus
-                className="h-10 rounded-xl bg-secondary/60 border-transparent"
+                className="h-10 rounded-xl bg-secondary/60 border-transparent flex-1"
                 data-testid={`input-rename-area-${area.id}`}
               />
-              <Button size="sm" variant="ghost" onClick={handleRename} disabled={updateArea.isPending} data-testid={`button-confirm-rename-${area.id}`}>
-                <Check className="w-4 h-4" />
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => { setIsEditing(false); setEditName(area.name); }}>
-                <X className="w-4 h-4" />
-              </Button>
+              <Select value={editEnvType} onValueChange={(v) => setEditEnvType(v as EnvironmentType)}>
+                <SelectTrigger
+                  className="h-10 rounded-xl bg-secondary/60 border-transparent w-full sm:w-36"
+                  data-testid={`select-environment-${area.id}`}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="factory" data-testid={`option-environment-factory-${area.id}`}>{ENVIRONMENT_LABELS.factory}</SelectItem>
+                  <SelectItem value="warehouse" data-testid={`option-environment-warehouse-${area.id}`}>{ENVIRONMENT_LABELS.warehouse}</SelectItem>
+                  <SelectItem value="home" data-testid={`option-environment-home-${area.id}`}>{ENVIRONMENT_LABELS.home}</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="flex items-center gap-1">
+                <Button size="sm" variant="ghost" onClick={handleSaveEdits} disabled={updateArea.isPending} data-testid={`button-confirm-rename-${area.id}`}>
+                  <Check className="w-4 h-4" />
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => { setIsEditing(false); setEditName(area.name); setEditEnvType(currentEnvType); }}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
             </div>
           ) : (
             <>
-              <div>
-                <h3 className="text-[19px] font-semibold tracking-tight">{area.name}</h3>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-[19px] font-semibold tracking-tight truncate">{area.name}</h3>
+                  <EnvironmentBadge type={currentEnvType} testId={`badge-environment-${area.id}`} />
+                </div>
                 <p className="text-[12.5px] text-muted-foreground mt-0.5">ID: {area.id}</p>
               </div>
               <div className="flex gap-1">
-                <Button size="sm" variant="ghost" className="rounded-full text-muted-foreground" onClick={() => { setIsEditing(true); setEditName(area.name); }} data-testid={`button-edit-area-${area.id}`}>
+                <Button size="sm" variant="ghost" className="rounded-full text-muted-foreground" onClick={() => { setIsEditing(true); setEditName(area.name); setEditEnvType(currentEnvType); }} data-testid={`button-edit-area-${area.id}`}>
                   <Pencil className="w-4 h-4" />
                 </Button>
                 <Button size="sm" variant="ghost" className="rounded-full text-muted-foreground hover:text-destructive" onClick={() => setShowDeleteDialog(true)} data-testid={`button-delete-area-${area.id}`}>

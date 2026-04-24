@@ -86,17 +86,55 @@ export interface UpdateNotificationPreferencesBody {
   quietHoursWeekdayMask?: number;
 }
 
+/**
+ * The kind of physical setting this area represents. Drives the AI rubric used to score submissions.
+ */
+export type AreaEnvironmentType =
+  (typeof AreaEnvironmentType)[keyof typeof AreaEnvironmentType];
+
+export const AreaEnvironmentType = {
+  factory: "factory",
+  warehouse: "warehouse",
+  home: "home",
+} as const;
+
 export interface Area {
   id: number;
   name: string;
+  /** The kind of physical setting this area represents. Drives the AI rubric used to score submissions. */
+  environmentType: AreaEnvironmentType;
 }
+
+/**
+ * Optional. Defaults to "factory".
+ */
+export type CreateAreaBodyEnvironmentType =
+  (typeof CreateAreaBodyEnvironmentType)[keyof typeof CreateAreaBodyEnvironmentType];
+
+export const CreateAreaBodyEnvironmentType = {
+  factory: "factory",
+  warehouse: "warehouse",
+  home: "home",
+} as const;
 
 export interface CreateAreaBody {
   name: string;
+  /** Optional. Defaults to "factory". */
+  environmentType?: CreateAreaBodyEnvironmentType;
 }
+
+export type UpdateAreaBodyEnvironmentType =
+  (typeof UpdateAreaBodyEnvironmentType)[keyof typeof UpdateAreaBodyEnvironmentType];
+
+export const UpdateAreaBodyEnvironmentType = {
+  factory: "factory",
+  warehouse: "warehouse",
+  home: "home",
+} as const;
 
 export interface UpdateAreaBody {
   name: string;
+  environmentType?: UpdateAreaBodyEnvironmentType;
 }
 
 export type AreaProfileStatus =
@@ -161,12 +199,33 @@ export type SubmissionAiPillarsJson = {
   sustain?: number;
 } | null;
 
+export type AIRecommendationSeverity =
+  | (typeof AIRecommendationSeverity)[keyof typeof AIRecommendationSeverity]
+  | null;
+
+export const AIRecommendationSeverity = {
+  high: "high",
+  medium: "medium",
+  low: "low",
+} as const;
+
 export interface AIRecommendation {
   action: string;
   why: string;
   location: string;
   principle?: string | null;
+  severity?: AIRecommendationSeverity;
 }
+
+export type AIIssueSeverity =
+  | (typeof AIIssueSeverity)[keyof typeof AIIssueSeverity]
+  | null;
+
+export const AIIssueSeverity = {
+  high: "high",
+  medium: "medium",
+  low: "low",
+} as const;
 
 export interface AIIssue {
   issue: string;
@@ -174,6 +233,7 @@ export interface AIIssue {
   location: string;
   pillar?: string | null;
   principle?: string | null;
+  severity?: AIIssueSeverity;
 }
 
 export interface Submission {
@@ -273,6 +333,15 @@ export interface AreaTrendPoint {
   count: number;
 }
 
+export type AreaTrendEnvironmentType =
+  (typeof AreaTrendEnvironmentType)[keyof typeof AreaTrendEnvironmentType];
+
+export const AreaTrendEnvironmentType = {
+  factory: "factory",
+  warehouse: "warehouse",
+  home: "home",
+} as const;
+
 export type AreaTrendStatus =
   (typeof AreaTrendStatus)[keyof typeof AreaTrendStatus];
 
@@ -284,6 +353,7 @@ export const AreaTrendStatus = {
 export interface AreaTrend {
   areaId: number;
   areaName: string;
+  environmentType: AreaTrendEnvironmentType;
   status: AreaTrendStatus;
   trainedOnDate?: string | null;
   points: AreaTrendPoint[];

@@ -300,6 +300,7 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
     return {
       areaId: a.id,
       areaName: a.name,
+      environmentType: a.environmentType,
       status,
       trainedOnDate,
       points,

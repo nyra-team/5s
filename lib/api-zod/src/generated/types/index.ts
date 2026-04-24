@@ -7,16 +7,21 @@
  */
 
 export * from "./aIIssueType";
+export * from "./aIIssueTypeSeverity";
 export * from "./aIRecommendationType";
+export * from "./aIRecommendationTypeSeverity";
 export * from "./areaProfileType";
 export * from "./areaProfileTypeStatus";
 export * from "./areaStatusType";
 export * from "./areaTrendPointType";
 export * from "./areaTrendType";
+export * from "./areaTrendTypeEnvironmentType";
 export * from "./areaTrendTypeStatus";
 export * from "./areaType";
+export * from "./areaTypeEnvironmentType";
 export * from "./complianceDataType";
 export * from "./createAreaBodyType";
+export * from "./createAreaBodyTypeEnvironmentType";
 export * from "./createLabelBodyType";
 export * from "./createLabelBodyTypePillarsJson";
 export * from "./createNudgeBodyType";
@@ -74,6 +79,7 @@ export * from "./submissionTypeMediaType";
 export * from "./submissionTypeScoreJson";
 export * from "./submissionTypeShift";
 export * from "./updateAreaBodyType";
+export * from "./updateAreaBodyTypeEnvironmentType";
 export * from "./updateAreaProfileBodyType";
 export * from "./updateNotificationPreferencesBodyType";
 export * from "./userType";

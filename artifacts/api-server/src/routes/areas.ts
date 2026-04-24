@@ -30,7 +30,10 @@ router.post("/areas", authMiddleware, requireRole("MANAGER"), async (req, res): 
     return;
   }
 
-  const [area] = await db.insert(areasTable).values({ name: parsed.data.name }).returning();
+  const values: { name: string; environmentType?: string } = { name: parsed.data.name };
+  if (parsed.data.environmentType) values.environmentType = parsed.data.environmentType;
+
+  const [area] = await db.insert(areasTable).values(values).returning();
   res.status(201).json(area);
 });
 
@@ -47,9 +50,12 @@ router.patch("/areas/:id", authMiddleware, requireRole("MANAGER"), async (req, r
     return;
   }
 
+  const patch: { name?: string; environmentType?: string } = { name: parsed.data.name };
+  if (parsed.data.environmentType) patch.environmentType = parsed.data.environmentType;
+
   const [area] = await db
     .update(areasTable)
-    .set({ name: parsed.data.name })
+    .set(patch)
     .where(eq(areasTable.id, params.data.id))
     .returning();
 
