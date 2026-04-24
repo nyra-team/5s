@@ -2,7 +2,7 @@ import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "./logger.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { extractKeyframes, isVideoFile } from "./keyframes.js";
+import { extractKeyframes, compressForVLM } from "./keyframes.js";
 
 interface VLMIssue {
   issue: string;
@@ -68,15 +68,54 @@ export interface ScoringOutput extends AIScoringResult {
   keyframeUrls: string[];
 }
 
-const FIVE_S_GMP_RUBRIC = `
-You are a strict 5S + GMP auditor for a manufacturing facility. Score with rigor.
+const MODEL_VERSION = "gpt-5-mini-5sgmp-v3";
 
-5S pillars (rate 0-5 each based on visible evidence):
-- SORT (Seiri): only necessary items present; unneeded tools, scrap, personal items removed.
+const FIVE_S_GMP_RUBRIC = `
+You are a strict 5S + GMP auditor for a manufacturing facility. Score with rigor and consistency: identical evidence must always produce the same score.
+
+5S pillars (each rated 0–5):
+- SORT (Seiri): only necessary items present.
 - SET IN ORDER (Seiton): everything has a designated, labeled place; tools at point-of-use; clear walk paths.
 - SHINE (Seiso): surfaces, equipment, floors are clean; no spills, dust, swarf, debris; equipment inspected.
 - STANDARDIZE (Seiketsu): visual standards visible (shadow boards, labels, color codes, posted procedures, schedules).
 - SUSTAIN (Shitsuke): evidence of routine use — completed checklists, recent log entries, audit boards, PPE worn.
+
+PER-PILLAR SCORE ANCHORS — use these exact descriptions to pick the number:
+
+SORT:
+  0 = unsafe clutter; trash, scrap, or unauthorized personal items dominate the workspace.
+  2 = noticeable unneeded items at the workstation but no immediate hazard.
+  3 = a few non-essential items present; mostly only what is needed for the task.
+  4 = workspace contains only items needed for the current task; minor optional items at most.
+  5 = exclusively necessary items; obvious red-tagging or removal discipline is visible.
+
+SET IN ORDER:
+  0 = chaotic; tools and materials randomly placed; walk paths blocked.
+  2 = some items have homes but many are placed wherever convenient; locations not labeled.
+  3 = most items have a designated place; some labeling; walk paths usable but not clearly marked.
+  4 = nearly all items at point-of-use with labeled locations; walk paths and zones marked.
+  5 = every item has a labeled, color-coded home (shadow boards, outlined zones); flow is obvious.
+
+SHINE:
+  0 = grossly dirty; spills, leaks, debris, or contamination on equipment or floor.
+  2 = visible dust, swarf, or stains on multiple surfaces; cleanliness clearly neglected.
+  3 = generally clean but with some dust/residue; equipment is functional but not pristine.
+  4 = clean surfaces and equipment; only minor wear or smudging.
+  5 = spotless; equipment and floor look freshly cleaned; cleaning logs visible nearby.
+
+STANDARDIZE:
+  0 = no visual standards of any kind.
+  2 = a single sign or label exists but most positions/procedures are undocumented.
+  3 = some visual standards (a few labels, one posted procedure) but inconsistent application.
+  4 = consistent labels, color codes, and posted standards across the area.
+  5 = comprehensive visual management: shadow boards, color-coded zones, posted SOPs, schedules and recovery actions all visible.
+
+SUSTAIN:
+  0 = no evidence anyone follows 5S; PPE not worn; no logs.
+  2 = audit board exists but is blank or out of date; PPE inconsistent.
+  3 = some checklists/logs filled in but not current; PPE present on most workers.
+  4 = recent (within shift) checklist or log entries; PPE worn correctly; audit board updated.
+  5 = clear, current evidence of daily 5S routine: signed checklists, today's log entries, PPE 100%, recent audit results posted.
 
 GMP principles to apply (cite when violated):
 - HYGIENE: hand-wash stations stocked, PPE/hairnets/gloves used, no eating/drinking in production.
@@ -85,8 +124,10 @@ GMP principles to apply (cite when violated):
 - DOCUMENTATION: batch records, cleaning logs, calibration tags up to date and visible.
 - EQUIPMENT CLEANLINESS: machines free of buildup, lubricant, residue; cleaning verified.
 
-Score guide: 0=hazardous/chaotic, 1=very poor, 2=poor, 3=acceptable, 4=good, 5=excellent.
-Be harsh: clutter, mess, missing labels, exposed product, unworn PPE, undated logs are all serious.
+Scoring discipline:
+- For EACH pillar, FIRST write a brief reasoning string under "reasoning" naming the specific evidence (frame numbers, locations) that drives the score. THEN choose the number. Do not commit to a number until the reasoning is written.
+- Score by the worst observable evidence in that pillar — clutter, exposed product, missing labels, unworn PPE, undated logs are all serious.
+- If evidence is unclear, lean toward the lower anchor.
 
 For each ISSUE you cite, name the pillar (sort/set/shine/standardize/sustain) AND the 5S/GMP principle that it violates.
 For each RECOMMENDATION, name the principle it restores.
@@ -101,6 +142,13 @@ Also extract a structured PROFILE of what is visible in the area:
 
 Output ONLY valid JSON in this exact shape:
 {
+  "reasoning": {
+    "sort": "evidence-based reasoning for the sort score",
+    "set": "...",
+    "shine": "...",
+    "standardize": "...",
+    "sustain": "..."
+  },
   "pillar_scores": { "sort": 0-5, "set": 0-5, "shine": 0-5, "standardize": 0-5, "sustain": 0-5 },
   "issues": [{ "issue": "...", "evidence": "frame N: ...", "location": "left|right|top|bottom|center", "pillar": "sort|set|shine|standardize|sustain", "principle": "..." }],
   "recommendations": [{ "action": "...", "why": "...", "location": "...", "principle": "..." }],
@@ -150,12 +198,44 @@ function emptyResult(reason: string): AIScoringResult {
   };
 }
 
-async function callVLM(
-  framePaths: string[],
-  areaName: string,
-  machineTag: string | null | undefined,
-  learnedProfile: ScoringInput["learnedProfile"]
-): Promise<AIScoringResult> {
+const PILLAR_KEYS = ["sort", "set", "shine", "standardize", "sustain"] as const;
+
+/** Validate parsed VLM JSON against the contract. Returns null if valid, or
+ *  a human-readable error string suitable for sending back to the model on
+ *  retry. We only check the shape we actually rely on downstream. */
+export function validateVlmJson(parsed: any): string | null {
+  if (!parsed || typeof parsed !== "object") return "response is not a JSON object";
+  const ps = parsed.pillar_scores;
+  if (!ps || typeof ps !== "object") return "missing object 'pillar_scores'";
+  for (const k of PILLAR_KEYS) {
+    const v = (ps as any)[k];
+    if (typeof v !== "number" || !Number.isFinite(v)) {
+      return `pillar_scores.${k} must be a number 0-5 (got ${typeof v})`;
+    }
+    if (v < 0 || v > 5) return `pillar_scores.${k} must be between 0 and 5 (got ${v})`;
+  }
+  const reasoning = parsed.reasoning;
+  if (!reasoning || typeof reasoning !== "object") return "missing object 'reasoning' with a string per pillar";
+  for (const k of PILLAR_KEYS) {
+    const v = (reasoning as any)[k];
+    if (typeof v !== "string" || v.trim().length === 0) {
+      return `reasoning.${k} must be a non-empty string explaining the score`;
+    }
+  }
+  if (!Array.isArray(parsed.issues)) return "'issues' must be an array";
+  if (!Array.isArray(parsed.recommendations)) return "'recommendations' must be an array";
+  return null;
+}
+
+interface CallVlmOptions {
+  framePaths: string[];
+  areaName: string;
+  machineTag: string | null | undefined;
+  learnedProfile: ScoringInput["learnedProfile"];
+}
+
+async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
+  const { framePaths, areaName, machineTag, learnedProfile } = opts;
   const profileBlock = learnedProfile && learnedProfile.status === "TRAINED"
     ? `\nLEARNED AREA PROFILE (this area's own norm — score deviations from it as well):
 - Summary: ${learnedProfile.summary ?? "(none)"}
@@ -167,34 +247,85 @@ async function callVLM(
 
   const machineLine = machineTag ? `\nThe operator tagged this capture as: "${machineTag}".` : "";
 
-  const content: any[] = [
-    {
-      type: "text",
-      text:
-`Area: "${areaName}".${machineLine}\n${profileBlock}\nThe operator submitted ${framePaths.length} frame(s) from a walk-through. Audit the AREA AS A WHOLE across all frames.`,
-    },
-  ];
+  const userText =
+`Area: "${areaName}".${machineLine}\n${profileBlock}\nThe operator submitted ${framePaths.length} frame(s) from a walk-through. Audit the AREA AS A WHOLE across all frames.`;
+
+  const baseContent: any[] = [{ type: "text", text: userText }];
 
   for (let i = 0; i < framePaths.length; i++) {
     const p = framePaths[i];
     if (!fs.existsSync(p)) continue;
     const b64 = imageToBase64(p);
-    content.push({ type: "text", text: `FRAME ${i + 1}:` });
-    content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}` } });
+    baseContent.push({ type: "text", text: `FRAME ${i + 1}:` });
+    baseContent.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}` } });
   }
 
-  const response = await openai.chat.completions.create({
+  // Deterministic params keep identical submissions producing identical scores.
+  // `seed` is best-effort: the proxy may ignore it for models that don't
+  // support it, which is fine — temperature 0 alone gives strong determinism.
+  const baseRequest = {
     model: "gpt-5-mini",
-    response_format: { type: "json_object" },
+    response_format: { type: "json_object" as const },
     max_completion_tokens: 2048,
-    messages: [
-      { role: "system", content: FIVE_S_GMP_RUBRIC },
-      { role: "user", content },
-    ],
-  });
+    temperature: 0,
+    top_p: 1,
+    seed: 5,
+  };
 
-  const text = response.choices[0]?.message?.content || "{}";
-  const parsed = JSON.parse(text);
+  const messages: any[] = [
+    { role: "system", content: FIVE_S_GMP_RUBRIC },
+    { role: "user", content: baseContent },
+  ];
+
+  const firstResp = await openai.chat.completions.create({ ...baseRequest, messages });
+  const firstText = firstResp.choices[0]?.message?.content || "{}";
+
+  let parsed: any;
+  let validationError: string | null;
+  try {
+    parsed = JSON.parse(firstText);
+    validationError = validateVlmJson(parsed);
+  } catch (err) {
+    parsed = null;
+    validationError = `response was not valid JSON: ${(err as Error).message}`;
+  }
+
+  // One automatic retry with a stricter prompt naming exactly what was wrong.
+  // We keep the original user content/images so the model isn't asked to
+  // re-imagine anything — only to re-emit valid JSON.
+  if (validationError) {
+    logger.warn({ validationError, modelVersion: MODEL_VERSION }, "VLM JSON validation failed; retrying once");
+    const retryMessages: any[] = [
+      ...messages,
+      { role: "assistant", content: firstText },
+      {
+        role: "user",
+        content:
+`Your previous JSON failed validation: ${validationError}.
+
+Re-emit the COMPLETE response as valid JSON in exactly the documented shape. The required fields are:
+- "reasoning": { "sort": string, "set": string, "shine": string, "standardize": string, "sustain": string }
+- "pillar_scores": { "sort": 0-5, "set": 0-5, "shine": 0-5, "standardize": 0-5, "sustain": 0-5 }
+- "issues": array (may be empty)
+- "recommendations": array (may be empty)
+- "profile": object
+
+Do not include any prose outside the JSON object.`,
+      },
+    ];
+
+    const retryResp = await openai.chat.completions.create({ ...baseRequest, messages: retryMessages });
+    const retryText = retryResp.choices[0]?.message?.content || "{}";
+    try {
+      parsed = JSON.parse(retryText);
+      validationError = validateVlmJson(parsed);
+    } catch (err) {
+      validationError = `retry was not valid JSON: ${(err as Error).message}`;
+    }
+    if (validationError) {
+      throw new Error(`VLM returned invalid JSON after one retry: ${validationError}`);
+    }
+  }
 
   const ps = parsed.pillar_scores || {};
   const pillars: VLMPillarScores = {
@@ -245,7 +376,7 @@ async function callVLM(
     aiRecommendationsJson: recs,
     aiIssuesJson: issues,
     failingPillars: failing,
-    modelVersion: "gpt-5-mini-5sgmp-v2",
+    modelVersion: MODEL_VERSION,
     scoringMode: "VLM_RUBRIC",
     profile,
   };
@@ -262,7 +393,7 @@ export async function scoreSubmission(input: ScoringInput): Promise<ScoringOutpu
 
   if (input.mediaType === "video") {
     try {
-      const kf = await extractKeyframes(fullMediaPath, { maxFrames: 6, intervalSec: 2 });
+      const kf = await extractKeyframes(fullMediaPath, { maxFrames: 6 });
       framePaths = kf.frameAbsPaths;
       frameUrls = kf.frameUrls;
       if (framePaths.length === 0) {
@@ -276,12 +407,56 @@ export async function scoreSubmission(input: ScoringInput): Promise<ScoringOutpu
       return { ...fb, keyframeUrls: [] };
     }
   } else {
-    framePaths = [fullMediaPath];
+    // Image submissions: shrink + recompress before the VLM call so the
+    // base64 payload stays small. We MUST NOT rewrite the original upload in
+    // place — uploads can be PNG/HEIC/WebP and the file URL we hand back to
+    // operators uses the original extension/MIME. Always write a sibling
+    // `.vlm.jpg` derivative used solely for the VLM call and clean it up
+    // afterwards.
+    const ext = path.extname(fullMediaPath).toLowerCase();
+    const isJpeg = ext === ".jpg" || ext === ".jpeg";
+    let vlmDerivative: string | null = null;
+    let vlmPath = fullMediaPath;
+    try {
+      if (isJpeg) {
+        // Already a JPEG — safe to compress in place; the served URL stays valid.
+        vlmPath = await compressForVLM(fullMediaPath);
+      } else {
+        vlmDerivative = fullMediaPath + ".vlm.jpg";
+        vlmPath = await compressForVLM(fullMediaPath, vlmDerivative);
+      }
+    } catch (err) {
+      logger.warn({ err }, "image compress failed; sending original");
+    }
+    framePaths = [vlmPath];
     frameUrls = [];
+
+    try {
+      const result = await callVLM({
+        framePaths,
+        areaName: input.areaName,
+        machineTag: input.machineTag,
+        learnedProfile: input.learnedProfile,
+      });
+      return { ...result, keyframeUrls: frameUrls };
+    } catch (err) {
+      logger.error({ err }, "VLM scoring failed");
+      const fb = emptyResult(err instanceof Error ? err.message : "VLM error");
+      return { ...fb, keyframeUrls: frameUrls };
+    } finally {
+      if (vlmDerivative && fs.existsSync(vlmDerivative)) {
+        try { fs.unlinkSync(vlmDerivative); } catch { /* best-effort */ }
+      }
+    }
   }
 
   try {
-    const result = await callVLM(framePaths, input.areaName, input.machineTag, input.learnedProfile);
+    const result = await callVLM({
+      framePaths,
+      areaName: input.areaName,
+      machineTag: input.machineTag,
+      learnedProfile: input.learnedProfile,
+    });
     return { ...result, keyframeUrls: frameUrls };
   } catch (err) {
     logger.error({ err }, "VLM scoring failed");

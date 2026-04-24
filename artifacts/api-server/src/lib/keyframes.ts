@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
+import sharp from "sharp";
 import { logger } from "./logger.js";
 
 const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
@@ -49,26 +50,105 @@ export interface KeyframeResult {
   frameAbsPaths: string[];
 }
 
-/**
- * Extract up to `maxFrames` evenly-spaced JPEG keyframes from a video file.
- * Returns the urls (uploads-relative) and absolute disk paths.
- */
-export async function extractKeyframes(
-  videoAbsPath: string,
-  opts: { maxFrames?: number; intervalSec?: number } = {}
-): Promise<KeyframeResult> {
-  const maxFrames = opts.maxFrames ?? 6;
-  const intervalSec = opts.intervalSec ?? 2;
-  const id = crypto.randomUUID();
-  const pattern = path.join(UPLOAD_DIR, `${id}_%03d.jpg`);
+export interface KeyframeOptions {
+  /** Hard cap on number of frames returned. Default: 6. */
+  maxFrames?: number;
+  /** Scene-change threshold for ffmpeg's `select=gt(scene,X)` filter. 0..1. Default: 0.3 */
+  sceneThreshold?: number;
+  /** Hamming-distance threshold for the dHash dedup pass; lower = stricter. Default: 5 */
+  dedupHammingThreshold?: number;
+  /** Fallback fixed-interval (seconds) used when scene detection finds nothing. Default: 2 */
+  fallbackIntervalSec?: number;
+}
 
-  // Sample 1 frame every `intervalSec` seconds, scale down for cost, cap at maxFrames.
+/**
+ * Compute a 64-bit difference hash (dHash) for a small image. Two images with
+ * a Hamming distance ≤ ~5 are visually near-identical, regardless of minor
+ * compression artifacts. Returned as 8 bytes so we can cheaply XOR.
+ */
+async function computeDHash(absPath: string): Promise<Buffer> {
+  // 9x8 grayscale → compare each pixel to its right-hand neighbor → 8 rows x 8 bits.
+  const raw = await sharp(absPath)
+    .grayscale()
+    .resize(9, 8, { fit: "fill" })
+    .raw()
+    .toBuffer();
+  // raw is row-major; index = row*9 + col
+  const out = Buffer.alloc(8);
+  for (let row = 0; row < 8; row++) {
+    let bits = 0;
+    for (let col = 0; col < 8; col++) {
+      const left = raw[row * 9 + col];
+      const right = raw[row * 9 + col + 1];
+      bits = (bits << 1) | (left < right ? 1 : 0);
+    }
+    out[row] = bits & 0xff;
+  }
+  return out;
+}
+
+function hammingDistance(a: Buffer, b: Buffer): number {
+  let d = 0;
+  for (let i = 0; i < a.length; i++) {
+    let x = a[i] ^ b[i];
+    while (x) { d += x & 1; x >>= 1; }
+  }
+  return d;
+}
+
+/**
+ * Resize and re-encode an image as a JPEG suited for VLM input (max 1024px
+ * on the longest side, q=85). If `outputPath` is omitted the file is
+ * rewritten in place — only safe when the input is already a JPEG (e.g.
+ * ffmpeg-extracted keyframes). For arbitrary uploads (PNG, HEIC, etc.) the
+ * caller MUST pass an explicit `outputPath` so the original media file
+ * keeps its declared extension/MIME and stays viewable as evidence.
+ */
+export async function compressForVLM(
+  absPath: string,
+  outputPath?: string,
+  maxDim = 1024,
+  quality = 85,
+): Promise<string> {
+  const target = outputPath ?? absPath;
+  try {
+    if (target === absPath) {
+      // In-place rewrite: stage to a sibling tmp file then atomic-rename so
+      // a partial write can't leave the original truncated.
+      const tmpPath = absPath + ".tmp.jpg";
+      await sharp(absPath)
+        .rotate() // honor EXIF orientation
+        .resize({ width: maxDim, height: maxDim, fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality, mozjpeg: true })
+        .toFile(tmpPath);
+      fs.renameSync(tmpPath, absPath);
+    } else {
+      await sharp(absPath)
+        .rotate()
+        .resize({ width: maxDim, height: maxDim, fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality, mozjpeg: true })
+        .toFile(target);
+    }
+    return target;
+  } catch (err) {
+    logger.warn({ err, absPath, outputPath }, "compressForVLM failed; sending original");
+    return absPath;
+  }
+}
+
+/**
+ * Run ffmpeg with the given filter graph. Returns the list of frame files
+ * produced (sorted). Throws on non-zero exit so callers can fall back.
+ */
+async function runFfmpeg(videoAbsPath: string, vfilter: string, maxFrames: number, idPrefix: string): Promise<string[]> {
+  const pattern = path.join(UPLOAD_DIR, `${idPrefix}_%03d.jpg`);
   await new Promise<void>((resolve, reject) => {
     const args = [
       "-y",
       "-i", videoAbsPath,
-      "-vf", `fps=1/${intervalSec},scale=720:-2`,
-      "-frames:v", String(maxFrames),
+      "-vf", vfilter,
+      "-vsync", "vfr",
+      "-frames:v", String(maxFrames * 3), // overshoot — dedup trims later
       "-q:v", "3",
       pattern,
     ];
@@ -81,17 +161,100 @@ export async function extractKeyframes(
       else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-500)}`));
     });
   });
-
-  const files = fs.readdirSync(UPLOAD_DIR)
-    .filter((f) => f.startsWith(`${id}_`) && f.endsWith(".jpg"))
+  return fs.readdirSync(UPLOAD_DIR)
+    .filter((f) => f.startsWith(`${idPrefix}_`) && f.endsWith(".jpg"))
     .sort();
+}
 
-  if (files.length === 0) {
-    logger.warn({ videoAbsPath }, "Keyframe extraction produced no frames");
+/**
+ * Extract up to `maxFrames` keyframes from a video. Uses ffmpeg's scene-change
+ * detection so the model sees visually distinct moments rather than a stream
+ * of near-identical 2-second snapshots. A perceptual-hash dedup pass drops any
+ * frames that survive scene detection but are still near-duplicates of an
+ * already-selected one. Each surviving frame is downscaled and recompressed
+ * to keep VLM payloads small.
+ *
+ * If scene detection returns nothing (very static video), we fall back to a
+ * fixed-interval sample so the operator still gets analysis.
+ */
+export async function extractKeyframes(
+  videoAbsPath: string,
+  opts: KeyframeOptions = {}
+): Promise<KeyframeResult> {
+  const maxFrames = opts.maxFrames ?? 6;
+  const sceneThreshold = opts.sceneThreshold ?? 0.3;
+  const hammingThreshold = opts.dedupHammingThreshold ?? 5;
+  const fallbackInterval = opts.fallbackIntervalSec ?? 2;
+  const id = crypto.randomUUID();
+
+  // 1. Scene-change selection. Pre-scale to keep ffmpeg cheap.
+  const sceneFilter = `select='gt(scene\\,${sceneThreshold})',scale=720:-2`;
+  let candidates: string[] = [];
+  try {
+    candidates = await runFfmpeg(videoAbsPath, sceneFilter, maxFrames, `${id}_s`);
+  } catch (err) {
+    logger.warn({ err, videoAbsPath }, "scene-change ffmpeg pass failed");
   }
 
+  // 2. Fallback to fixed interval if scene detection found nothing.
+  if (candidates.length === 0) {
+    const intervalFilter = `fps=1/${fallbackInterval},scale=720:-2`;
+    try {
+      candidates = await runFfmpeg(videoAbsPath, intervalFilter, maxFrames, `${id}_i`);
+    } catch (err) {
+      logger.warn({ err, videoAbsPath }, "fallback interval ffmpeg pass failed");
+    }
+  }
+
+  if (candidates.length === 0) {
+    logger.warn({ videoAbsPath }, "Keyframe extraction produced no frames");
+    return { frameUrls: [], frameAbsPaths: [] };
+  }
+
+  // 3. Perceptual-hash dedup — drop any frame within hammingThreshold bits of
+  //    an already-kept frame. This catches duplicates that survive scene
+  //    detection (e.g. flicker / slow pans) before the expensive VLM call.
+  const kept: { name: string; hash: Buffer }[] = [];
+  for (const name of candidates) {
+    const abs = path.join(UPLOAD_DIR, name);
+    let hash: Buffer;
+    try { hash = await computeDHash(abs); }
+    catch (err) {
+      // If hashing fails, keep the frame defensively rather than dropping it.
+      logger.warn({ err, name }, "dHash failed; keeping frame without dedup");
+      kept.push({ name, hash: Buffer.alloc(8) });
+      if (kept.length >= maxFrames) break;
+      continue;
+    }
+    const dup = kept.some((k) => k.hash.length > 0 && hammingDistance(k.hash, hash) <= hammingThreshold);
+    if (dup) {
+      try { fs.unlinkSync(abs); } catch { /* best-effort */ }
+      continue;
+    }
+    kept.push({ name, hash });
+    if (kept.length >= maxFrames) break;
+  }
+
+  // Anything beyond the cap that we never inspected — clean up disk too.
+  for (const name of candidates) {
+    if (kept.find((k) => k.name === name)) continue;
+    const abs = path.join(UPLOAD_DIR, name);
+    if (fs.existsSync(abs)) {
+      try { fs.unlinkSync(abs); } catch { /* best-effort */ }
+    }
+  }
+
+  // 4. Compress survivors for the VLM payload.
+  const survivors = kept.map((k) => k.name);
+  await Promise.all(
+    survivors.map((name) => compressForVLM(path.join(UPLOAD_DIR, name)))
+  );
+
   return {
-    frameUrls: files.map((f) => `/uploads/${f}`),
-    frameAbsPaths: files.map((f) => path.join(UPLOAD_DIR, f)),
+    frameUrls: survivors.map((f) => `/uploads/${f}`),
+    frameAbsPaths: survivors.map((f) => path.join(UPLOAD_DIR, f)),
   };
 }
+
+// Exposed for tests.
+export const __test__ = { computeDHash, hammingDistance };
