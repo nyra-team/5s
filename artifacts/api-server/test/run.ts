@@ -17,6 +17,7 @@ import "./nudges.test.js";
 import "./labels.test.js";
 import "./live.test.js";
 import "./submissions.test.js";
+import "./submissions-upload.test.js";
 import "./reasoning.test.js";
 import "./backfill-reasoning.test.js";
 import "./identify-area.test.js";

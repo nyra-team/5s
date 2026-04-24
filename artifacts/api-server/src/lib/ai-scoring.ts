@@ -546,7 +546,7 @@ Do not include any prose outside the JSON object.`,
   };
 }
 
-export async function scoreSubmission(input: ScoringInput): Promise<ScoringOutput> {
+async function scoreSubmissionDefault(input: ScoringInput): Promise<ScoringOutput> {
   const uploadsDir = path.resolve(process.cwd(), "uploads");
   const fullMediaPath = path.isAbsolute(input.mediaAbsPath)
     ? input.mediaAbsPath
@@ -650,4 +650,24 @@ export async function scoreSubmission(input: ScoringInput): Promise<ScoringOutpu
     const fb = emptyResult(err instanceof Error ? err.message : "VLM error");
     return { ...fb, keyframeUrls: frameUrls, keyframeMetrics, vlmMs: null };
   }
+}
+
+// `scoreSubmission` is exported as a `let`-bound live binding so the
+// integration suite can swap it for a deterministic stub via
+// `__setScoreSubmissionForTest`. ESM keeps importers in sync with the
+// reassignment, so the real `/api/submissions` route handler runs against
+// the stub without any module-level rewiring.
+export let scoreSubmission: (input: ScoringInput) => Promise<ScoringOutput> =
+  scoreSubmissionDefault;
+
+/**
+ * Test-only seam. Lets the integration suite stub the AI pipeline so the
+ * real POST /api/submissions handler can be exercised end-to-end without a
+ * network round-trip to the VLM (and without depending on real keyframe
+ * extraction or image compression). Pass `null` to restore the real impl.
+ */
+export function __setScoreSubmissionForTest(
+  fn: ((input: ScoringInput) => Promise<ScoringOutput>) | null,
+): void {
+  scoreSubmission = fn ?? scoreSubmissionDefault;
 }
