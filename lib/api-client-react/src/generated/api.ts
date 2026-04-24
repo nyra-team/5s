@@ -59,6 +59,8 @@ import type {
   NextCheck,
   NotificationPreferences,
   Nudge,
+  OperatorCoachingNudgeResult,
+  OperatorCoachingNudgeThrottled,
   OperatorDismissSummary,
   OperatorDismissedNudge,
   OperatorThresholds,
@@ -67,6 +69,7 @@ import type {
   RecentSubmission,
   ReuploadSubmissionBody,
   ScoreSummary,
+  SendOperatorCoachingNudgeBody,
   SetAreaAssignmentsBody,
   ShiftConfig,
   Submission,
@@ -2370,6 +2373,99 @@ export function useGetDashboardOperatorDismissesDetail<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Closes the loop on the operator-dismiss panel: rather than only seeing which operators are silencing nudges, the manager taps a row to drop a fresh nudge on that operator's most-dismissed area in the configured last-N-days window. The nudge lands on the current shift with a manager-supplied (or default) message. Throttled per (operator, area) for one hour so a quick double-tap or two managers acting on the same row at once don't pile reminders on the operator.
+ * @summary Manager fires a coaching nudge at an operator's most-dismissed area
+ */
+export const getSendOperatorCoachingNudgeUrl = () => {
+  return `/api/dashboard/operator-coaching-nudge`;
+};
+
+export const sendOperatorCoachingNudge = async (
+  sendOperatorCoachingNudgeBody: SendOperatorCoachingNudgeBody,
+  options?: RequestInit,
+): Promise<OperatorCoachingNudgeResult> => {
+  return customFetch<OperatorCoachingNudgeResult>(
+    getSendOperatorCoachingNudgeUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sendOperatorCoachingNudgeBody),
+    },
+  );
+};
+
+export const getSendOperatorCoachingNudgeMutationOptions = <
+  TError = ErrorType<ErrorResponse | OperatorCoachingNudgeThrottled>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof sendOperatorCoachingNudge>>,
+    TError,
+    { data: BodyType<SendOperatorCoachingNudgeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof sendOperatorCoachingNudge>>,
+  TError,
+  { data: BodyType<SendOperatorCoachingNudgeBody> },
+  TContext
+> => {
+  const mutationKey = ["sendOperatorCoachingNudge"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof sendOperatorCoachingNudge>>,
+    { data: BodyType<SendOperatorCoachingNudgeBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return sendOperatorCoachingNudge(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SendOperatorCoachingNudgeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof sendOperatorCoachingNudge>>
+>;
+export type SendOperatorCoachingNudgeMutationBody =
+  BodyType<SendOperatorCoachingNudgeBody>;
+export type SendOperatorCoachingNudgeMutationError = ErrorType<
+  ErrorResponse | OperatorCoachingNudgeThrottled
+>;
+
+/**
+ * @summary Manager fires a coaching nudge at an operator's most-dismissed area
+ */
+export const useSendOperatorCoachingNudge = <
+  TError = ErrorType<ErrorResponse | OperatorCoachingNudgeThrottled>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof sendOperatorCoachingNudge>>,
+    TError,
+    { data: BodyType<SendOperatorCoachingNudgeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof sendOperatorCoachingNudge>>,
+  TError,
+  { data: BodyType<SendOperatorCoachingNudgeBody> },
+  TContext
+> => {
+  return useMutation(getSendOperatorCoachingNudgeMutationOptions(options));
+};
 
 /**
  * Aggregates agreement between `tappedAreaId` (intent) and `areaId` (chosen) over the requested window. Submissions with no recorded `tappedAreaId` (legacy rows) are excluded from the totals so the rate isn't diluted.

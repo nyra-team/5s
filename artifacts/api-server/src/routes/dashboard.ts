@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, gte, lt, sql, count, avg, desc, max, isNotNull, inArray } from "drizzle-orm";
+import { eq, and, gte, lt, sql, count, avg, desc, max, isNotNull, isNull, inArray } from "drizzle-orm";
 import {
   db,
   submissionsTable,
@@ -18,6 +18,7 @@ import {
   GetDashboardTrendsQueryParams,
   GetDashboardOperatorDismissesQueryParams,
   GetDashboardOperatorDismissesDetailQueryParams,
+  SendOperatorCoachingNudgeBody,
 } from "@workspace/api-zod";
 import { authMiddleware, requireRole } from "../lib/auth";
 import {
@@ -25,6 +26,7 @@ import {
   getISTShiftRange,
   getZonedParts,
   formatZonedDate,
+  getCurrentShift,
   type ShiftConfig,
 } from "../lib/scoring";
 import { loadEffectiveShiftConfig } from "../lib/facility-settings.js";
@@ -641,6 +643,173 @@ router.get(
         dismissedAt: r.dismissedAt ?? new Date(0),
       })),
     );
+  },
+);
+
+// One-tap "send a coaching nudge" action that closes the loop on the
+// operator-dismiss panel. The manager picks an operator from the row, we pick
+// the area they've been silencing the most in the last `days` window, and we
+// drop a fresh nudge on that area for the current shift. Throttled per
+// (operator, area) to one hour so two managers reacting to the same row
+// (or a quick double-tap) don't pile reminders on the operator.
+//
+// Note: the nudge schema is shift-scoped, not operator-scoped — there's no
+// `targetUserId` column on `nudges` today. We surface the action AS a per-
+// operator coaching tool because the area picked is derived from THAT
+// operator's dismissal history, but the actual reminder is delivered through
+// the existing per-shift nudge channel that the operator app already polls.
+// If we later add a per-operator nudge channel, the throttle key (operator+
+// area) is already correct.
+const COACHING_NUDGE_THROTTLE_MS = 60 * 60 * 1000;
+
+router.post(
+  "/dashboard/operator-coaching-nudge",
+  authMiddleware,
+  requireRole("MANAGER"),
+  async (req, res): Promise<void> => {
+    const { userId: managerId } = (req as any).user as { userId: number };
+    const parsed = SendOperatorCoachingNudgeBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid request body" });
+      return;
+    }
+    const { operatorId, message: rawMessage, days } = parsed.data;
+
+    // Confirm the operator exists before we start joining nudges around their
+    // id — a 404 here gives a much clearer signal than an empty aggregate.
+    const [operator] = await db
+      .select({ id: usersTable.id, email: usersTable.email, role: usersTable.role })
+      .from(usersTable)
+      .where(eq(usersTable.id, operatorId));
+    if (!operator) {
+      res.status(404).json({ error: "Operator not found" });
+      return;
+    }
+
+    const cfg = await loadEffectiveShiftConfig();
+    const windowStart = getDismissWindowStart(days, cfg);
+
+    // Pick the operator's most-dismissed area in the window. Ties broken by
+    // most-recent dismissal so the manager sends a reminder on the area
+    // that's been freshly painful, not a stale one from a week ago.
+    const [topArea] = await db
+      .select({
+        areaId: nudgesTable.areaId,
+        areaName: areasTable.name,
+        dismissCount: count(nudgesTable.id),
+        lastDismissedAt: max(nudgesTable.dismissedAt),
+      })
+      .from(nudgesTable)
+      .innerJoin(areasTable, eq(nudgesTable.areaId, areasTable.id))
+      .where(
+        and(
+          eq(nudgesTable.dismissReason, OPERATOR_DISMISS_REASON),
+          eq(nudgesTable.dismissedByUserId, operatorId),
+          isNotNull(nudgesTable.dismissedAt),
+          gte(nudgesTable.dismissedAt, windowStart),
+        ),
+      )
+      .groupBy(nudgesTable.areaId, areasTable.name)
+      .orderBy(desc(count(nudgesTable.id)), desc(max(nudgesTable.dismissedAt)))
+      .limit(1);
+
+    if (!topArea) {
+      res.status(404).json({
+        error:
+          "No OPERATOR_DISMISS history for this operator in the requested window",
+      });
+      return;
+    }
+
+    const currentShift = getCurrentShift(cfg).shift;
+    const throttleSince = new Date(Date.now() - COACHING_NUDGE_THROTTLE_MS);
+
+    // Throttle key: a nudge for the same (area, shift) created in the last
+    // hour, with no machine attached (matching the area-level coaching
+    // nudge we'd be about to insert). Catches both "two managers acted
+    // simultaneously" and "the same manager double-tapped". We deliberately
+    // include dismissed nudges in the lookup so a fast OPERATOR_DISMISS does
+    // not let the manager re-spam right away.
+    const [recent] = await db
+      .select({
+        id: nudgesTable.id,
+        createdAt: nudgesTable.createdAt,
+      })
+      .from(nudgesTable)
+      .where(
+        and(
+          eq(nudgesTable.areaId, topArea.areaId),
+          eq(nudgesTable.shift, currentShift),
+          isNull(nudgesTable.machine),
+          gte(nudgesTable.createdAt, throttleSince),
+        ),
+      )
+      .orderBy(desc(nudgesTable.createdAt))
+      .limit(1);
+
+    if (recent) {
+      const nextEligibleAt = new Date(
+        recent.createdAt.getTime() + COACHING_NUDGE_THROTTLE_MS,
+      );
+      res.status(429).json({
+        error:
+          "A reminder for this operator's most-dismissed area was sent within the last hour",
+        targetOperatorId: operatorId,
+        targetAreaId: topArea.areaId,
+        targetAreaName: topArea.areaName,
+        lastSentAt: recent.createdAt,
+        nextEligibleAt,
+      });
+      return;
+    }
+
+    const trimmed =
+      typeof rawMessage === "string" && rawMessage.trim() !== ""
+        ? rawMessage.trim()
+        : null;
+    const message =
+      trimmed ??
+      `Coaching nudge: please prioritise a fresh walk-through for ${topArea.areaName} this shift.`;
+
+    const [created] = await db
+      .insert(nudgesTable)
+      .values({
+        areaId: topArea.areaId,
+        machine: null,
+        shift: currentShift,
+        message,
+        createdByUserId: managerId,
+      })
+      .returning({ id: nudgesTable.id, createdAt: nudgesTable.createdAt });
+
+    // Re-shape the row through the join so the response carries areaName +
+    // createdByEmail in the same shape the rest of the nudge endpoints use.
+    const [shaped] = await db
+      .select({
+        id: nudgesTable.id,
+        areaId: nudgesTable.areaId,
+        areaName: areasTable.name,
+        machine: nudgesTable.machine,
+        shift: nudgesTable.shift,
+        message: nudgesTable.message,
+        createdByEmail: usersTable.email,
+        createdAt: nudgesTable.createdAt,
+        dismissedAt: nudgesTable.dismissedAt,
+      })
+      .from(nudgesTable)
+      .innerJoin(areasTable, eq(nudgesTable.areaId, areasTable.id))
+      .innerJoin(usersTable, eq(nudgesTable.createdByUserId, usersTable.id))
+      .where(eq(nudgesTable.id, created.id));
+
+    res.status(201).json({
+      nudge: shaped,
+      targetOperatorId: operatorId,
+      targetAreaId: topArea.areaId,
+      targetAreaName: topArea.areaName,
+      targetShift: currentShift,
+      sentAt: created.createdAt,
+      reused: false,
+    });
   },
 );
 

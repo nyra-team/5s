@@ -11,17 +11,23 @@ import {
   useGetDashboardAiReliability,
   useGetDashboardAiCost,
   useGetAreaDetectionAgreement,
+  useSendOperatorCoachingNudge,
   type AreaTrend,
   type GetDashboardTrendsShift,
   type OperatorDismissSummary,
+  type OperatorCoachingNudgeResult,
+  type OperatorCoachingNudgeThrottled,
 } from "@workspace/api-client-react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ResponsiveContainer, ReferenceDot } from "recharts";
-import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle, Repeat, Search } from "lucide-react";
+import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle, Repeat, Search, Send } from "lucide-react";
 import { format, parseISO, formatDistanceToNow } from "date-fns";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
 import { EnvironmentBadge, normalizeEnvironment } from "@/lib/environment";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -1310,6 +1316,77 @@ function OperatorDismissRow({
   );
 
   const lastDismissed = new Date(row.lastDismissedAt);
+  const { toast } = useToast();
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [message, setMessage] = useState("");
+  // Cached coaching outcome for this row (success or throttled). Lets us show
+  // "Reminder sent / reminded N min ago" inline without re-firing a request
+  // every render and without depending on a list re-fetch.
+  const [outcome, setOutcome] = useState<
+    | { kind: "sent"; at: Date; areaName: string }
+    | { kind: "throttled"; lastSentAt: Date; areaName: string }
+    | null
+  >(null);
+
+  const sendCoachingNudge = useSendOperatorCoachingNudge({
+    mutation: {
+      onSuccess: (result: OperatorCoachingNudgeResult) => {
+        setOutcome({
+          kind: "sent",
+          at: new Date(result.sentAt),
+          areaName: result.targetAreaName,
+        });
+        setComposerOpen(false);
+        setMessage("");
+        toast({
+          title: "Reminder sent",
+          description: `Coaching nudge dispatched for ${result.targetAreaName} (shift ${result.targetShift}).`,
+        });
+      },
+      onError: (err: unknown) => {
+        const e = err as { status?: number; data?: unknown } | null;
+        // 429: server rejected the send because we're inside the throttle
+        // window. Surface the prior send time so the manager understands
+        // why nothing went out, instead of the generic "failed" toast.
+        if (e && e.status === 429 && e.data && typeof e.data === "object") {
+          const data = e.data as Partial<OperatorCoachingNudgeThrottled>;
+          if (data.lastSentAt && data.targetAreaName) {
+            const lastSentAt = new Date(data.lastSentAt);
+            setOutcome({
+              kind: "throttled",
+              lastSentAt,
+              areaName: data.targetAreaName,
+            });
+            setComposerOpen(false);
+            toast({
+              title: "Already reminded recently",
+              description: `A coaching nudge for ${data.targetAreaName} was sent ${formatDistanceToNow(lastSentAt, { addSuffix: true })}.`,
+            });
+            return;
+          }
+        }
+        const apiMessage =
+          e && e.data && typeof e.data === "object" && "error" in e.data
+            ? String((e.data as { error?: string }).error ?? "")
+            : "";
+        toast({
+          variant: "destructive",
+          title: "Couldn't send reminder",
+          description: apiMessage || "Please try again in a moment.",
+        });
+      },
+    },
+  });
+
+  const handleSend = () => {
+    sendCoachingNudge.mutate({
+      data: {
+        operatorId: row.operatorId,
+        days,
+        message: message.trim() === "" ? null : message.trim(),
+      },
+    });
+  };
 
   return (
     <li data-testid={`operator-dismiss-row-${row.operatorId}`}>
@@ -1341,9 +1418,82 @@ function OperatorDismissRow({
       </button>
       {expanded && (
         <div
-          className="px-4 pb-4 pl-13"
+          className="px-4 pb-4 pl-13 space-y-3"
           data-testid={`operator-dismiss-detail-${row.operatorId}`}
         >
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="text-[11.5px] text-muted-foreground">
+              Drop a coaching nudge on this operator's most-dismissed area in
+              the last {days} day{days === 1 ? "" : "s"}.
+            </div>
+            <div className="flex items-center gap-2">
+              {outcome?.kind === "sent" && (
+                <span
+                  className="text-[11px] font-medium px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+                  data-testid={`operator-dismiss-sent-${row.operatorId}`}
+                >
+                  Reminder sent {formatDistanceToNow(outcome.at, { addSuffix: true })}
+                </span>
+              )}
+              {outcome?.kind === "throttled" && (
+                <span
+                  className="text-[11px] font-medium px-2 py-1 rounded-full bg-muted text-muted-foreground"
+                  data-testid={`operator-dismiss-throttled-${row.operatorId}`}
+                >
+                  Reminded {formatDistanceToNow(outcome.lastSentAt, { addSuffix: true })}
+                </span>
+              )}
+              {!composerOpen && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setComposerOpen(true)}
+                  data-testid={`operator-dismiss-send-reminder-${row.operatorId}`}
+                >
+                  <Send className="w-3.5 h-3.5 mr-1.5" />
+                  Send reminder
+                </Button>
+              )}
+            </div>
+          </div>
+          {composerOpen && (
+            <div
+              className="rounded-lg border border-border bg-card p-3 space-y-2"
+              data-testid={`operator-dismiss-composer-${row.operatorId}`}
+            >
+              <Textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Optional message — leave blank to use the default coaching nudge."
+                className="text-[12.5px] min-h-[72px]"
+                data-testid={`operator-dismiss-composer-textarea-${row.operatorId}`}
+              />
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setComposerOpen(false);
+                    setMessage("");
+                  }}
+                  disabled={sendCoachingNudge.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleSend}
+                  disabled={sendCoachingNudge.isPending}
+                  data-testid={`operator-dismiss-composer-submit-${row.operatorId}`}
+                >
+                  {sendCoachingNudge.isPending ? "Sending…" : "Send nudge"}
+                </Button>
+              </div>
+            </div>
+          )}
           {isLoading ? (
             <div className="h-12 bg-secondary rounded-lg animate-pulse" />
           ) : !detail || detail.length === 0 ? (

@@ -977,6 +977,35 @@ export const GetDashboardOperatorDismissesDetailResponse = zod.array(
 );
 
 /**
+ * Closes the loop on the operator-dismiss panel: rather than only seeing which operators are silencing nudges, the manager taps a row to drop a fresh nudge on that operator's most-dismissed area in the configured last-N-days window. The nudge lands on the current shift with a manager-supplied (or default) message. Throttled per (operator, area) for one hour so a quick double-tap or two managers acting on the same row at once don't pile reminders on the operator.
+ * @summary Manager fires a coaching nudge at an operator's most-dismissed area
+ */
+export const sendOperatorCoachingNudgeBodyDaysDefault = 7;
+export const sendOperatorCoachingNudgeBodyDaysMax = 90;
+
+export const SendOperatorCoachingNudgeBody = zod.object({
+  operatorId: zod
+    .number()
+    .describe(
+      "Operator the manager wants to coach. Must be a user with at least one OPERATOR_DISMISS in the configured window.",
+    ),
+  message: zod
+    .string()
+    .nullish()
+    .describe(
+      "Optional custom message attached to the nudge. When omitted, the server picks a sensible default mentioning the area name.",
+    ),
+  days: zod
+    .number()
+    .min(1)
+    .max(sendOperatorCoachingNudgeBodyDaysMax)
+    .default(sendOperatorCoachingNudgeBodyDaysDefault)
+    .describe(
+      "Lookback window used to pick the operator's most-dismissed area. Should match the window the manager has open in the UI.",
+    ),
+});
+
+/**
  * Aggregates agreement between `tappedAreaId` (intent) and `areaId` (chosen) over the requested window. Submissions with no recorded `tappedAreaId` (legacy rows) are excluded from the totals so the rate isn't diluted.
  * @summary How often the auto-detected area matched the area the operator originally tapped
  */

@@ -710,6 +710,45 @@ paths:
                 items:
                   $ref: "#/components/schemas/OperatorDismissedNudge"
 
+  /dashboard/operator-coaching-nudge:
+    post:
+      operationId: sendOperatorCoachingNudge
+      tags: [dashboard]
+      summary: Manager fires a coaching nudge at an operator's most-dismissed area
+      description: >-
+        Closes the loop on the operator-dismiss panel: rather than only seeing
+        which operators are silencing nudges, the manager taps a row to drop a
+        fresh nudge on that operator's most-dismissed area in the configured
+        last-N-days window. The nudge lands on the current shift with a
+        manager-supplied (or default) message. Throttled per (operator, area)
+        for one hour so a quick double-tap or two managers acting on the same
+        row at once don't pile reminders on the operator.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendOperatorCoachingNudgeBody"
+      responses:
+        "201":
+          description: Coaching nudge created (or returned the existing one if a still-active nudge for the same area+shift already covered the case).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorCoachingNudgeResult"
+        "404":
+          description: Operator not found, or no OPERATOR_DISMISS history exists in the window — there is nothing to coach on.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: A coaching nudge for this operator's most-dismissed area went out within the throttle window. The body carries the prior send time so the UI can show "Already reminded N min ago".
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorCoachingNudgeThrottled"
+
   /dashboard/area-detection-agreement:
     get:
       operationId: getAreaDetectionAgreement
@@ -2355,6 +2394,83 @@ components:
           format: date-time
           description: Most recent dismissal timestamp in the window.
       required: [operatorId, operatorEmail, dismissCount, lastDismissedAt]
+
+    SendOperatorCoachingNudgeBody:
+      type: object
+      properties:
+        operatorId:
+          type: integer
+          description: Operator the manager wants to coach. Must be a user with at least one OPERATOR_DISMISS in the configured window.
+        message:
+          type: string
+          nullable: true
+          description: Optional custom message attached to the nudge. When omitted, the server picks a sensible default mentioning the area name.
+        days:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 7
+          description: Lookback window used to pick the operator's most-dismissed area. Should match the window the manager has open in the UI.
+      required: [operatorId]
+
+    OperatorCoachingNudgeResult:
+      type: object
+      description: Successful coaching-nudge dispatch. `nudge` carries the resolved/created nudge row, `targetAreaId/Name` echo back the area we picked so the UI can confirm.
+      properties:
+        nudge:
+          $ref: "#/components/schemas/Nudge"
+        targetOperatorId:
+          type: integer
+        targetAreaId:
+          type: integer
+        targetAreaName:
+          type: string
+        targetShift:
+          type: string
+          enum: [A, B, C]
+        sentAt:
+          type: string
+          format: date-time
+          description: When the nudge was created (or, when an active nudge already covered the case, when it was originally sent).
+        reused:
+          type: boolean
+          description: True when the server returned an existing still-active nudge instead of inserting a new one. UIs can use this to label the action as "Already active reminder reused" instead of "Reminder sent".
+      required:
+        - nudge
+        - targetOperatorId
+        - targetAreaId
+        - targetAreaName
+        - targetShift
+        - sentAt
+        - reused
+
+    OperatorCoachingNudgeThrottled:
+      type: object
+      description: Returned with HTTP 429 when a coaching nudge for the operator's most-dismissed area was sent within the throttle window. Carries the prior send time so the UI can render "Already reminded ~N min ago" without a separate fetch.
+      properties:
+        error:
+          type: string
+        targetOperatorId:
+          type: integer
+        targetAreaId:
+          type: integer
+        targetAreaName:
+          type: string
+        lastSentAt:
+          type: string
+          format: date-time
+          description: When the most recent matching coaching nudge was created. Used by the UI to display a friendly "reminded N min ago" hint.
+        nextEligibleAt:
+          type: string
+          format: date-time
+          description: Earliest moment a new coaching nudge for the same operator+area will be accepted (lastSentAt + throttle window).
+      required:
+        - error
+        - targetOperatorId
+        - targetAreaId
+        - targetAreaName
+        - lastSentAt
+        - nextEligibleAt
 
     OperatorDismissedNudge:
       type: object

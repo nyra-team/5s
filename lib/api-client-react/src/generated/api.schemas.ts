@@ -773,6 +773,77 @@ export interface OperatorDismissSummary {
   lastDismissedAt: string;
 }
 
+export interface SendOperatorCoachingNudgeBody {
+  /** Operator the manager wants to coach. Must be a user with at least one OPERATOR_DISMISS in the configured window. */
+  operatorId: number;
+  /** Optional custom message attached to the nudge. When omitted, the server picks a sensible default mentioning the area name. */
+  message?: string | null;
+  /**
+   * Lookback window used to pick the operator's most-dismissed area. Should match the window the manager has open in the UI.
+   * @minimum 1
+   * @maximum 90
+   */
+  days?: number;
+}
+
+export type OperatorCoachingNudgeResultTargetShift =
+  (typeof OperatorCoachingNudgeResultTargetShift)[keyof typeof OperatorCoachingNudgeResultTargetShift];
+
+export const OperatorCoachingNudgeResultTargetShift = {
+  A: "A",
+  B: "B",
+  C: "C",
+} as const;
+
+export type NudgeShift = (typeof NudgeShift)[keyof typeof NudgeShift];
+
+export const NudgeShift = {
+  A: "A",
+  B: "B",
+  C: "C",
+} as const;
+
+export interface Nudge {
+  id: number;
+  areaId: number;
+  areaName: string;
+  machine?: string | null;
+  shift: NudgeShift;
+  message?: string | null;
+  createdByEmail: string;
+  createdAt: string;
+  dismissedAt?: string | null;
+}
+
+/**
+ * Successful coaching-nudge dispatch. `nudge` carries the resolved/created nudge row, `targetAreaId/Name` echo back the area we picked so the UI can confirm.
+ */
+export interface OperatorCoachingNudgeResult {
+  nudge: Nudge;
+  targetOperatorId: number;
+  targetAreaId: number;
+  targetAreaName: string;
+  targetShift: OperatorCoachingNudgeResultTargetShift;
+  /** When the nudge was created (or, when an active nudge already covered the case, when it was originally sent). */
+  sentAt: string;
+  /** True when the server returned an existing still-active nudge instead of inserting a new one. UIs can use this to label the action as "Already active reminder reused" instead of "Reminder sent". */
+  reused: boolean;
+}
+
+/**
+ * Returned with HTTP 429 when a coaching nudge for the operator's most-dismissed area was sent within the throttle window. Carries the prior send time so the UI can render "Already reminded ~N min ago" without a separate fetch.
+ */
+export interface OperatorCoachingNudgeThrottled {
+  error: string;
+  targetOperatorId: number;
+  targetAreaId: number;
+  targetAreaName: string;
+  /** When the most recent matching coaching nudge was created. Used by the UI to display a friendly "reminded N min ago" hint. */
+  lastSentAt: string;
+  /** Earliest moment a new coaching nudge for the same operator+area will be accepted (lastSentAt + throttle window). */
+  nextEligibleAt: string;
+}
+
 export interface OperatorDismissedNudge {
   nudgeId: number;
   areaId: number;
@@ -1067,26 +1138,6 @@ export interface CreateNudgeBody {
   machine?: string | null;
   shift: CreateNudgeBodyShift;
   message?: string | null;
-}
-
-export type NudgeShift = (typeof NudgeShift)[keyof typeof NudgeShift];
-
-export const NudgeShift = {
-  A: "A",
-  B: "B",
-  C: "C",
-} as const;
-
-export interface Nudge {
-  id: number;
-  areaId: number;
-  areaName: string;
-  machine?: string | null;
-  shift: NudgeShift;
-  message?: string | null;
-  createdByEmail: string;
-  createdAt: string;
-  dismissedAt?: string | null;
 }
 
 export interface LiveShiftPendingArea {
