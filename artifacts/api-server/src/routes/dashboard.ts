@@ -251,7 +251,8 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
   // SQL literal rather than a bound parameter: when each use of istDayExpr is
   // bound separately, postgres sees two distinct parameter slots in SELECT vs
   // GROUP BY and can't prove the expressions are equal, raising
-  // "column must appear in the GROUP BY clause" (SQLSTATE 42803).
+  // "column must appear in the GROUP BY clause" (SQLSTATE 42803). We still
+  // escape single quotes defensively even though the value is validated.
   const shiftTz = getShiftConfig().timeZone;
   const tzLiteral = sql.raw(`'${shiftTz.replace(/'/g, "''")}'`);
   const istDayExpr = sql<string>`to_char(${submissionsTable.createdAt} at time zone ${tzLiteral}, 'YYYY-MM-DD')`;
