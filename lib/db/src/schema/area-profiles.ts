@@ -13,6 +13,7 @@ export const areaProfilesTable = pgTable("area_profiles", {
   machinesJson: jsonb("machines_json").notNull().default([]),
   layoutJson: jsonb("layout_json").notNull().default([]),
   commonIssuesJson: jsonb("common_issues_json").notNull().default([]),
+  trainedAt: timestamp("trained_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

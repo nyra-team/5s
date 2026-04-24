@@ -40,6 +40,10 @@ export async function ingestProfileExtract(
   const layout = mergeStrings((profile.layoutJson as string[]) ?? [], extract.layout, 10);
   const issues = mergeStrings((profile.commonIssuesJson as string[]) ?? [], extract.observedIssues, 10);
   const status = newCount >= TRAINING_THRESHOLD ? "TRAINED" : "LEARNING";
+  // Stamp trainedAt the moment we flip LEARNING -> TRAINED. Once stamped we
+  // leave it alone so subsequent ingests don't overwrite the original date.
+  const justTrained = status === "TRAINED" && profile.status !== "TRAINED";
+  const trainedAt = justTrained ? new Date() : profile.trainedAt;
 
   const [updated] = await db
     .update(areaProfilesTable)
@@ -51,6 +55,7 @@ export async function ingestProfileExtract(
       commonIssuesJson: issues,
       summary: extract.summary || profile.summary,
       status,
+      trainedAt,
       updatedAt: new Date(),
     })
     .where(eq(areaProfilesTable.areaId, areaId))

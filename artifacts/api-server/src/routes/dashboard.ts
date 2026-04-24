@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, gte, lt, sql, count, avg, asc } from "drizzle-orm";
+import { eq, and, gte, lt, sql, count, avg } from "drizzle-orm";
 import { db, submissionsTable, areasTable, escalationsTable, areaProfilesTable } from "@workspace/db";
 import {
   GetDashboardComplianceQueryParams,
@@ -8,7 +8,6 @@ import {
 } from "@workspace/api-zod";
 import { authMiddleware, requireRole } from "../lib/auth";
 import { getCurrentShift, getTodayDateString, getISTDayRange, getISTShiftRange } from "../lib/scoring";
-import { TRAINING_THRESHOLD } from "../lib/learning";
 
 const router: IRouter = Router();
 
@@ -200,8 +199,8 @@ router.get("/dashboard/summary", authMiddleware, requireRole("MANAGER"), async (
 // Per-area daily score trend over the last N days (default 14). For each area
 // we return one point per IST calendar day with the average scorePercent
 // (scoreTotal × 4) and submission count, plus the IST date the area first
-// reached the TRAINED threshold (5th submission) so the UI can highlight when
-// the AI's per-area model graduated from LEARNING.
+// reached the TRAINED threshold (stored on `area_profiles.trained_at`) so the
+// UI can highlight when the AI's per-area model graduated from LEARNING.
 router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
   const parsed = GetDashboardTrendsQueryParams.safeParse(req.query);
   const days = parsed.success ? parsed.data.days : 14;
@@ -271,26 +270,6 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
   const profiles = await db.select().from(areaProfilesTable);
   const profileByArea = new Map(profiles.map((p) => [p.areaId, p]));
 
-  // For TRAINED areas, the "trained on" day is the IST calendar date of the
-  // TRAINING_THRESHOLD-th submission (ordered oldest → newest).
-  const trainedAreaIds = profiles
-    .filter((p) => p.status === "TRAINED")
-    .map((p) => p.areaId);
-  const trainedOnByArea = new Map<number, string | null>();
-  for (const areaId of trainedAreaIds) {
-    const subs = await db
-      .select({ createdAt: submissionsTable.createdAt })
-      .from(submissionsTable)
-      .where(eq(submissionsTable.areaId, areaId))
-      .orderBy(asc(submissionsTable.createdAt))
-      .limit(TRAINING_THRESHOLD);
-    if (subs.length >= TRAINING_THRESHOLD) {
-      trainedOnByArea.set(areaId, normalizeDateInput(subs[TRAINING_THRESHOLD - 1].createdAt) ?? null);
-    } else {
-      trainedOnByArea.set(areaId, null);
-    }
-  }
-
   const result = areas.map((a) => {
     const inner = byArea.get(a.id) ?? new Map<string, { avgScore: number; count: number }>();
     // Days with no submissions are emitted as avgScore: null (not 0) so the
@@ -306,7 +285,12 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
     const profile = profileByArea.get(a.id);
     const status: "LEARNING" | "TRAINED" =
       profile?.status === "TRAINED" ? "TRAINED" : "LEARNING";
-    const trainedOnDate = trainedOnByArea.get(a.id) ?? null;
+    // Read the authoritative graduation date straight from the profile row
+    // instead of replaying submissions on every dashboard load.
+    const trainedOnDate =
+      status === "TRAINED" && profile?.trainedAt
+        ? normalizeDateInput(profile.trainedAt) ?? null
+        : null;
     return {
       areaId: a.id,
       areaName: a.name,
