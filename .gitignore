@@ -8,6 +8,9 @@ out-tsc
 .expo
 .expo-shared
 
+# runtime upload directories (per-artifact local storage)
+artifacts/*/uploads/
+
 # dependencies
 node_modules
 
