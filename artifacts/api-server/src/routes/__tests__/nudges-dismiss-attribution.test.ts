@@ -7,6 +7,8 @@ import {
   areasTable,
   usersTable,
   nudgesTable,
+  areaProfilesTable,
+  areaSchedulesTable,
 } from "@workspace/db";
 import app from "../../app";
 import { signToken } from "../../lib/auth";
@@ -61,6 +63,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await db.delete(nudgesTable).where(eq(nudgesTable.areaId, area.id));
+  await db.delete(areaSchedulesTable).where(eq(areaSchedulesTable.areaId, area.id));
+  await db.delete(areaProfilesTable).where(eq(areaProfilesTable.areaId, area.id));
   await db.delete(areasTable).where(eq(areasTable.id, area.id));
   await db
     .delete(usersTable)
@@ -182,6 +186,69 @@ describe("nudge dismissal attribution", () => {
     // The dismissing operator's email is surfaced so managers know who to
     // talk to without clicking through (Task #94).
     expect(pending!.lastOperatorDismissedNudgeByEmail).toBe(
+      `${RUN_TAG}-op@test.local`,
+    );
+  });
+
+  it("GET /shift/live exposes lastOperatorDismissedNudgeByEmail on overdueChecks for the dismissed machine", async () => {
+    // Per-machine path goes through getOperatorDismissedNudgesByAreaMachine,
+    // which has the same join logic as the area-level helper but a different
+    // surface in /shift/live (overdueChecks[] instead of pendingAreas[]).
+    // Without coverage here a future refactor could silently drop the email
+    // on the per-machine chip.
+    await db.delete(nudgesTable).where(eq(nudgesTable.areaId, area.id));
+    await db.delete(areaSchedulesTable).where(eq(areaSchedulesTable.areaId, area.id));
+    await db.delete(areaProfilesTable).where(eq(areaProfilesTable.areaId, area.id));
+
+    // overdueChecks only includes per-machine rows once the area is TRAINED.
+    await db.insert(areaProfilesTable).values({
+      areaId: area.id,
+      status: "TRAINED",
+      submissionsCount: 5,
+      summary: "test",
+      itemsJson: ["item"],
+      machinesJson: ["Mill-1"],
+      layoutJson: [],
+      commonIssuesJson: [],
+    });
+
+    // Schedule a per-machine row with nextDueAt safely in the past so the
+    // route classifies it as overdue.
+    const machineTag = "Mill-1";
+    const pastDueAt = new Date(Date.now() - 60 * 60 * 1000);
+    await db.insert(areaSchedulesTable).values({
+      areaId: area.id,
+      machine: machineTag,
+      cadenceSeconds: 14400,
+      nextDueAt: pastDueAt,
+    });
+
+    const probe = await request(app)
+      .get("/api/shift/live")
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(probe.status).toBe(200);
+    const shift = probe.body.shift as "A" | "B" | "C";
+
+    const id = await createNudge({ machine: machineTag, shift });
+    const dismiss = await request(app)
+      .post(`/api/nudges/${id}/dismiss`)
+      .set("Authorization", `Bearer ${operatorToken}`);
+    expect(dismiss.status).toBe(200);
+
+    const live = await request(app)
+      .get("/api/shift/live")
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(live.status).toBe(200);
+
+    const overdue = (live.body.overdueChecks as Array<{
+      areaId: number;
+      machine: string | null;
+      lastOperatorDismissedNudgeAt: string | null;
+      lastOperatorDismissedNudgeByEmail: string | null;
+    }>).find((o) => o.areaId === area.id && o.machine === machineTag);
+    expect(overdue).toBeDefined();
+    expect(overdue!.lastOperatorDismissedNudgeAt).not.toBeNull();
+    expect(overdue!.lastOperatorDismissedNudgeByEmail).toBe(
       `${RUN_TAG}-op@test.local`,
     );
   });
