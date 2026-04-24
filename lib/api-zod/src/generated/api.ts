@@ -1578,8 +1578,24 @@ export const GetOperatorRecentResponse = zod.array(
 /**
  * @summary List escalations (manager)
  */
+export const listEscalationsQuerySortDefault = `recent`;
+export const listEscalationsQueryMinRepingCountMin = 0;
+
 export const ListEscalationsQueryParams = zod.object({
   status: zod.enum(["OPEN", "ACKNOWLEDGED", "RESOLVED", "ALL"]).optional(),
+  sort: zod
+    .enum(["recent", "mostReminded"])
+    .default(listEscalationsQuerySortDefault)
+    .describe(
+      "Sort order. `recent` (default) sorts by createdAt DESC. `mostReminded` sorts by repingCount DESC with createdAt DESC as a tiebreaker so the most-pinged escalations float to the top.",
+    ),
+  minRepingCount: zod.coerce
+    .number()
+    .min(listEscalationsQueryMinRepingCountMin)
+    .optional()
+    .describe(
+      'Inclusive lower bound on repingCount. Pass `1` to filter to escalations that have already been auto-reminded at least once (\"needs attention\").',
+    ),
 });
 
 export const ListEscalationsResponseItem = zod.object({

@@ -5,8 +5,18 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { ListEscalationsSort } from "./listEscalationsSort";
 import type { ListEscalationsStatus } from "./listEscalationsStatus";
 
 export type ListEscalationsParams = {
   status?: ListEscalationsStatus;
+  /**
+   * Sort order. `recent` (default) sorts by createdAt DESC. `mostReminded` sorts by repingCount DESC with createdAt DESC as a tiebreaker so the most-pinged escalations float to the top.
+   */
+  sort?: ListEscalationsSort;
+  /**
+   * Inclusive lower bound on repingCount. Pass `1` to filter to escalations that have already been auto-reminded at least once ("needs attention").
+   * @minimum 0
+   */
+  minRepingCount?: number;
 };

@@ -4,6 +4,7 @@ import {
   useResolveEscalation,
   Escalation,
   EscalationNotifyDeliveryStatus,
+  ListEscalationsSort,
   getListEscalationsQueryKey,
   getGetEscalationCountQueryKey,
 } from "@workspace/api-client-react";
@@ -22,6 +23,11 @@ const STATUSES = [
   { value: "ALL", label: "All" },
 ] as const;
 
+const SORTS = [
+  { value: ListEscalationsSort.recent, label: "Newest" },
+  { value: ListEscalationsSort.mostReminded, label: "Most reminded" },
+] as const;
+
 function readFocusId(): number | null {
   if (typeof window === "undefined") return null;
   const raw = new URLSearchParams(window.location.search).get("focus");
@@ -34,7 +40,10 @@ export default function EscalationsPage() {
   const [status, setStatus] = useState<(typeof STATUSES)[number]["value"]>(() =>
     readFocusId() ? "ALL" : "OPEN",
   );
-  const { data: escalations, isLoading } = useListEscalations({ status });
+  const [sort, setSort] = useState<(typeof SORTS)[number]["value"]>(
+    ListEscalationsSort.recent,
+  );
+  const { data: escalations, isLoading } = useListEscalations({ status, sort });
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -133,22 +142,46 @@ export default function EscalationsPage() {
       </header>
 
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="inline-flex p-1 pill-track rounded-full">
-          {STATUSES.map((s) => {
-            const active = status === s.value;
-            return (
-              <button
-                key={s.value}
-                onClick={() => setStatus(s.value)}
-                className={`px-4 py-2 rounded-full text-[13px] font-medium transition-colors ${
-                  active ? "bg-card text-foreground shadow-soft" : "text-muted-foreground hover:text-foreground"
-                }`}
-                data-testid={`tab-status-${s.value}`}
-              >
-                {s.label}
-              </button>
-            );
-          })}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="inline-flex p-1 pill-track rounded-full">
+            {STATUSES.map((s) => {
+              const active = status === s.value;
+              return (
+                <button
+                  key={s.value}
+                  onClick={() => setStatus(s.value)}
+                  className={`px-4 py-2 rounded-full text-[13px] font-medium transition-colors ${
+                    active ? "bg-card text-foreground shadow-soft" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  data-testid={`tab-status-${s.value}`}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div
+            className="inline-flex p-1 pill-track rounded-full"
+            role="group"
+            aria-label="Sort escalations"
+          >
+            {SORTS.map((s) => {
+              const active = sort === s.value;
+              return (
+                <button
+                  key={s.value}
+                  onClick={() => setSort(s.value)}
+                  className={`px-4 py-2 rounded-full text-[13px] font-medium transition-colors ${
+                    active ? "bg-card text-foreground shadow-soft" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  data-testid={`tab-sort-${s.value}`}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {selectableCount > 0 && (

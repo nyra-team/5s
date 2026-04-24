@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, gte, sql } from "drizzle-orm";
 import { db, escalationsTable, areasTable, usersTable } from "@workspace/db";
 import { authMiddleware, requireRole } from "../lib/auth";
 
@@ -30,10 +30,37 @@ function shape(rows: any[]) {
 
 router.get("/escalations", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
   const status = (req.query.status as string | undefined) ?? "OPEN";
+  const sortRaw = (req.query.sort as string | undefined) ?? "recent";
+  const sort = sortRaw === "mostReminded" ? "mostReminded" : "recent";
+
+  // Parse minRepingCount: must be a non-negative integer; otherwise ignore so a
+  // typo in the URL doesn't silently hide every escalation. We use Number() (not
+  // parseInt) so the parsing matches the zod coercion the OpenAPI schema implies
+  // — e.g. "01" => 1 is accepted, but "1.5" / "abc" / "-1" are rejected.
+  let minRepingCount: number | null = null;
+  const minRaw = req.query.minRepingCount;
+  if (typeof minRaw === "string" && minRaw.length > 0) {
+    const parsed = Number(minRaw);
+    if (Number.isInteger(parsed) && parsed >= 0) {
+      minRepingCount = parsed;
+    }
+  }
+
   const conds = [];
   if (status !== "ALL") {
     conds.push(eq(escalationsTable.status, status));
   }
+  if (minRepingCount !== null && minRepingCount > 0) {
+    conds.push(gte(escalationsTable.repingCount, minRepingCount));
+  }
+
+  // `mostReminded` sorts by the ping count (DESC) with createdAt as a stable
+  // tiebreaker so two equally-reminded items still come back newest-first.
+  const orderBy =
+    sort === "mostReminded"
+      ? sql`${escalationsTable.repingCount} DESC, ${escalationsTable.createdAt} DESC`
+      : sql`${escalationsTable.createdAt} DESC`;
+
   const rows = await db
     .select({
       id: escalationsTable.id,
@@ -59,7 +86,7 @@ router.get("/escalations", authMiddleware, requireRole("MANAGER"), async (req, r
     .innerJoin(areasTable, eq(escalationsTable.areaId, areasTable.id))
     .innerJoin(usersTable, eq(escalationsTable.operatorId, usersTable.id))
     .where(conds.length ? and(...conds) : undefined)
-    .orderBy(sql`${escalationsTable.createdAt} DESC`);
+    .orderBy(orderBy);
 
   res.json(shape(rows));
 });

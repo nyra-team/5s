@@ -80,6 +80,7 @@ export * from "./keyframeMetricsType";
 export * from "./labelType";
 export * from "./labelTypePillarsJson";
 export * from "./listEscalationsParams";
+export * from "./listEscalationsSort";
 export * from "./listEscalationsStatus";
 export * from "./listSubmissionsParams";
 export * from "./listSubmissionsShift";

@@ -1454,6 +1454,15 @@ export type GetOperatorRecentParams = {
 
 export type ListEscalationsParams = {
   status?: ListEscalationsStatus;
+  /**
+   * Sort order. `recent` (default) sorts by createdAt DESC. `mostReminded` sorts by repingCount DESC with createdAt DESC as a tiebreaker so the most-pinged escalations float to the top.
+   */
+  sort?: ListEscalationsSort;
+  /**
+   * Inclusive lower bound on repingCount. Pass `1` to filter to escalations that have already been auto-reminded at least once ("needs attention").
+   * @minimum 0
+   */
+  minRepingCount?: number;
 };
 
 export type ListEscalationsStatus =
@@ -1464,6 +1473,14 @@ export const ListEscalationsStatus = {
   ACKNOWLEDGED: "ACKNOWLEDGED",
   RESOLVED: "RESOLVED",
   ALL: "ALL",
+} as const;
+
+export type ListEscalationsSort =
+  (typeof ListEscalationsSort)[keyof typeof ListEscalationsSort];
+
+export const ListEscalationsSort = {
+  recent: "recent",
+  mostReminded: "mostReminded",
 } as const;
 
 export type GetActiveNudgesByAreaParams = {
