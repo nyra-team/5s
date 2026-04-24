@@ -801,6 +801,15 @@ export const ListEscalationsResponseItem = zod.object({
   createdAt: zod.coerce.date(),
   ackedAt: zod.coerce.date().nullish(),
   resolvedAt: zod.coerce.date().nullish(),
+  repingCount: zod
+    .number()
+    .describe(
+      "Number of automated reminder pings sent to managers after the original alert.",
+    ),
+  lastRepingAt: zod.coerce
+    .date()
+    .nullish()
+    .describe("Timestamp of the most recent reminder ping, if any."),
 });
 export const ListEscalationsResponse = zod.array(ListEscalationsResponseItem);
 
@@ -834,6 +843,15 @@ export const AcknowledgeEscalationResponse = zod.object({
   createdAt: zod.coerce.date(),
   ackedAt: zod.coerce.date().nullish(),
   resolvedAt: zod.coerce.date().nullish(),
+  repingCount: zod
+    .number()
+    .describe(
+      "Number of automated reminder pings sent to managers after the original alert.",
+    ),
+  lastRepingAt: zod.coerce
+    .date()
+    .nullish()
+    .describe("Timestamp of the most recent reminder ping, if any."),
 });
 
 /**
@@ -859,6 +877,15 @@ export const ResolveEscalationResponse = zod.object({
   createdAt: zod.coerce.date(),
   ackedAt: zod.coerce.date().nullish(),
   resolvedAt: zod.coerce.date().nullish(),
+  repingCount: zod
+    .number()
+    .describe(
+      "Number of automated reminder pings sent to managers after the original alert.",
+    ),
+  lastRepingAt: zod.coerce
+    .date()
+    .nullish()
+    .describe("Timestamp of the most recent reminder ping, if any."),
 });
 
 /**
@@ -1016,6 +1043,15 @@ export const GetLiveShiftResponse = zod.object({
       createdAt: zod.coerce.date(),
       ackedAt: zod.coerce.date().nullish(),
       resolvedAt: zod.coerce.date().nullish(),
+      repingCount: zod
+        .number()
+        .describe(
+          "Number of automated reminder pings sent to managers after the original alert.",
+        ),
+      lastRepingAt: zod.coerce
+        .date()
+        .nullish()
+        .describe("Timestamp of the most recent reminder ping, if any."),
     }),
   ),
 });

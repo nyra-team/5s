@@ -586,6 +586,10 @@ export interface Escalation {
   createdAt: string;
   ackedAt?: string | null;
   resolvedAt?: string | null;
+  /** Number of automated reminder pings sent to managers after the original alert. */
+  repingCount: number;
+  /** Timestamp of the most recent reminder ping, if any. */
+  lastRepingAt?: string | null;
 }
 
 export interface EscalationCount {

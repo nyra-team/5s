@@ -23,4 +23,8 @@ export interface EscalationType {
   createdAt: Date;
   ackedAt?: Date | null;
   resolvedAt?: Date | null;
+  /** Number of automated reminder pings sent to managers after the original alert. */
+  repingCount: number;
+  /** Timestamp of the most recent reminder ping, if any. */
+  lastRepingAt?: Date | null;
 }

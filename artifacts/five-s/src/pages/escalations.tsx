@@ -7,11 +7,12 @@ import {
   getGetEscalationCountQueryKey,
 } from "@workspace/api-client-react";
 import { useState, useMemo, useEffect, useRef } from "react";
-import { format } from "date-fns";
+import { format, formatDistanceToNowStrict } from "date-fns";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Eye, Inbox } from "lucide-react";
+import { AlertTriangle, BellRing, CheckCircle2, Eye, Inbox } from "lucide-react";
 
 const STATUSES = [
   { value: "OPEN", label: "Open" },
@@ -329,11 +330,14 @@ function EscalationCard({
       )}
 
       <div className="flex items-center justify-between gap-2 pt-1">
-        <span className={`text-[11.5px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${
-          e.status === "OPEN" ? "bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-200" :
-          e.status === "ACKNOWLEDGED" ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200" :
-          "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200"
-        }`}>{e.status}</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`text-[11.5px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${
+            e.status === "OPEN" ? "bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-200" :
+            e.status === "ACKNOWLEDGED" ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200" :
+            "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200"
+          }`}>{e.status}</span>
+          <RepingBadge count={e.repingCount} lastRepingAt={e.lastRepingAt} />
+        </div>
         <div className="flex gap-2">
           {e.status === "OPEN" && (
             <Button
@@ -367,5 +371,37 @@ function EscalationCard({
         </div>
       </div>
     </div>
+  );
+}
+
+function RepingBadge({
+  count,
+  lastRepingAt,
+}: {
+  count: number;
+  lastRepingAt?: string | null;
+}) {
+  if (!count || count <= 0) return null;
+  const last = lastRepingAt ? new Date(lastRepingAt) : null;
+  const ago =
+    last && !Number.isNaN(last.getTime())
+      ? formatDistanceToNowStrict(last, { addSuffix: true })
+      : null;
+  const label = `Reminded ${count}x${ago ? ` · ${ago}` : ""}`;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="inline-flex items-center gap-1 text-[11.5px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 dark:bg-violet-500/20 dark:text-violet-200 cursor-help"
+          data-testid={`badge-reping-${count}`}
+        >
+          <BellRing className="w-3 h-3" />
+          {label}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-[240px] text-center">
+        Managers are auto-reminded a limited number of times per escalation, then pings stop so the inbox doesn't get spammy.
+      </TooltipContent>
+    </Tooltip>
   );
 }

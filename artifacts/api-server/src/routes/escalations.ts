@@ -22,6 +22,8 @@ function shape(rows: any[]) {
     createdAt: r.createdAt,
     ackedAt: r.ackedAt,
     resolvedAt: r.resolvedAt,
+    repingCount: r.repingCount ?? 0,
+    lastRepingAt: r.lastRepingAt,
   }));
 }
 
@@ -48,6 +50,8 @@ router.get("/escalations", authMiddleware, requireRole("MANAGER"), async (req, r
       createdAt: escalationsTable.createdAt,
       ackedAt: escalationsTable.ackedAt,
       resolvedAt: escalationsTable.resolvedAt,
+      repingCount: escalationsTable.repingCount,
+      lastRepingAt: escalationsTable.lastRepingAt,
     })
     .from(escalationsTable)
     .innerJoin(areasTable, eq(escalationsTable.areaId, areasTable.id))
@@ -110,6 +114,8 @@ async function sendOne(res: any, id: number) {
       createdAt: escalationsTable.createdAt,
       ackedAt: escalationsTable.ackedAt,
       resolvedAt: escalationsTable.resolvedAt,
+      repingCount: escalationsTable.repingCount,
+      lastRepingAt: escalationsTable.lastRepingAt,
     })
     .from(escalationsTable)
     .innerJoin(areasTable, eq(escalationsTable.areaId, areasTable.id))

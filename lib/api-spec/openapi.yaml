@@ -1644,6 +1644,14 @@ components:
           type: string
           format: date-time
           nullable: true
+        repingCount:
+          type: integer
+          description: Number of automated reminder pings sent to managers after the original alert.
+        lastRepingAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of the most recent reminder ping, if any.
       required:
         - id
         - submissionId
@@ -1658,6 +1666,7 @@ components:
         - evidenceUrls
         - status
         - createdAt
+        - repingCount
 
     EscalationCount:
       type: object
