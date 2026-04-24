@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import sharp from "sharp";
-import { __test__, compressForVLM } from "../keyframes.js";
+import { __test__, compressForVLM, resolveCandidateCap } from "../keyframes.js";
 
 const { computeDHash, hammingDistance } = __test__;
 
@@ -59,6 +59,50 @@ async function makeInverseGradient(name: string) {
     .toFile(out);
   return out;
 }
+
+describe("resolveCandidateCap", () => {
+  const ORIGINAL_ENV = process.env.KEYFRAMES_MAX_CANDIDATES;
+  afterEach(() => {
+    if (ORIGINAL_ENV === undefined) delete process.env.KEYFRAMES_MAX_CANDIDATES;
+    else process.env.KEYFRAMES_MAX_CANDIDATES = ORIGINAL_ENV;
+  });
+
+  it("defaults to maxFrames * 3 when neither option nor env var is set", () => {
+    delete process.env.KEYFRAMES_MAX_CANDIDATES;
+    expect(resolveCandidateCap(6)).toBe(18);
+    expect(resolveCandidateCap(4)).toBe(12);
+  });
+
+  it("honors the env var when no explicit option is given", () => {
+    process.env.KEYFRAMES_MAX_CANDIDATES = "10";
+    expect(resolveCandidateCap(6)).toBe(10);
+  });
+
+  it("explicit option overrides the env var", () => {
+    process.env.KEYFRAMES_MAX_CANDIDATES = "10";
+    expect(resolveCandidateCap(6, 25)).toBe(25);
+  });
+
+  it("never returns less than maxFrames so dedup can still produce a full result", () => {
+    delete process.env.KEYFRAMES_MAX_CANDIDATES;
+    // Caller asked for fewer candidates than output frames — bump up to maxFrames.
+    expect(resolveCandidateCap(6, 2)).toBe(6);
+  });
+
+  it("ignores garbage env values and falls back to the derived default", () => {
+    process.env.KEYFRAMES_MAX_CANDIDATES = "not-a-number";
+    expect(resolveCandidateCap(6)).toBe(18);
+    process.env.KEYFRAMES_MAX_CANDIDATES = "0";
+    expect(resolveCandidateCap(6)).toBe(18);
+    process.env.KEYFRAMES_MAX_CANDIDATES = "-5";
+    expect(resolveCandidateCap(6)).toBe(18);
+  });
+
+  it("floors fractional values", () => {
+    delete process.env.KEYFRAMES_MAX_CANDIDATES;
+    expect(resolveCandidateCap(6, 12.7)).toBe(12);
+  });
+});
 
 describe("hammingDistance", () => {
   it("returns 0 for identical buffers", () => {

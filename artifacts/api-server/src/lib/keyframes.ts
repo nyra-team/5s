@@ -53,12 +53,41 @@ export interface KeyframeResult {
 export interface KeyframeOptions {
   /** Hard cap on number of frames returned. Default: 6. */
   maxFrames?: number;
+  /**
+   * Hard cap on the number of *raw* candidate frames pulled out of ffmpeg
+   * before the dedup pass runs. Bounding this keeps both the ffmpeg pass and
+   * the per-frame dHash work from growing with video length / scene density.
+   *
+   * Resolution order: explicit option → `KEYFRAMES_MAX_CANDIDATES` env var →
+   * `maxFrames * 3`. Always coerced to be at least `maxFrames` so dedup can
+   * still produce a full result set.
+   */
+  maxCandidates?: number;
   /** Scene-change threshold for ffmpeg's `select=gt(scene,X)` filter. 0..1. Default: 0.3 */
   sceneThreshold?: number;
   /** Hamming-distance threshold for the dHash dedup pass; lower = stricter. Default: 5 */
   dedupHammingThreshold?: number;
   /** Fallback fixed-interval (seconds) used when scene detection finds nothing. Default: 2 */
   fallbackIntervalSec?: number;
+}
+
+/**
+ * Resolve the upstream candidate cap used when invoking ffmpeg. Pulled out so
+ * tests can lock the precedence rules (option > env var > derived default)
+ * without spinning up ffmpeg.
+ */
+export function resolveCandidateCap(maxFrames: number, optsOverride?: number): number {
+  const envRaw = process.env.KEYFRAMES_MAX_CANDIDATES;
+  let envVal: number | undefined;
+  if (envRaw !== undefined && envRaw !== "") {
+    const parsed = Number(envRaw);
+    if (Number.isFinite(parsed) && parsed > 0) envVal = Math.floor(parsed);
+  }
+  const chosen = optsOverride ?? envVal ?? maxFrames * 3;
+  // Floor to maxFrames so we never starve the dedup pass below the desired
+  // output size, and clamp negatives/NaN defensively.
+  if (!Number.isFinite(chosen) || chosen <= 0) return maxFrames;
+  return Math.max(maxFrames, Math.floor(chosen));
 }
 
 /**
@@ -154,7 +183,7 @@ const FFMPEG_TIMEOUT_MS = (() => {
  * produced (sorted). Throws on non-zero exit OR on timeout (so callers can
  * fall back to a different sampling strategy or to single-frame mode).
  */
-async function runFfmpeg(videoAbsPath: string, vfilter: string, maxFrames: number, idPrefix: string): Promise<string[]> {
+async function runFfmpeg(videoAbsPath: string, vfilter: string, maxCandidates: number, idPrefix: string): Promise<string[]> {
   const pattern = path.join(UPLOAD_DIR, `${idPrefix}_%03d.jpg`);
   await new Promise<void>((resolve, reject) => {
     const args = [
@@ -162,7 +191,9 @@ async function runFfmpeg(videoAbsPath: string, vfilter: string, maxFrames: numbe
       "-i", videoAbsPath,
       "-vf", vfilter,
       "-vsync", "vfr",
-      "-frames:v", String(maxFrames * 3), // overshoot — dedup trims later
+      // Cap raw candidate frames so ffmpeg short-circuits on long videos and
+      // the dedup pass never has to hash more than this many frames.
+      "-frames:v", String(maxCandidates),
       "-q:v", "3",
       pattern,
     ];
@@ -221,6 +252,7 @@ export async function extractKeyframes(
   const sceneThreshold = opts.sceneThreshold ?? 0.3;
   const hammingThreshold = opts.dedupHammingThreshold ?? 5;
   const fallbackInterval = opts.fallbackIntervalSec ?? 2;
+  const maxCandidates = resolveCandidateCap(maxFrames, opts.maxCandidates);
   const id = crypto.randomUUID();
 
   // Per-step timings let operators (and on-call) see exactly where a slow
@@ -237,7 +269,7 @@ export async function extractKeyframes(
   let candidates: string[] = [];
   const tScene = Date.now();
   try {
-    candidates = await runFfmpeg(videoAbsPath, sceneFilter, maxFrames, `${id}_s`);
+    candidates = await runFfmpeg(videoAbsPath, sceneFilter, maxCandidates, `${id}_s`);
   } catch (err) {
     logger.warn({ err, videoAbsPath }, "scene-change ffmpeg pass failed");
   }
@@ -248,7 +280,7 @@ export async function extractKeyframes(
     const intervalFilter = `fps=1/${fallbackInterval},scale=720:-2`;
     const tFallback = Date.now();
     try {
-      candidates = await runFfmpeg(videoAbsPath, intervalFilter, maxFrames, `${id}_i`);
+      candidates = await runFfmpeg(videoAbsPath, intervalFilter, maxCandidates, `${id}_i`);
     } catch (err) {
       logger.warn({ err, videoAbsPath }, "fallback interval ffmpeg pass failed");
     }
