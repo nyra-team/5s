@@ -202,7 +202,7 @@ const MEDIUM_SEVERITY_PATTERNS: RegExp[] = [
   /\b(label|tag|signage|sign|barrier|guard|ppe|gowning)\b/i,
 ];
 
-function inferSuggestionSeverity(text: string): SuggestionSeverity {
+export function inferSuggestionSeverity(text: string): SuggestionSeverity {
   if (!text) return "low";
   for (const re of HIGH_SEVERITY_PATTERNS) if (re.test(text)) return "high";
   for (const re of MEDIUM_SEVERITY_PATTERNS) if (re.test(text)) return "medium";
@@ -243,7 +243,7 @@ function severityStyles(s: SuggestionSeverity): {
   };
 }
 
-function SuggestionRow({
+export function SuggestionRow({
   text,
   index,
   aiSeverity,

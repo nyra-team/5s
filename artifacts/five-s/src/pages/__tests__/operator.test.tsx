@@ -163,7 +163,7 @@ vi.mock("@/lib/auth", () => ({
 
 // QueryClientProvider is needed because operator.tsx calls useQueryClient.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import OperatorHome from "../operator";
+import OperatorHome, { SuggestionRow, inferSuggestionSeverity } from "../operator";
 import { OPERATOR_THRESHOLDS } from "@/lib/operator-thresholds";
 import type {
   AreaStatus,
@@ -770,5 +770,109 @@ describe("OperatorHome — current shift state", () => {
       .filter((t) => t.getAttribute("aria-selected") === "true");
     expect(activeTabs).toHaveLength(1);
     expect(activeTabs[0]).toHaveTextContent(/Shift B/i);
+  });
+});
+
+describe("SuggestionRow — AI severity colour mapping", () => {
+  // SuggestionRow is rendered as an <li>, so wrap it in a <ul> to keep React's
+  // DOM nesting validator quiet.
+  function renderRow(props: React.ComponentProps<typeof SuggestionRow>) {
+    return render(
+      <ul>
+        <SuggestionRow {...props} />
+      </ul>,
+    );
+  }
+
+  it.each([
+    ["high", "High"],
+    ["medium", "Medium"],
+    ["low", "Low"],
+  ] as const)(
+    "uses the AI-provided severity %s and labels the tooltip as 'AI severity: %s'",
+    (sev, label) => {
+      renderRow({ text: "Some action item text", index: 0, aiSeverity: sev });
+      const row = screen.getByTestId("suggestion-row-0");
+      expect(row).toHaveAttribute("data-severity", sev);
+      expect(row).toHaveAttribute("data-severity-source", "ai");
+      const pill = within(row).getByLabelText(`Severity: ${label}`);
+      expect(pill).toHaveAttribute("title", `AI severity: ${label}`);
+      expect(pill).toHaveTextContent(label);
+    },
+  );
+
+  it("falls back to keyword inference for high-severity language when aiSeverity is missing", () => {
+    renderRow({
+      text: "Chemical spill on the line — clean up immediately",
+      index: 2,
+      aiSeverity: null,
+    });
+    const row = screen.getByTestId("suggestion-row-2");
+    expect(row).toHaveAttribute("data-severity", "high");
+    expect(row).toHaveAttribute("data-severity-source", "inferred");
+    const pill = within(row).getByLabelText("Severity: High");
+    expect(pill).toHaveAttribute("title", "Inferred severity: High");
+  });
+
+  it("falls back to keyword inference for medium-severity language when aiSeverity is undefined", () => {
+    renderRow({
+      text: "Missing label on the storage bin",
+      index: 3,
+      // Mirrors the production call site, which passes `?? null` when the
+      // AI didn't attach a severity to this recommendation.
+      aiSeverity: undefined,
+    });
+    const row = screen.getByTestId("suggestion-row-3");
+    expect(row).toHaveAttribute("data-severity", "medium");
+    expect(row).toHaveAttribute("data-severity-source", "inferred");
+    const pill = within(row).getByLabelText("Severity: Medium");
+    expect(pill).toHaveAttribute("title", "Inferred severity: Medium");
+  });
+
+  it("falls back to low severity for benign text when aiSeverity is missing", () => {
+    renderRow({
+      text: "Wipe down the workbench at end of shift",
+      index: 4,
+      aiSeverity: null,
+    });
+    const row = screen.getByTestId("suggestion-row-4");
+    expect(row).toHaveAttribute("data-severity", "low");
+    expect(row).toHaveAttribute("data-severity-source", "inferred");
+    const pill = within(row).getByLabelText("Severity: Low");
+    expect(pill).toHaveAttribute("title", "Inferred severity: Low");
+  });
+
+  it("prefers the AI-provided severity over what the inference would have returned", () => {
+    // Text that would otherwise trip the high-severity keyword rule, but the
+    // AI explicitly classified it as low — the AI must win and the tooltip
+    // must reflect that source.
+    renderRow({
+      text: "Chemical spill kit was restocked — no action needed",
+      index: 5,
+      aiSeverity: "low",
+    });
+    const row = screen.getByTestId("suggestion-row-5");
+    expect(row).toHaveAttribute("data-severity", "low");
+    expect(row).toHaveAttribute("data-severity-source", "ai");
+    const pill = within(row).getByLabelText("Severity: Low");
+    expect(pill).toHaveAttribute("title", "AI severity: Low");
+  });
+});
+
+describe("inferSuggestionSeverity — keyword rules", () => {
+  it("returns 'high' for safety-critical wording", () => {
+    expect(inferSuggestionSeverity("Chemical spill near mixer")).toBe("high");
+    expect(inferSuggestionSeverity("Operator working without gloves")).toBe("high");
+    expect(inferSuggestionSeverity("Stop the line — exposed wiring")).toBe("high");
+  });
+
+  it("returns 'medium' for housekeeping wording like missing labels", () => {
+    expect(inferSuggestionSeverity("Missing label on the bin")).toBe("medium");
+    expect(inferSuggestionSeverity("Signage is cracked")).toBe("medium");
+  });
+
+  it("returns 'low' for benign or empty text", () => {
+    expect(inferSuggestionSeverity("Wipe down the bench")).toBe("low");
+    expect(inferSuggestionSeverity("")).toBe("low");
   });
 });
