@@ -255,6 +255,73 @@ describe("dashboard operator-dismiss history", () => {
     expect(withMachine).toBeDefined();
   });
 
+  it("returns a 4-bucket weeklyTrend per operator (oldest → newest) bucketing dismissals into the correct week", async () => {
+    // Anchor each fixture inside a known week bucket. We use mid-week
+    // offsets (3 + 7n days ago) so the row lands cleanly inside its
+    // bucket regardless of how the test's wall-clock time straddles a
+    // calendar-day boundary in the shift TZ.
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3600 * 1000); // newest week (idx 3)
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 3600 * 1000); // idx 2
+    const seventeenDaysAgo = new Date(Date.now() - 17 * 24 * 3600 * 1000); // idx 1
+    // Operator B gets a single dismissal three days ago (idx 3 only).
+    await insertNudge({
+      areaId: area1.id,
+      dismissedAt: threeDaysAgo,
+      dismissedByUserId: operatorBId,
+      dismissReason: "OPERATOR_DISMISS",
+    });
+    await insertNudge({
+      areaId: area1.id,
+      dismissedAt: tenDaysAgo,
+      dismissedByUserId: operatorBId,
+      dismissReason: "OPERATOR_DISMISS",
+    });
+    await insertNudge({
+      areaId: area1.id,
+      dismissedAt: seventeenDaysAgo,
+      dismissedByUserId: operatorBId,
+      dismissReason: "OPERATOR_DISMISS",
+    });
+
+    const res = await request(app)
+      .get("/api/dashboard/operator-dismisses?days=30")
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(res.status).toBe(200);
+
+    const opB = (res.body as Array<{
+      operatorId: number;
+      weeklyTrend: Array<{ weekStart: string; weekEnd: string; count: number }>;
+    }>).find((r) => r.operatorId === operatorBId);
+    expect(opB).toBeDefined();
+    expect(opB!.weeklyTrend).toHaveLength(4);
+
+    // Buckets are ordered oldest → newest. Each bucket spans exactly
+    // 7 calendar days (weekStart..weekEnd inclusive).
+    for (let i = 1; i < opB!.weeklyTrend.length; i++) {
+      const prevEnd = new Date(opB!.weeklyTrend[i - 1].weekEnd);
+      const curStart = new Date(opB!.weeklyTrend[i].weekStart);
+      expect(curStart.getTime()).toBeGreaterThan(prevEnd.getTime());
+    }
+
+    // The three fixture rows we just added must each be counted in exactly
+    // one bucket (and the original "now" row from the first test is also
+    // operator B's, in idx 3). The trend total over the full 4 weeks must
+    // therefore be at least 4 for operator B.
+    const total = opB!.weeklyTrend.reduce((acc, w) => acc + w.count, 0);
+    expect(total).toBeGreaterThanOrEqual(4);
+
+    // The newest bucket (idx 3) must include the 3-days-ago and the
+    // first test's `now` dismissal — i.e. count >= 2.
+    expect(opB!.weeklyTrend[3].count).toBeGreaterThanOrEqual(2);
+
+    // The 17-days-ago dismissal lands in idx 1 (week starting 21..15 days
+    // ago in shift TZ). count >= 1 there.
+    expect(opB!.weeklyTrend[1].count).toBeGreaterThanOrEqual(1);
+
+    // Idx 0 (oldest week, 28..22 days ago) had no fixtures => 0.
+    expect(opB!.weeklyTrend[0].count).toBe(0);
+  });
+
   it("requires the MANAGER role", async () => {
     const operatorToken = signToken({
       userId: operatorAId,

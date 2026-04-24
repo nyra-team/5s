@@ -848,6 +848,18 @@ export interface DashboardSummary {
   openEscalations: number;
 }
 
+/**
+ * One 7-day bucket of an operator's dismiss-without-submit count.
+ */
+export interface OperatorDismissWeek {
+  /** First calendar day of the bucket (YYYY-MM-DD, shift timezone). */
+  weekStart: string;
+  /** Last calendar day of the bucket (YYYY-MM-DD, shift timezone, inclusive). */
+  weekEnd: string;
+  /** Number of OPERATOR_DISMISS nudges this operator silenced in the bucket. */
+  count: number;
+}
+
 export interface OperatorDismissSummary {
   operatorId: number;
   operatorEmail: string;
@@ -855,6 +867,8 @@ export interface OperatorDismissSummary {
   dismissCount: number;
   /** Most recent dismissal timestamp in the window. */
   lastDismissedAt: string;
+  /** Always-4-element trend of this operator's OPERATOR_DISMISS count bucketed into the last four 7-day calendar windows in the facility's shift timezone, ordered oldest → newest. Independent of the panel's `days` selector so managers can see whether the behaviour is improving or worsening regardless of the totals window. Buckets with no dismissals report `count: 0`. */
+  weeklyTrend: OperatorDismissWeek[];
 }
 
 export interface SendOperatorCoachingNudgeBody {

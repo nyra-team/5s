@@ -20,6 +20,7 @@ import {
   type OperatorDismissSummary,
   type OperatorCoachingNudgeResult,
   type OperatorCoachingNudgeThrottled,
+  type OperatorDismissWeek,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ResponsiveContainer, ReferenceDot } from "recharts";
@@ -1453,6 +1454,70 @@ function DetectionAgreementPanel() {
   );
 }
 
+// Tiny inline 4-week bar chart that lives inside an OperatorDismissRow so
+// managers can see at a glance whether an operator's dismiss-without-submit
+// behaviour is improving or worsening — the totals badge alone can't answer
+// "is 3 dismissals high?". Bars are rendered as plain divs (not Recharts) so
+// the chart adds zero extra render cost per row and stays sharp at small
+// sizes. Each bar carries a native title attribute for a per-week tooltip.
+function WeeklyDismissTrend({
+  weeks,
+  operatorId,
+}: {
+  weeks: OperatorDismissWeek[];
+  operatorId: number;
+}) {
+  if (weeks.length === 0) return null;
+  // Scale every operator's bars to their own peak so a row with 1 dismissal
+  // still shows a readable shape. We don't compare across rows here — the
+  // dismissCount badge already does that — so per-row scaling is fine.
+  const max = Math.max(1, ...weeks.map((w) => w.count));
+  const allZero = weeks.every((w) => w.count === 0);
+  const trackPx = 22;
+  const summary = weeks
+    .map((w) => `${formatWeekLabel(w)}: ${w.count}`)
+    .join(", ");
+  return (
+    <div
+      className="flex items-end gap-[3px] h-[22px] mr-1"
+      role="img"
+      aria-label={`Dismiss-without-submit trend by week: ${summary}`}
+      data-testid={`operator-dismiss-trend-${operatorId}`}
+    >
+      {weeks.map((w, i) => {
+        const ratio = w.count / max;
+        // Floor to 2px so empty weeks still render a visible track instead
+        // of disappearing entirely; full-zero rows render as a flat baseline.
+        const heightPx = Math.max(2, Math.round(ratio * trackPx));
+        const tone = allZero || w.count === 0
+          ? "bg-amber-200/60 dark:bg-amber-500/20"
+          : "bg-amber-500/80 dark:bg-amber-400/80";
+        return (
+          <span
+            key={`${w.weekStart}-${i}`}
+            className={`block w-[6px] rounded-sm ${tone}`}
+            style={{ height: `${heightPx}px` }}
+            title={`${formatWeekLabel(w)}: ${w.count} dismiss${w.count === 1 ? "" : "es"}`}
+            data-testid={`operator-dismiss-trend-${operatorId}-week-${i}`}
+            data-week-count={w.count}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function formatWeekLabel(w: OperatorDismissWeek): string {
+  const start = parseISO(w.weekStart);
+  const end = parseISO(w.weekEnd);
+  // Drop the year if both ends fall in the same month; the rest of the
+  // dashboard uses "MMM d" everywhere so this matches the visual style.
+  if (start.getMonth() === end.getMonth()) {
+    return `${format(start, "MMM d")}–${format(end, "d")}`;
+  }
+  return `${format(start, "MMM d")}–${format(end, "MMM d")}`;
+}
+
 function OperatorDismissRow({
   row,
   days,
@@ -1571,6 +1636,10 @@ function OperatorDismissRow({
             Last dismissal {formatDistanceToNow(lastDismissed, { addSuffix: true })}
           </p>
         </div>
+        <WeeklyDismissTrend
+          weeks={row.weeklyTrend}
+          operatorId={row.operatorId}
+        />
         <span
           className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300 tabular-nums"
           data-testid={`operator-dismiss-count-${row.operatorId}`}

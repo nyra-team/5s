@@ -102,6 +102,7 @@ export * from "./operatorCoachingNudgeResultTypeTargetShift";
 export * from "./operatorCoachingNudgeThrottledType";
 export * from "./operatorDismissedNudgeType";
 export * from "./operatorDismissSummaryType";
+export * from "./operatorDismissWeekType";
 export * from "./operatorThresholdAuditEntryType";
 export * from "./operatorThresholdSourcesType";
 export * from "./operatorThresholdsType";

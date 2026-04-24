@@ -5,6 +5,7 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { OperatorDismissWeekType } from "./operatorDismissWeekType";
 
 export interface OperatorDismissSummaryType {
   operatorId: number;
@@ -13,4 +14,6 @@ export interface OperatorDismissSummaryType {
   dismissCount: number;
   /** Most recent dismissal timestamp in the window. */
   lastDismissedAt: Date;
+  /** Always-4-element trend of this operator's OPERATOR_DISMISS count bucketed into the last four 7-day calendar windows in the facility's shift timezone, ordered oldest → newest. Independent of the panel's `days` selector so managers can see whether the behaviour is improving or worsening regardless of the totals window. Buckets with no dismissals report `count: 0`. */
+  weeklyTrend: OperatorDismissWeekType[];
 }

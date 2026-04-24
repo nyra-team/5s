@@ -540,6 +540,38 @@ function getDismissWindowStart(days: number, cfg: ShiftConfig): Date {
   return getISTDayRange(`${y}-${m}-${d}`, cfg).start;
 }
 
+// Number of 7-day buckets we expose in `weeklyTrend`. Four matches the
+// "4-week sparkline" pattern managers asked for: enough history to see a
+// trajectory without crowding the row.
+const DISMISS_TREND_WEEKS = 4;
+
+// Build the contiguous list of week buckets (oldest → newest) using
+// calendar-day arithmetic on YMD parts in the shift timezone, mirroring
+// `dayLabels` in the trends route. We deliberately do NOT step by fixed
+// 7*24h chunks: across DST transitions a local week is 167 or 169 hours of
+// UTC, which would skew week boundaries for facilities in DST-observing
+// zones.
+function buildDismissTrendWeeks(cfg: ShiftConfig): Array<{ weekStart: string; weekEnd: string }> {
+  const today = getZonedParts(new Date(), cfg.timeZone);
+  const ymd = (date: Date) => {
+    const y = date.getUTCFullYear();
+    const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(date.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  };
+  const weeks: Array<{ weekStart: string; weekEnd: string }> = [];
+  for (let i = DISMISS_TREND_WEEKS - 1; i >= 0; i--) {
+    // Newest bucket (i=0) ends today and starts 6 days ago. Older buckets
+    // shift the window back by 7 calendar days each.
+    const endOffset = i * 7;
+    const startOffset = endOffset + 6;
+    const startDate = new Date(Date.UTC(today.year, today.month, today.day - startOffset));
+    const endDate = new Date(Date.UTC(today.year, today.month, today.day - endOffset));
+    weeks.push({ weekStart: ymd(startDate), weekEnd: ymd(endDate) });
+  }
+  return weeks;
+}
+
 const OPERATOR_DISMISS_REASON: NudgeDismissReason = "OPERATOR_DISMISS";
 
 // Per-operator aggregate of nudges they dismissed without re-capturing
@@ -576,6 +608,68 @@ router.get(
       .groupBy(usersTable.id, usersTable.email)
       .orderBy(desc(count(nudgesTable.id)), desc(max(nudgesTable.dismissedAt)));
 
+    // Compute the 4-week trend in parallel with the totals so each row can
+    // show whether the behaviour is improving or worsening, not just "is 3
+    // dismissals high?". Trend window is fixed (last 28 calendar days in
+    // shift TZ) regardless of the panel's `days` selector — managers want a
+    // stable baseline to compare against.
+    const weekBuckets = buildDismissTrendWeeks(cfg);
+    const operatorIds = rows.map((r) => r.operatorId);
+    const trendByOperator = new Map<number, number[]>();
+    if (operatorIds.length > 0) {
+      const trendWindowStart = getISTDayRange(weekBuckets[0].weekStart, cfg).start;
+      // Bound the scan on both sides: the newest bucket ends with today's
+      // calendar day (inclusive), so use that day's `end` as the exclusive
+      // upper bound. Without this, a future-dated `dismissed_at` would be
+      // pulled into the aggregation only to be dropped by the bucket map —
+      // wasted work for the hot dashboard query.
+      const trendWindowEnd = getISTDayRange(weekBuckets[weekBuckets.length - 1].weekEnd, cfg).end;
+      const tzLiteral = sql.raw(`'${cfg.timeZone.replace(/'/g, "''")}'`);
+      const istDayExpr = sql<string>`to_char(${nudgesTable.dismissedAt} at time zone ${tzLiteral}, 'YYYY-MM-DD')`;
+
+      const trendRows = await db
+        .select({
+          operatorId: nudgesTable.dismissedByUserId,
+          day: istDayExpr,
+          count: count(),
+        })
+        .from(nudgesTable)
+        .where(
+          and(
+            eq(nudgesTable.dismissReason, OPERATOR_DISMISS_REASON),
+            isNotNull(nudgesTable.dismissedAt),
+            inArray(nudgesTable.dismissedByUserId, operatorIds),
+            gte(nudgesTable.dismissedAt, trendWindowStart),
+            lt(nudgesTable.dismissedAt, trendWindowEnd),
+          ),
+        )
+        .groupBy(nudgesTable.dismissedByUserId, istDayExpr);
+
+      // Map each calendar day to its bucket index once, then accumulate.
+      const bucketByDay = new Map<string, number>();
+      weekBuckets.forEach((w, idx) => {
+        // Walk weekStart..weekEnd inclusive in YMD space.
+        const [sy, sm, sd] = w.weekStart.split("-").map(Number);
+        for (let offset = 0; offset < 7; offset++) {
+          const stepped = new Date(Date.UTC(sy, sm - 1, sd + offset));
+          const y = stepped.getUTCFullYear();
+          const m = String(stepped.getUTCMonth() + 1).padStart(2, "0");
+          const d = String(stepped.getUTCDate()).padStart(2, "0");
+          bucketByDay.set(`${y}-${m}-${d}`, idx);
+        }
+      });
+
+      for (const r of trendRows) {
+        if (r.operatorId == null) continue;
+        const idx = bucketByDay.get(r.day);
+        if (idx == null) continue;
+        const arr =
+          trendByOperator.get(r.operatorId) ?? new Array(DISMISS_TREND_WEEKS).fill(0);
+        arr[idx] += Number(r.count);
+        trendByOperator.set(r.operatorId, arr);
+      }
+    }
+
     res.json(
       rows.map((r) => ({
         operatorId: r.operatorId,
@@ -584,6 +678,11 @@ router.get(
         // max() returns Date | null in drizzle types; the isNotNull guard above
         // makes the null case impossible, but coerce defensively for the wire.
         lastDismissedAt: r.lastDismissedAt ?? new Date(0),
+        weeklyTrend: weekBuckets.map((w, idx) => ({
+          weekStart: w.weekStart,
+          weekEnd: w.weekEnd,
+          count: trendByOperator.get(r.operatorId)?.[idx] ?? 0,
+        })),
       })),
     );
   },

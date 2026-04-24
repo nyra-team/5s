@@ -2677,7 +2677,33 @@ components:
           type: string
           format: date-time
           description: Most recent dismissal timestamp in the window.
-      required: [operatorId, operatorEmail, dismissCount, lastDismissedAt]
+        weeklyTrend:
+          type: array
+          description: >-
+            Always-4-element trend of this operator's OPERATOR_DISMISS count
+            bucketed into the last four 7-day calendar windows in the
+            facility's shift timezone, ordered oldest → newest. Independent
+            of the panel's `days` selector so managers can see whether the
+            behaviour is improving or worsening regardless of the totals
+            window. Buckets with no dismissals report `count: 0`.
+          items:
+            $ref: "#/components/schemas/OperatorDismissWeek"
+      required: [operatorId, operatorEmail, dismissCount, lastDismissedAt, weeklyTrend]
+
+    OperatorDismissWeek:
+      type: object
+      description: One 7-day bucket of an operator's dismiss-without-submit count.
+      properties:
+        weekStart:
+          type: string
+          description: First calendar day of the bucket (YYYY-MM-DD, shift timezone).
+        weekEnd:
+          type: string
+          description: Last calendar day of the bucket (YYYY-MM-DD, shift timezone, inclusive).
+        count:
+          type: integer
+          description: Number of OPERATOR_DISMISS nudges this operator silenced in the bucket.
+      required: [weekStart, weekEnd, count]
 
     SendOperatorCoachingNudgeBody:
       type: object
