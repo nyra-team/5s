@@ -104,14 +104,26 @@ function dueStateFor(nc: NextCheck | undefined, now: number): DueState {
 export default function OperatorHome() {
   // Re-poll the current shift so the suggested shift updates within ~1 minute
   // when the IST shift boundary crosses (e.g. 1:55 PM → 2:05 PM IST).
-  const { data: currentShift, isLoading: shiftLoading } = useGetCurrentShift({
+  const {
+    data: currentShift,
+    isLoading: shiftLoading,
+    isError: shiftError,
+    isRefetching: shiftRefetching,
+    refetch: refetchCurrentShift,
+  } = useGetCurrentShift({
     query: { refetchInterval: 60_000, queryKey: getGetCurrentShiftQueryKey() },
   });
   const [selectedShift, setSelectedShift] = useState<"A" | "B" | "C" | null>(null);
-  const activeShift = selectedShift ?? currentShift?.shift ?? "A";
-  const { data: statuses, isLoading: statusLoading } = useGetOperatorStatus({
-    shift: activeShift as "A" | "B" | "C",
-  });
+  // Treat "shift unknown" as a real state distinct from A/B/C. Do NOT silently
+  // fall back to "A" — that would mis-tag the page as Shift A whenever the
+  // current-shift call is loading, errored, or briefly unreachable.
+  const activeShift: "A" | "B" | "C" | null =
+    selectedShift ?? currentShift?.shift ?? null;
+  const shiftKnown = activeShift !== null;
+  const { data: statuses, isLoading: statusLoading } = useGetOperatorStatus(
+    { shift: (activeShift ?? "A") as "A" | "B" | "C" },
+    { query: { enabled: shiftKnown } },
+  );
   const { data: nextChecks } = useGetNextChecks({
     query: { refetchInterval: 60_000, queryKey: getGetNextChecksQueryKey() },
   });
@@ -130,13 +142,17 @@ export default function OperatorHome() {
   // Persistent per-area badges. Same data shape, but the toast endpoint above
   // dismisses on read; this one does not, so the badge stays until the area
   // gets a submission this shift (or the operator switches shift). Filtered
-  // server-side to the active shift so we only see relevant prompts.
+  // server-side to the active shift so we only see relevant prompts. While the
+  // shift is unknown we disable this query so we never request /nudges?shift=A
+  // on behalf of an operator whose real shift might be B or C.
+  const nudgesShiftParam = { shift: (activeShift ?? "A") as "A" | "B" | "C" };
   const { data: activeNudgesByArea } = useGetActiveNudgesByArea(
-    { shift: activeShift as "A" | "B" | "C" },
+    nudgesShiftParam,
     {
       query: {
         refetchInterval: 60_000,
-        queryKey: getGetActiveNudgesByAreaQueryKey({ shift: activeShift as "A" | "B" | "C" }),
+        queryKey: getGetActiveNudgesByAreaQueryKey(nudgesShiftParam),
+        enabled: shiftKnown,
       },
     },
   );
@@ -259,7 +275,29 @@ export default function OperatorHome() {
     return m;
   }, [recent]);
 
-  if (shiftLoading || statusLoading) {
+  // When we don't yet know the current shift, render an explicit loading or
+  // error state for the shift pills instead of pre-selecting "A". The operator
+  // can recover from a failed lookup by hitting Retry, or by tapping a pill —
+  // selecting one renders the normal page on the next tick.
+  if (activeShift === null) {
+    // Treat "the query has settled but produced no shift" the same as an
+    // explicit error, so the UI never sits forever on "Checking…" copy when
+    // the server returned an empty/invalid body.
+    const shiftLookupFailed = shiftError || !shiftLoading;
+    return (
+      <ShiftUnknownView
+        shiftLoading={shiftLoading}
+        shiftError={shiftLookupFailed}
+        shiftRefetching={shiftRefetching}
+        onRetry={() => {
+          void refetchCurrentShift();
+        }}
+        onSelectShift={setSelectedShift}
+      />
+    );
+  }
+
+  if (statusLoading) {
     return (
       <div className="flex justify-center py-16">
         <div className="animate-spin rounded-full h-8 w-8 border-2 border-muted border-t-primary"></div>
@@ -357,6 +395,102 @@ export default function OperatorHome() {
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+/* --------------------------- Shift unknown view -------------------------- */
+
+/**
+ * Rendered while the current-shift API call is still loading or has errored,
+ * BEFORE we know which shift to fetch operator data for. The shift pills are
+ * shown so the operator can manually pick one and unblock the page even when
+ * the API is briefly unreachable. We never silently pre-select "A" here —
+ * doing so was the original bug, since IST is often outside the 6 AM – 2 PM
+ * window when this screen mounts.
+ */
+function ShiftUnknownView({
+  shiftLoading,
+  shiftError,
+  shiftRefetching,
+  onRetry,
+  onSelectShift,
+}: {
+  shiftLoading: boolean;
+  shiftError: boolean;
+  shiftRefetching: boolean;
+  onRetry: () => void;
+  onSelectShift: (s: "A" | "B" | "C") => void;
+}) {
+  return (
+    <div className="space-y-8 pb-20">
+      <header className="space-y-6">
+        <div className="space-y-2">
+          <p className="eyebrow">Today</p>
+          <h1 className="text-[34px] font-semibold tracking-tight leading-tight">Active shift</h1>
+          {shiftError ? (
+            <p
+              className="text-[15px] text-rose-700 dark:text-rose-300"
+              data-testid="text-shift-error"
+            >
+              Couldn't determine current shift.
+            </p>
+          ) : (
+            <p
+              className="text-muted-foreground text-[15px]"
+              data-testid="text-shift-loading"
+            >
+              Checking current shift…
+            </p>
+          )}
+        </div>
+
+        <div
+          role="tablist"
+          aria-busy={shiftLoading}
+          className="inline-flex p-1 pill-track rounded-full"
+        >
+          {SHIFT_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              role="tab"
+              aria-selected={false}
+              disabled={shiftLoading}
+              onClick={() => onSelectShift(opt.value)}
+              data-testid={`button-shift-${opt.value}`}
+              className={`relative px-4 py-2 rounded-full text-[13px] font-medium whitespace-nowrap transition-colors text-muted-foreground ${
+                shiftLoading
+                  ? "opacity-60 cursor-wait"
+                  : "hover:text-foreground"
+              }`}
+            >
+              <span className="relative z-10 inline-flex items-center">
+                {opt.label}
+                <span className="ml-1.5 opacity-60 hidden sm:inline">{opt.time}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {shiftError && (
+          <div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onRetry}
+              disabled={shiftRefetching}
+              data-testid="button-retry-current-shift"
+              className="rounded-full"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 mr-1.5 ${shiftRefetching ? "animate-spin" : ""}`}
+              />
+              {shiftRefetching ? "Retrying…" : "Retry"}
+            </Button>
+          </div>
+        )}
+      </header>
     </div>
   );
 }

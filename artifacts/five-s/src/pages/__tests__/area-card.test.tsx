@@ -46,12 +46,16 @@ vi.mock("@/lib/auth", () => ({
   }),
 }));
 
-// IndexedDB doesn't exist in jsdom; stub the draft helpers to no-op.
+// IndexedDB doesn't exist in jsdom; stub the draft helpers to no-op. Every
+// helper that operator.tsx (where AreaCard lives) imports has to be present
+// here, otherwise vitest throws an unhandled rejection from inside an effect
+// which fails the whole run even when assertions pass.
 vi.mock("@/lib/capture-drafts", () => ({
   loadCaptureDraft: vi.fn(async () => null),
   saveCaptureDraft: vi.fn(async () => undefined),
   deleteCaptureDraft: vi.fn(async () => undefined),
   purgeStaleCaptureDrafts: vi.fn(async () => undefined),
+  peekCaptureDraftMeta: vi.fn(async () => null),
 }));
 
 import { AreaCard } from "@/pages/operator";

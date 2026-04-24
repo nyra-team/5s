@@ -48,12 +48,16 @@ const mockState = {
   recent: [] as unknown[],
   statuses: [] as unknown[],
   nextChecks: [] as unknown[],
-  shift: { shift: "A" } as { shift: "A" | "B" | "C" },
+  shift: { shift: "A" } as { shift: "A" | "B" | "C" } | undefined,
+  shiftLoading: false,
+  shiftError: false,
   profile: undefined as unknown,
   nudges: [] as unknown[],
   nudgesByArea: [] as unknown[],
   submission: undefined as unknown,
 };
+
+const refetchCurrentShiftMock = vi.fn();
 
 vi.mock("@workspace/api-client-react", () => {
   const stub = (key: keyof typeof mockState) => () => ({
@@ -61,7 +65,16 @@ vi.mock("@workspace/api-client-react", () => {
     isLoading: false,
   });
   return {
-    useGetCurrentShift: stub("shift"),
+    // useGetCurrentShift needs the richer shape (isError / isRefetching /
+    // refetch) so the operator page can render a loading skeleton or an
+    // explicit error state instead of silently defaulting to Shift A.
+    useGetCurrentShift: () => ({
+      data: mockState.shiftLoading || mockState.shiftError ? undefined : mockState.shift,
+      isLoading: mockState.shiftLoading,
+      isError: mockState.shiftError,
+      isRefetching: false,
+      refetch: refetchCurrentShiftMock,
+    }),
     useGetOperatorStatus: stub("statuses"),
     useGetNextChecks: stub("nextChecks"),
     useGetOperatorRecent: stub("recent"),
@@ -200,9 +213,13 @@ beforeEach(() => {
   mockState.statuses = [];
   mockState.nextChecks = [];
   mockState.shift = { shift: "A" };
+  mockState.shiftLoading = false;
+  mockState.shiftError = false;
   mockState.profile = undefined;
   mockState.nudges = [];
   mockState.submission = undefined;
+  refetchCurrentShiftMock.mockReset();
+  window.localStorage.clear();
 });
 
 describe("OperatorHome — recent audits strip", () => {
@@ -409,5 +426,141 @@ describe("OperatorHome — capture sheet", () => {
     const submit = within(sheet).getByTestId("button-capture-submit");
     expect(submit).toBeDisabled();
     expect(submit).toHaveTextContent(/^Submit$/);
+  });
+});
+
+describe("OperatorHome — current shift state", () => {
+  // Regression: the page used to do `selectedShift ?? currentShift?.shift ?? "A"`
+  // which silently labelled the screen as Shift A whenever the API was loading,
+  // errored, or briefly unreachable — even when IST was clearly outside 6 AM
+  // – 2 PM. These tests lock in that no shift is ever pre-selected unless the
+  // server actually returned one (or the operator picked one manually).
+
+  it("shows a loading state and does not pre-select Shift A while the current-shift query is in flight", () => {
+    mockState.shiftLoading = true;
+    mockState.shift = undefined;
+    // Even if the statuses endpoint somehow resolved with rows, they should
+    // not be rendered yet — we don't know which shift to filter to.
+    mockState.statuses = [makeStatus({ areaId: 1, areaName: "Bay 1" })];
+
+    renderOperator();
+
+    expect(screen.getByTestId("text-shift-loading")).toBeInTheDocument();
+    expect(screen.queryByTestId("text-shift-error")).not.toBeInTheDocument();
+
+    // Pills exist but none is selected, and the assigned-areas section is
+    // not rendered (so we cannot mis-show shift A's areas).
+    for (const s of ["A", "B", "C"] as const) {
+      const pill = screen.getByTestId(`button-shift-${s}`);
+      expect(pill).toHaveAttribute("aria-selected", "false");
+      expect(pill).toBeDisabled();
+    }
+    expect(
+      screen.queryByRole("heading", { name: /assigned areas/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("button-add-evidence-1")).not.toBeInTheDocument();
+  });
+
+  it.each([["B"], ["C"]] as const)(
+    "selects shift %s when the current-shift API returns it",
+    (shift) => {
+      mockState.shift = { shift };
+      mockState.statuses = [
+        makeStatus({ areaId: 1, areaName: "Bay 1" }),
+      ];
+
+      renderOperator();
+
+      // The loading / error scaffolding from the unknown view must not appear.
+      expect(screen.queryByTestId("text-shift-loading")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("text-shift-error")).not.toBeInTheDocument();
+
+      // The pill for the returned shift is the active tab; the others are not.
+      const tabs = screen.getAllByRole("tab");
+      const active = tabs.filter(
+        (t) => t.getAttribute("aria-selected") === "true",
+      );
+      expect(active).toHaveLength(1);
+      expect(active[0]).toHaveTextContent(new RegExp(`Shift ${shift}`, "i"));
+
+      // Sanity: the assigned-areas section renders (so we did NOT bail out
+      // through the unknown-shift view).
+      expect(
+        screen.getByRole("heading", { name: /assigned areas/i }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("shows an error state with a Retry button (and does NOT silently pick A) when the current-shift query errors", async () => {
+    mockState.shiftError = true;
+    mockState.shift = undefined;
+    mockState.statuses = [makeStatus({ areaId: 1, areaName: "Bay 1" })];
+
+    renderOperator();
+
+    expect(screen.getByTestId("text-shift-error")).toHaveTextContent(
+      /couldn['’]t determine current shift/i,
+    );
+
+    // No pill is auto-selected.
+    for (const s of ["A", "B", "C"] as const) {
+      expect(screen.getByTestId(`button-shift-${s}`)).toHaveAttribute(
+        "aria-selected",
+        "false",
+      );
+    }
+
+    // Assigned-areas section is suppressed — no chance of showing shift A's
+    // submissions while we don't actually know which shift the operator is on.
+    expect(
+      screen.queryByRole("heading", { name: /assigned areas/i }),
+    ).not.toBeInTheDocument();
+
+    // Retry button calls refetch on the current-shift query.
+    const retry = screen.getByTestId("button-retry-current-shift");
+    await userEvent.click(retry);
+    expect(refetchCurrentShiftMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats 'query settled with no data' the same as an error so the UI never sits on 'Checking…' forever", () => {
+    // Simulates the case where the API call resolved cleanly but produced no
+    // usable shift (e.g. an empty/invalid response body): isLoading=false,
+    // isError=false, data=undefined.
+    mockState.shiftLoading = false;
+    mockState.shiftError = false;
+    mockState.shift = undefined;
+    mockState.statuses = [makeStatus({ areaId: 1, areaName: "Bay 1" })];
+
+    renderOperator();
+
+    expect(screen.getByTestId("text-shift-error")).toBeInTheDocument();
+    expect(screen.queryByTestId("text-shift-loading")).not.toBeInTheDocument();
+    expect(screen.getByTestId("button-retry-current-shift")).toBeInTheDocument();
+    // No assigned-areas fallback to shift A here either.
+    expect(
+      screen.queryByRole("heading", { name: /assigned areas/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the normal page once the operator manually picks a shift even if the API is errored", async () => {
+    mockState.shiftError = true;
+    mockState.shift = undefined;
+    mockState.statuses = [makeStatus({ areaId: 1, areaName: "Bay 1" })];
+
+    renderOperator();
+
+    // Manually select shift B via the unknown-view pill.
+    await userEvent.click(screen.getByTestId("button-shift-B"));
+
+    // Now the normal page is rendered — the assigned-areas section appears
+    // and shift B's tab is active.
+    expect(
+      await screen.findByRole("heading", { name: /assigned areas/i }),
+    ).toBeInTheDocument();
+    const activeTabs = screen
+      .getAllByRole("tab")
+      .filter((t) => t.getAttribute("aria-selected") === "true");
+    expect(activeTabs).toHaveLength(1);
+    expect(activeTabs[0]).toHaveTextContent(/Shift B/i);
   });
 });
