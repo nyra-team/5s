@@ -44,6 +44,7 @@ import type {
   GetActiveNudgesByAreaParams,
   GetAreaDetectionAgreementParams,
   GetDashboardComplianceParams,
+  GetDashboardOperatorCoverageParams,
   GetDashboardOperatorDismissesDetailParams,
   GetDashboardOperatorDismissesParams,
   GetDashboardScoresParams,
@@ -64,6 +65,7 @@ import type {
   Nudge,
   OperatorCoachingNudgeResult,
   OperatorCoachingNudgeThrottled,
+  OperatorCoverageReport,
   OperatorDismissSummary,
   OperatorDismissedNudge,
   OperatorThresholds,
@@ -2654,6 +2656,116 @@ export const useSendOperatorCoachingNudge = <
 > => {
   return useMutation(getSendOperatorCoachingNudgeMutationOptions(options));
 };
+
+/**
+ * Lists every OPERATOR account whose assigned-area count is at or below the requested threshold. Operators with zero assignments are flagged because they fall back to the legacy "see every area" mode (often a forgotten configuration step), and operators with only one assignment are surfaced because a single missing area locks them out the rest of the site. Sorted ascending by assigned count, then by email so the most under-covered operators appear first.
+ * @summary Operators with no (or only one) assigned areas
+ */
+export const getGetDashboardOperatorCoverageUrl = (
+  params?: GetDashboardOperatorCoverageParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/dashboard/operator-coverage?${stringifiedParams}`
+    : `/api/dashboard/operator-coverage`;
+};
+
+export const getDashboardOperatorCoverage = async (
+  params?: GetDashboardOperatorCoverageParams,
+  options?: RequestInit,
+): Promise<OperatorCoverageReport> => {
+  return customFetch<OperatorCoverageReport>(
+    getGetDashboardOperatorCoverageUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetDashboardOperatorCoverageQueryKey = (
+  params?: GetDashboardOperatorCoverageParams,
+) => {
+  return [
+    `/api/dashboard/operator-coverage`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetDashboardOperatorCoverageQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDashboardOperatorCoverage>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetDashboardOperatorCoverageParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDashboardOperatorCoverage>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDashboardOperatorCoverageQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDashboardOperatorCoverage>>
+  > = ({ signal }) =>
+    getDashboardOperatorCoverage(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDashboardOperatorCoverage>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDashboardOperatorCoverageQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDashboardOperatorCoverage>>
+>;
+export type GetDashboardOperatorCoverageQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Operators with no (or only one) assigned areas
+ */
+
+export function useGetDashboardOperatorCoverage<
+  TData = Awaited<ReturnType<typeof getDashboardOperatorCoverage>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetDashboardOperatorCoverageParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDashboardOperatorCoverage>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDashboardOperatorCoverageQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * Aggregates agreement between `tappedAreaId` (intent) and `areaId` (chosen) over the requested window. Submissions with no recorded `tappedAreaId` (legacy rows) are excluded from the totals so the rate isn't diluted.

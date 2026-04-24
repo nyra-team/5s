@@ -1274,6 +1274,61 @@ export const SendOperatorCoachingNudgeBody = zod.object({
 });
 
 /**
+ * Lists every OPERATOR account whose assigned-area count is at or below the requested threshold. Operators with zero assignments are flagged because they fall back to the legacy "see every area" mode (often a forgotten configuration step), and operators with only one assignment are surfaced because a single missing area locks them out the rest of the site. Sorted ascending by assigned count, then by email so the most under-covered operators appear first.
+ * @summary Operators with no (or only one) assigned areas
+ */
+export const getDashboardOperatorCoverageQueryMaxAreasDefault = 1;
+export const getDashboardOperatorCoverageQueryMaxAreasMin = 0;
+export const getDashboardOperatorCoverageQueryMaxAreasMax = 5;
+
+export const GetDashboardOperatorCoverageQueryParams = zod.object({
+  maxAreas: zod.coerce
+    .number()
+    .min(getDashboardOperatorCoverageQueryMaxAreasMin)
+    .max(getDashboardOperatorCoverageQueryMaxAreasMax)
+    .default(getDashboardOperatorCoverageQueryMaxAreasDefault)
+    .describe(
+      "Maximum number of assigned areas an operator can have to be returned. 0 returns only operators with no assignments at all; 1 (the default) also includes those with a single assignment.",
+    ),
+});
+
+export const GetDashboardOperatorCoverageResponse = zod.object({
+  totalOperators: zod
+    .number()
+    .describe(
+      'How many OPERATOR accounts exist in total — used to render \"X of Y operators\" in the UI.',
+    ),
+  totalAreas: zod
+    .number()
+    .describe(
+      'How many areas exist in total — gives the manager context for whether 1-2 assignments is \"fine\" or \"almost nothing\".',
+    ),
+  maxAreas: zod
+    .number()
+    .describe(
+      "The threshold the report was generated against (assigned count <= this).",
+    ),
+  operators: zod.array(
+    zod
+      .object({
+        operatorId: zod.number(),
+        operatorEmail: zod.string(),
+        assignedCount: zod
+          .number()
+          .describe(
+            'Number of rows in area_assignments for this operator. 0 means the operator currently falls back to the legacy \"see every area\" mode.',
+          ),
+        assignedAreaNames: zod
+          .array(zod.string())
+          .describe(
+            "Names of the areas this operator is currently assigned to (empty when assignedCount is 0).",
+          ),
+      })
+      .describe("One operator that has zero or very few assigned areas."),
+  ),
+});
+
+/**
  * Aggregates agreement between `tappedAreaId` (intent) and `areaId` (chosen) over the requested window. Submissions with no recorded `tappedAreaId` (legacy rows) are excluded from the totals so the rate isn't diluted.
  * @summary How often the auto-detected area matched the area the operator originally tapped
  */

@@ -793,6 +793,36 @@ paths:
               schema:
                 $ref: "#/components/schemas/OperatorCoachingNudgeThrottled"
 
+  /dashboard/operator-coverage:
+    get:
+      operationId: getDashboardOperatorCoverage
+      tags: [dashboard]
+      summary: Operators with no (or only one) assigned areas
+      description: >-
+        Lists every OPERATOR account whose assigned-area count is at or below
+        the requested threshold. Operators with zero assignments are flagged
+        because they fall back to the legacy "see every area" mode (often a
+        forgotten configuration step), and operators with only one assignment
+        are surfaced because a single missing area locks them out the rest of
+        the site. Sorted ascending by assigned count, then by email so the
+        most under-covered operators appear first.
+      parameters:
+        - name: maxAreas
+          in: query
+          description: Maximum number of assigned areas an operator can have to be returned. 0 returns only operators with no assignments at all; 1 (the default) also includes those with a single assignment.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 5
+            default: 1
+      responses:
+        "200":
+          description: Operators with low or missing coverage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorCoverageReport"
+
   /dashboard/area-detection-agreement:
     get:
       operationId: getAreaDetectionAgreement
@@ -2818,6 +2848,42 @@ components:
           type: integer
           description: How many retried calls reported exactly this validation message inside the window.
       required: [message, count]
+
+    OperatorCoverageEntry:
+      type: object
+      description: One operator that has zero or very few assigned areas.
+      properties:
+        operatorId:
+          type: integer
+        operatorEmail:
+          type: string
+        assignedCount:
+          type: integer
+          description: Number of rows in area_assignments for this operator. 0 means the operator currently falls back to the legacy "see every area" mode.
+        assignedAreaNames:
+          type: array
+          items:
+            type: string
+          description: Names of the areas this operator is currently assigned to (empty when assignedCount is 0).
+      required: [operatorId, operatorEmail, assignedCount, assignedAreaNames]
+
+    OperatorCoverageReport:
+      type: object
+      properties:
+        totalOperators:
+          type: integer
+          description: How many OPERATOR accounts exist in total — used to render "X of Y operators" in the UI.
+        totalAreas:
+          type: integer
+          description: How many areas exist in total — gives the manager context for whether 1-2 assignments is "fine" or "almost nothing".
+        maxAreas:
+          type: integer
+          description: The threshold the report was generated against (assigned count <= this).
+        operators:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperatorCoverageEntry"
+      required: [totalOperators, totalAreas, maxAreas, operators]
 
     AiReliabilityWindow:
       type: object

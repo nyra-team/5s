@@ -15,6 +15,7 @@ import {
   useGetBackfillReasoningStatus,
   useBackfillReasoning,
   getGetBackfillReasoningStatusQueryKey,
+  useGetDashboardOperatorCoverage,
   type AreaTrend,
   type GetDashboardTrendsShift,
   type OperatorDismissSummary,
@@ -24,7 +25,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ResponsiveContainer, ReferenceDot } from "recharts";
-import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle, Repeat, Search, Send, FileQuestion, Loader2 } from "lucide-react";
+import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle, Repeat, Search, Send, FileQuestion, Loader2, UserX } from "lucide-react";
 import { format, parseISO, formatDistanceToNow } from "date-fns";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
@@ -164,6 +165,8 @@ export default function Dashboard() {
       <AiCostPanel />
 
       <BackfillReasoningPanel />
+
+      <OperatorCoveragePanel />
 
       <LearningStatusPanel />
 
@@ -1765,6 +1768,148 @@ function OperatorDismissRow({
           )}
         </div>
       )}
+    </li>
+  );
+}
+
+// Surfaces operators whose area-assignment list is suspiciously short. Two
+// problem shapes show up here:
+//   - assignedCount === 0: the operator currently sees every area because
+//     the system falls back to legacy "see-all" mode when no rows exist.
+//     Once a manager has wired up assignments for *anyone*, this is almost
+//     always a forgotten teammate, not an intentional choice.
+//   - assignedCount === 1: a single misconfiguration locks the operator out
+//     of the rest of the site, so we list these too as a soft warning.
+// Clicking an operator jumps to /areas where the manager can fix it.
+function OperatorCoveragePanel() {
+  const { data, isLoading } = useGetDashboardOperatorCoverage({ maxAreas: 1 });
+
+  if (isLoading) {
+    return (
+      <section className="bg-card rounded-2xl shadow-soft p-6">
+        <div className="h-20 bg-secondary rounded-xl animate-pulse" />
+      </section>
+    );
+  }
+  if (!data) return null;
+
+  // Don't render the panel at all on facilities that have no operators or
+  // no areas yet — there's literally nothing actionable to show, and the
+  // empty state would be misleading ("0 operators have no coverage" when
+  // there are no operators at all).
+  if (data.totalOperators === 0 || data.totalAreas === 0) return null;
+
+  const zeroOps = data.operators.filter((o) => o.assignedCount === 0);
+  const oneOps = data.operators.filter((o) => o.assignedCount === 1);
+  const allCovered = data.operators.length === 0;
+
+  // Severity tone: red whenever any operator has zero areas (potentially
+  // locked out / silently sees everything), amber when only the one-area
+  // soft warning is firing, green when nothing to flag.
+  const tone: "good" | "warn" | "bad" =
+    zeroOps.length > 0 ? "bad" : oneOps.length > 0 ? "warn" : "good";
+  const iconClass =
+    tone === "bad"
+      ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+      : tone === "warn"
+      ? "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+      : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300";
+
+  return (
+    <section
+      className="bg-card rounded-2xl shadow-soft p-6"
+      data-testid="dashboard-operator-coverage"
+    >
+      <div className="flex flex-col gap-4 mb-5 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="eyebrow">Assignments</p>
+          <h2 className="text-lg font-semibold tracking-tight mt-1">
+            Operators with little or no area coverage
+          </h2>
+          <p className="text-[13px] text-muted-foreground mt-1 max-w-xl">
+            Operators with zero assigned areas currently see every area (legacy
+            fallback) — usually a forgotten setup step. One-area operators are
+            shown as a soft warning. Tap an operator to fix their assignments.
+          </p>
+        </div>
+        <div
+          className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${iconClass}`}
+        >
+          <UserX className="w-4 h-4" />
+        </div>
+      </div>
+
+      {allCovered ? (
+        <div
+          className="rounded-xl bg-secondary/30 px-4 py-6 text-center text-[13px] text-muted-foreground"
+          data-testid="dashboard-operator-coverage-empty"
+        >
+          All {data.totalOperators} operator{data.totalOperators === 1 ? "" : "s"} have at least 2 assigned areas. Coverage looks healthy.
+        </div>
+      ) : (
+        <ul
+          className="divide-y divide-border rounded-xl bg-secondary/20 overflow-hidden"
+          data-testid="dashboard-operator-coverage-list"
+        >
+          {data.operators.map((op) => (
+            <OperatorCoverageRow
+              key={op.operatorId}
+              operatorId={op.operatorId}
+              operatorEmail={op.operatorEmail}
+              assignedCount={op.assignedCount}
+              assignedAreaNames={op.assignedAreaNames}
+              totalAreas={data.totalAreas}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function OperatorCoverageRow({
+  operatorId,
+  operatorEmail,
+  assignedCount,
+  assignedAreaNames,
+  totalAreas,
+}: {
+  operatorId: number;
+  operatorEmail: string;
+  assignedCount: number;
+  assignedAreaNames: string[];
+  totalAreas: number;
+}) {
+  const isZero = assignedCount === 0;
+  const pillClass = isZero
+    ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+    : "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300";
+  const subtitle = isZero
+    ? `Sees all ${totalAreas} areas (no assignments configured)`
+    : `Only assigned to ${assignedAreaNames[0]}`;
+  const pillLabel = isZero ? "No areas" : "1 area";
+
+  return (
+    <li data-testid={`operator-coverage-row-${operatorId}`}>
+      <Link
+        href="/areas"
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-secondary/40 transition-colors"
+        data-testid={`operator-coverage-link-${operatorId}`}
+      >
+        <span className="w-6 flex justify-center text-muted-foreground">
+          <ChevronRight className="w-4 h-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13.5px] font-medium truncate">{operatorEmail}</p>
+          <p className="text-[11.5px] text-muted-foreground truncate">{subtitle}</p>
+        </div>
+        <span
+          className={`text-[11px] font-medium px-2.5 py-1 rounded-full tabular-nums ${pillClass}`}
+          data-testid={`operator-coverage-pill-${operatorId}`}
+        >
+          {pillLabel}
+        </span>
+      </Link>
     </li>
   );
 }

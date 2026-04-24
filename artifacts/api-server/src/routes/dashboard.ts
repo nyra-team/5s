@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, gte, lt, sql, count, avg, desc, max, isNotNull, isNull, inArray } from "drizzle-orm";
+import { eq, and, gte, lt, sql, count, avg, desc, asc, max, isNotNull, isNull, inArray } from "drizzle-orm";
 import {
   db,
   submissionsTable,
@@ -8,6 +8,7 @@ import {
   areaProfilesTable,
   nudgesTable,
   usersTable,
+  areaAssignmentsTable,
   aiScoringMetricsTable,
 } from "@workspace/db";
 import { computeRetryStatsSince } from "../lib/ai-reliability.js";
@@ -19,6 +20,7 @@ import {
   GetDashboardOperatorDismissesQueryParams,
   GetDashboardOperatorDismissesDetailQueryParams,
   SendOperatorCoachingNudgeBody,
+  GetDashboardOperatorCoverageQueryParams,
 } from "@workspace/api-zod";
 import { authMiddleware, requireRole } from "../lib/auth";
 import {
@@ -908,6 +910,87 @@ router.post(
       targetShift: currentShift,
       sentAt: created.createdAt,
       reused: false,
+    });
+  },
+);
+
+// Operators with zero (or only one) assigned areas. Zero is a special case:
+// the assignment system intentionally falls back to "this operator can see
+// every area" when no rows exist (so brand-new facilities work without
+// per-operator setup), but once a manager has wired up assignments for
+// some teammates it almost always means they've forgotten the rest. We
+// also surface single-area operators because one missing area locks them
+// out of the rest of the site, and that's usually a config slip too.
+router.get(
+  "/dashboard/operator-coverage",
+  authMiddleware,
+  requireRole("MANAGER"),
+  async (req, res): Promise<void> => {
+    const parsed = GetDashboardOperatorCoverageQueryParams.safeParse(req.query);
+    const maxAreas = parsed.success ? parsed.data.maxAreas : 1;
+
+    // One round-trip: left-join area_assignments → areas so we get the area
+    // *names* alongside the count, but only for the operators we'll actually
+    // surface. Filter to OPERATOR role first via a HAVING-equivalent on the
+    // group's assignment count.
+    const rows = await db
+      .select({
+        operatorId: usersTable.id,
+        operatorEmail: usersTable.email,
+        areaName: areasTable.name,
+      })
+      .from(usersTable)
+      .leftJoin(
+        areaAssignmentsTable,
+        eq(areaAssignmentsTable.userId, usersTable.id),
+      )
+      .leftJoin(areasTable, eq(areasTable.id, areaAssignmentsTable.areaId))
+      .where(eq(usersTable.role, "OPERATOR"))
+      .orderBy(asc(usersTable.email), asc(areasTable.name));
+
+    // Roll up by operator. The left join means an operator with zero
+    // assignments still appears as a single row with areaName === null.
+    const byOperator = new Map<
+      number,
+      { operatorId: number; operatorEmail: string; assignedAreaNames: string[] }
+    >();
+    for (const r of rows) {
+      const existing = byOperator.get(r.operatorId);
+      if (existing) {
+        if (r.areaName) existing.assignedAreaNames.push(r.areaName);
+      } else {
+        byOperator.set(r.operatorId, {
+          operatorId: r.operatorId,
+          operatorEmail: r.operatorEmail,
+          assignedAreaNames: r.areaName ? [r.areaName] : [],
+        });
+      }
+    }
+
+    const totalOperators = byOperator.size;
+
+    const operators = Array.from(byOperator.values())
+      .map((op) => ({
+        operatorId: op.operatorId,
+        operatorEmail: op.operatorEmail,
+        assignedCount: op.assignedAreaNames.length,
+        assignedAreaNames: op.assignedAreaNames,
+      }))
+      .filter((op) => op.assignedCount <= maxAreas)
+      // Worst coverage first so the manager's eye lands on 0-area operators,
+      // then 1-area ones; alphabetical email is a stable tiebreaker.
+      .sort((a, b) => {
+        if (a.assignedCount !== b.assignedCount) return a.assignedCount - b.assignedCount;
+        return a.operatorEmail.localeCompare(b.operatorEmail);
+      });
+
+    const [areaCount] = await db.select({ c: count() }).from(areasTable);
+
+    res.json({
+      totalOperators,
+      totalAreas: areaCount?.c ?? 0,
+      maxAreas,
+      operators,
     });
   },
 );

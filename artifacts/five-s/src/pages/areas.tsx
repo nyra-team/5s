@@ -16,6 +16,7 @@ import {
   getGetAreaProfileQueryKey,
   getGetAreaAssignmentsQueryKey,
   getGetUserAreaAssignmentsQueryKey,
+  getGetDashboardOperatorCoverageQueryKey,
 } from "@workspace/api-client-react";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -806,6 +807,10 @@ function AreaAssignmentsSection({ areaId, areaName }: { areaId: number; areaName
             description: `${selected.size} operator${selected.size === 1 ? "" : "s"} can now submit for ${areaName}.`,
           });
           queryClient.invalidateQueries({ queryKey: getGetAreaAssignmentsQueryKey(areaId) });
+          // Manager dashboard's "operators with no coverage" widget reads
+          // from a separate endpoint; refresh it so the operator we just
+          // (un)assigned reflects in the live count without a hard reload.
+          queryClient.invalidateQueries({ queryKey: getGetDashboardOperatorCoverageQueryKey() });
           setEditing(false);
         },
         onError: () =>

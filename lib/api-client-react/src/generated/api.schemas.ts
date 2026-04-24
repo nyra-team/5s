@@ -964,6 +964,28 @@ export interface AiReliabilityErrorBreakdown {
 }
 
 /**
+ * One operator that has zero or very few assigned areas.
+ */
+export interface OperatorCoverageEntry {
+  operatorId: number;
+  operatorEmail: string;
+  /** Number of rows in area_assignments for this operator. 0 means the operator currently falls back to the legacy "see every area" mode. */
+  assignedCount: number;
+  /** Names of the areas this operator is currently assigned to (empty when assignedCount is 0). */
+  assignedAreaNames: string[];
+}
+
+export interface OperatorCoverageReport {
+  /** How many OPERATOR accounts exist in total — used to render "X of Y operators" in the UI. */
+  totalOperators: number;
+  /** How many areas exist in total — gives the manager context for whether 1-2 assignments is "fine" or "almost nothing". */
+  totalAreas: number;
+  /** The threshold the report was generated against (assigned count <= this). */
+  maxAreas: number;
+  operators: OperatorCoverageEntry[];
+}
+
+/**
  * Retry-rate stats for one rolling time window of AI scoring calls.
  */
 export interface AiReliabilityWindow {
@@ -1484,6 +1506,15 @@ export type GetDashboardOperatorDismissesDetailParams = {
    * @maximum 90
    */
   days?: number;
+};
+
+export type GetDashboardOperatorCoverageParams = {
+  /**
+   * Maximum number of assigned areas an operator can have to be returned. 0 returns only operators with no assignments at all; 1 (the default) also includes those with a single assignment.
+   * @minimum 0
+   * @maximum 5
+   */
+  maxAreas?: number;
 };
 
 export type GetAreaDetectionAgreementParams = {
