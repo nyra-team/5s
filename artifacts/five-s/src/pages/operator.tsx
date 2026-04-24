@@ -1382,11 +1382,19 @@ export function AreaCard({
     // is a real button (focusable + keyboard-activatable) via Radix. We also
     // attach it to the FALLBACK (couldn't-be-scored) toast so the operator
     // can still inspect the saved capture.
+    //
+    // We capture the toast handle so the action can also dismiss the toast
+    // when tapped — otherwise on mobile the toast lingers underneath the
+    // submission dialog, stacking two overlays competing for attention.
+    let toastHandle: ReturnType<typeof toast> | undefined;
     const detailAction = result
       ? (
           <ToastAction
             altText="View submission details"
-            onClick={() => setDetailSubmissionId(result.id)}
+            onClick={() => {
+              setDetailSubmissionId(result.id);
+              toastHandle?.dismiss();
+            }}
             data-testid={`toast-action-view-details-${result.id}`}
           >
             View details
@@ -1397,7 +1405,7 @@ export function AreaCard({
     // produce a real score. Surface that distinctly so the operator knows to
     // re-capture rather than thinking they got a real "0%" audit.
     if (result?.scoringMode === "FALLBACK") {
-      toast({
+      toastHandle = toast({
         variant: "destructive",
         title: `${msg} — couldn't be scored`,
         description:
@@ -1407,14 +1415,14 @@ export function AreaCard({
     } else if (result && topSuggestion) {
       const percent = Math.round(result.scoreTotal * 4);
       const tone = scoreTone(percent);
-      toast({
+      toastHandle = toast({
         title: `${msg} — ${percent}%`,
         description: topSuggestion,
         className: `${tone.bg} ${tone.text} border-transparent`,
         action: detailAction,
       });
     } else {
-      toast({
+      toastHandle = toast({
         title: msg,
         description: isVideo(media) ? "Walk-through scored across keyframes." : "Photo scored.",
         action: detailAction,
