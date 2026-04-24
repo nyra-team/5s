@@ -225,6 +225,16 @@
     text-transform: uppercase;
     color: hsl(var(--muted-foreground));
   }
+
+  /* Hide the scrollbar on overflow-x containers (e.g. scrollable nav pill
+     tracks on mobile) while keeping the content scrollable via touch/trackpad. */
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* Spring-style dialog enter — Apple-like soft overshoot */

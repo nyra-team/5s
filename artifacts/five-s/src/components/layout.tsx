@@ -104,8 +104,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
 
         {!isOperator && (
-          <div className="max-w-6xl mx-auto px-5 sm:px-8 pb-3 -mt-1">
-            <nav className="inline-flex items-center gap-1 p-1 pill-track rounded-full">
+          <div className="max-w-6xl mx-auto pb-3 -mt-1 overflow-x-auto scrollbar-none px-5 sm:px-8">
+            <nav
+              className="inline-flex items-center gap-1 p-1 pill-track rounded-full"
+              data-testid="nav-manager-tabs"
+            >
               {tabs.map((tab) => {
                 const active = location === tab.href;
                 const Icon = tab.icon;

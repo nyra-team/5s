@@ -21,6 +21,7 @@ import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { EnvironmentBadge, normalizeEnvironment } from "@/lib/environment";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 function HeroStat({
   label,
@@ -45,17 +46,17 @@ function HeroStat({
     "bg-primary/10";
 
   return (
-    <div className="bg-card rounded-2xl shadow-soft p-6 flex flex-col gap-4 transition-all duration-150 hover:shadow-elevated active:scale-[0.99] motion-reduce:active:scale-100 motion-reduce:transition-none">
-      <div className="flex items-center justify-between">
-        <p className="eyebrow">{label}</p>
-        <div className={`w-8 h-8 rounded-full ${iconBg} flex items-center justify-center`}>
+    <div className="bg-card rounded-2xl shadow-soft p-4 sm:p-6 flex flex-col gap-3 sm:gap-4 transition-all duration-150 hover:shadow-elevated active:scale-[0.99] motion-reduce:active:scale-100 motion-reduce:transition-none">
+      <div className="flex items-center justify-between gap-2">
+        <p className="eyebrow truncate">{label}</p>
+        <div className={`w-8 h-8 rounded-full ${iconBg} flex items-center justify-center shrink-0`}>
           <Icon className={`w-4 h-4 ${iconColor}`} />
         </div>
       </div>
-      <div className="text-[40px] leading-none font-semibold tracking-tight tabular-nums">
+      <div className="text-[28px] sm:text-[40px] leading-none font-semibold tracking-tight tabular-nums">
         {value}
       </div>
-      <p className="text-[13px] text-muted-foreground">{hint}</p>
+      <p className="text-[12px] sm:text-[13px] text-muted-foreground">{hint}</p>
     </div>
   );
 }
@@ -78,6 +79,7 @@ export default function Dashboard() {
   const { data: compliance, isLoading: compLoading } = useGetDashboardCompliance({ date: today });
   const { data: scoresByArea, isLoading: scoresLoading } = useGetDashboardScores({ date: today, groupBy: "area" });
   const { data: scoresByShift, isLoading: shiftLoading } = useGetDashboardScores({ date: today, groupBy: "shift" });
+  const isMobile = useIsMobile();
 
   if (sumLoading || compLoading || scoresLoading || shiftLoading) {
     return (
@@ -99,7 +101,7 @@ export default function Dashboard() {
         <p className="text-muted-foreground text-[15px]">Live compliance metrics across all shifts</p>
       </header>
 
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
+      <section className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-5">
         <HeroStat
           label="Today's Compliance"
           value={`${compliancePercent}%`}
@@ -159,30 +161,64 @@ export default function Dashboard() {
           </div>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={scoresByArea?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="2 4" vertical={false} stroke="hsl(var(--border))" />
-                <XAxis
-                  dataKey="label"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-                  angle={-30}
-                  textAnchor="end"
-                  height={60}
-                />
-                <YAxis
-                  domain={[0, 100]}
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-                />
-                <Tooltip
-                  cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
-                  contentStyle={tooltipStyle}
-                  formatter={(value: number) => [`${value}%`, "Avg Score"]}
-                />
-                <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} maxBarSize={42} />
-              </BarChart>
+              {isMobile ? (
+                // On phones, area-name labels along the bottom collide and clip. Flip
+                // the chart to a vertical layout so each area gets its own row with a
+                // readable left-side label, mirroring the "By Shift" chart.
+                <BarChart
+                  data={scoresByArea?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))}
+                  margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+                  layout="vertical"
+                >
+                  <CartesianGrid strokeDasharray="2 4" horizontal={false} stroke="hsl(var(--border))" />
+                  <XAxis
+                    type="number"
+                    domain={[0, 100]}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                  />
+                  <YAxis
+                    dataKey="label"
+                    type="category"
+                    axisLine={false}
+                    tickLine={false}
+                    width={92}
+                    tick={{ fontSize: 12, fontWeight: 500, fill: "hsl(var(--foreground))" }}
+                  />
+                  <Tooltip
+                    cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
+                    contentStyle={tooltipStyle}
+                    formatter={(value: number) => [`${value}%`, "Avg Score"]}
+                  />
+                  <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[0, 8, 8, 0]} barSize={20} />
+                </BarChart>
+              ) : (
+                <BarChart data={scoresByArea?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="2 4" vertical={false} stroke="hsl(var(--border))" />
+                  <XAxis
+                    dataKey="label"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                    angle={-30}
+                    textAnchor="end"
+                    height={60}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                  />
+                  <Tooltip
+                    cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
+                    contentStyle={tooltipStyle}
+                    formatter={(value: number) => [`${value}%`, "Avg Score"]}
+                  />
+                  <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} maxBarSize={42} />
+                </BarChart>
+              )}
             </ResponsiveContainer>
           </div>
         </div>

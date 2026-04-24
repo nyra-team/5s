@@ -196,35 +196,41 @@ export default function EscalationsPage() {
       )}
 
       {selected.size > 0 && (
-        <div className="fixed bottom-4 left-0 right-0 z-30 px-4 sm:px-8 pointer-events-none">
-          <div className="max-w-3xl mx-auto bg-card shadow-elevated rounded-2xl px-5 py-3 flex items-center justify-between gap-3 hairline pointer-events-auto" data-testid="bar-bulk-actions">
-            <span className="text-[13.5px] font-medium">
+        <div className="fixed bottom-4 left-0 right-0 z-30 px-3 sm:px-8 pointer-events-none">
+          {/* On phones the count + 3 buttons collide, so we stack the row and let
+              the buttons wrap. Buttons keep their full labels because the action
+              bar only ever shows when the manager has a selection. */}
+          <div
+            className="max-w-3xl mx-auto bg-card shadow-elevated rounded-2xl px-3 sm:px-5 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 hairline pointer-events-auto"
+            data-testid="bar-bulk-actions"
+          >
+            <span className="text-[13.5px] font-medium px-1 sm:px-0">
               {selected.size} selected
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 justify-end">
               <Button
                 size="sm"
                 variant="outline"
-                className="rounded-full"
+                className="rounded-full flex-1 sm:flex-none min-w-0"
                 disabled={isBusy}
                 onClick={() => bulk("acknowledge")}
                 data-testid="button-bulk-ack"
               >
-                <Eye className="w-3.5 h-3.5 mr-1" /> Acknowledge
+                <Eye className="w-3.5 h-3.5 mr-1 shrink-0" /> Acknowledge
               </Button>
               <Button
                 size="sm"
-                className="rounded-full"
+                className="rounded-full flex-1 sm:flex-none min-w-0"
                 disabled={isBusy}
                 onClick={() => bulk("resolve")}
                 data-testid="button-bulk-resolve"
               >
-                <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Resolve
+                <CheckCircle2 className="w-3.5 h-3.5 mr-1 shrink-0" /> Resolve
               </Button>
               <Button
                 size="sm"
                 variant="ghost"
-                className="rounded-full"
+                className="rounded-full shrink-0"
                 onClick={() => setSelected(new Set())}
                 data-testid="button-bulk-clear"
               >

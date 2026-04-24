@@ -82,13 +82,15 @@ function PillarBar({ label, value, max = 5, reasoning }: { label: string; value:
   const color = pct >= 80 ? "bg-emerald-500" : pct >= 60 ? "bg-amber-500" : "bg-rose-500";
   return (
     <div className="space-y-1">
-      <div className="flex justify-between items-center">
-        <span className="capitalize font-medium text-foreground/80 text-[13px]">{label}</span>
-        <div className="flex items-center gap-3">
-          <div className="w-28 h-1.5 bg-secondary rounded-full overflow-hidden">
+      <div className="flex items-center gap-3">
+        <span className="capitalize font-medium text-foreground/80 text-[13px] shrink-0">{label}</span>
+        {/* The bar flexes to fill the row so it never overflows on 320px screens,
+            but caps at 7rem on wider rails so it doesn't dwarf the score chip. */}
+        <div className="flex items-center gap-3 flex-1 min-w-0 justify-end">
+          <div className="flex-1 min-w-[3rem] max-w-[7rem] h-1.5 bg-secondary rounded-full overflow-hidden">
             <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
           </div>
-          <span className="font-semibold w-8 text-right text-[13px] tabular-nums">{value}/{max}</span>
+          <span className="font-semibold w-8 text-right text-[13px] tabular-nums shrink-0">{value}/{max}</span>
         </div>
       </div>
       {reasoning && (
@@ -194,7 +196,10 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
   return (
     <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto rounded-2xl p-0">
       <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-        <div className="bg-secondary/40 p-6 md:p-7 space-y-4 md:rounded-l-2xl">
+        {/* Left column: just the main image on mobile, plus keyframes/machine tag on
+            desktop. On phones the keyframes & tag move into the right column below
+            so managers see Score + AI Issues without scrolling past every frame. */}
+        <div className="bg-secondary/40 p-5 sm:p-6 md:p-7 space-y-4 md:rounded-l-2xl">
           <div className="rounded-2xl overflow-hidden bg-black/5 shadow-soft">
             {isVideoSub ? (
               <video src={`/api${sub.imageUrl}`} controls className="w-full h-auto" />
@@ -204,7 +209,7 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
           </div>
 
           {keyframes.length > 0 && (
-            <div>
+            <div className="hidden md:block">
               <p className="eyebrow flex items-center gap-1.5 mb-2"><Video className="w-3 h-3" /> Sampled keyframes ({keyframes.length})</p>
               <div className="grid grid-cols-3 gap-2">
                 {keyframes.map((k, i) => (
@@ -218,19 +223,19 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
           )}
 
           {sub.machineTag && (
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-card">
+            <div className="hidden md:flex items-center gap-2 p-3 rounded-xl bg-card">
               <Tag className="w-4 h-4 text-muted-foreground" />
               <span className="text-[13px] font-medium">{sub.machineTag}</span>
             </div>
           )}
         </div>
 
-        <div className="p-6 md:p-7 space-y-6">
+        <div className="p-5 sm:p-6 md:p-7 space-y-6">
           <DialogHeader className="space-y-2 text-left">
             <div className="flex items-start justify-between gap-3">
-              <div className="space-y-1">
-                <DialogTitle className="text-2xl font-semibold tracking-tight">{sub.areaName}</DialogTitle>
-                <DialogDescription className="text-[13px]">
+              <div className="space-y-1 min-w-0">
+                <DialogTitle className="text-xl sm:text-2xl font-semibold tracking-tight">{sub.areaName}</DialogTitle>
+                <DialogDescription className="text-[12.5px] sm:text-[13px]">
                   {format(new Date(sub.createdAt), "MMM d, yyyy 'at' h:mm a")} · {sub.userEmail} · Shift {sub.shift}
                 </DialogDescription>
               </div>
@@ -247,6 +252,13 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
               )}
             </div>
           </DialogHeader>
+
+          {sub.machineTag && (
+            <div className="md:hidden flex items-center gap-2 p-3 rounded-xl bg-secondary/60">
+              <Tag className="w-4 h-4 text-muted-foreground" />
+              <span className="text-[13px] font-medium">{sub.machineTag}</span>
+            </div>
+          )}
 
           <section>
             <p className="eyebrow mb-3">Score breakdown</p>
@@ -289,6 +301,22 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
                   </li>
                 ))}
               </ul>
+            </section>
+          )}
+
+          {/* Mobile-only keyframe strip rendered after AI Issues so the score
+              and findings are reachable without scrolling past the frames. */}
+          {keyframes.length > 0 && (
+            <section className="md:hidden">
+              <p className="eyebrow flex items-center gap-1.5 mb-2"><Video className="w-3 h-3" /> Sampled keyframes ({keyframes.length})</p>
+              <div className="grid grid-cols-3 gap-2">
+                {keyframes.map((k, i) => (
+                  <div key={i} className="rounded-lg overflow-hidden bg-secondary shadow-soft">
+                    <img src={`/api${k}`} alt={`Frame ${i + 1}`} className="w-full h-20 object-cover" />
+                    <div className="text-[10.5px] text-center py-0.5 text-muted-foreground">Frame {i + 1}</div>
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 

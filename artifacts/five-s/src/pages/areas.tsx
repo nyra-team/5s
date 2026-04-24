@@ -352,7 +352,13 @@ function AreaConfigCard({ area }: { area: Area }) {
           {profileLoading ? (
             <div className="h-32 bg-secondary rounded-xl animate-pulse"></div>
           ) : isEditingProfile ? (
-            <div className="rounded-xl bg-secondary/40 p-4 space-y-3">
+            // Cap the edit grid's height on narrow screens so the Save button
+            // (rendered just below this block) is always reachable without
+            // scrolling the whole page past five textareas.
+            <div
+              className="rounded-xl bg-secondary/40 p-4 space-y-3 max-h-[55vh] overflow-y-auto sm:max-h-none sm:overflow-visible"
+              data-testid={`profile-edit-scroll-${area.id}`}
+            >
               <div>
                 <label className="eyebrow mb-1 block">Summary</label>
                 <Textarea
