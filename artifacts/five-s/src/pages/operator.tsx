@@ -17,6 +17,7 @@ import {
   NextCheck,
   Nudge,
   AreaProfile,
+  Submission,
   getGetCurrentShiftQueryKey,
   getGetOperatorStatusQueryKey,
   getGetNextChecksQueryKey,
@@ -1016,11 +1017,22 @@ export function AreaCard({
     clearLocalCaptureState();
   };
 
-  const onSuccess = (msg: string) => {
-    toast({
-      title: msg,
-      description: isVideo(media) ? "Walk-through scored across keyframes." : "Photo scored.",
-    });
+  const onSuccess = (msg: string, result?: Submission) => {
+    const topSuggestion = result?.suggestionsJson?.[0];
+    if (result && topSuggestion) {
+      const percent = Math.round(result.scoreTotal * 4);
+      const tone = scoreTone(percent);
+      toast({
+        title: `${msg} — ${percent}%`,
+        description: topSuggestion,
+        className: `${tone.bg} ${tone.text} border-transparent`,
+      });
+    } else {
+      toast({
+        title: msg,
+        description: isVideo(media) ? "Walk-through scored across keyframes." : "Photo scored.",
+      });
+    }
     queryClient.invalidateQueries({ queryKey: getGetOperatorStatusQueryKey() });
     queryClient.invalidateQueries({ queryKey: getGetNextChecksQueryKey() });
     queryClient.invalidateQueries({ queryKey: getGetOperatorRecentQueryKey({ limit: 12 }) });
@@ -1048,7 +1060,7 @@ export function AreaCard({
           data: { media: media as Blob, shift: selectedShift, machineTag: tag },
         },
         {
-          onSuccess: () => onSuccess("Walk-through re-uploaded"),
+          onSuccess: (data) => onSuccess("Walk-through re-uploaded", data),
           onError: () =>
             toast({
               variant: "destructive",
@@ -1068,7 +1080,7 @@ export function AreaCard({
           },
         },
         {
-          onSuccess: () => onSuccess("Submitted"),
+          onSuccess: (data) => onSuccess("Submitted", data),
           onError: () =>
             toast({
               variant: "destructive",
