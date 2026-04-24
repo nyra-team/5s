@@ -615,7 +615,7 @@ function RecentDetailDialog({
 
 /* ------------------------------ Area card -------------------------------- */
 
-function AreaCard({
+export function AreaCard({
   status,
   selectedShift,
   dueState,
