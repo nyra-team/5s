@@ -13,6 +13,7 @@ import { format, formatDistanceToNowStrict } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { useMinuteTick } from "@/hooks/use-minute-tick";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, BellOff, BellRing, CheckCircle2, Eye, Inbox } from "lucide-react";
 
@@ -471,19 +472,24 @@ function RepingBadge({
   count: number;
   lastRepingAt?: string | null;
 }) {
+  // Subscribe to the shared minute tick so the "x ago" portion stays fresh
+  // even when the manager leaves the inbox open between refetches.
+  useMinuteTick();
   if (!count || count <= 0) return null;
   const last = lastRepingAt ? new Date(lastRepingAt) : null;
-  const ago =
-    last && !Number.isNaN(last.getTime())
-      ? formatDistanceToNowStrict(last, { addSuffix: true })
-      : null;
+  const hasLast = last !== null && !Number.isNaN(last.getTime());
+  const ago = hasLast ? formatDistanceToNowStrict(last!, { addSuffix: true }) : null;
   const label = `Reminded ${count}x${ago ? ` · ${ago}` : ""}`;
+  // Surface the absolute timestamp on hover so a manager can see exactly when
+  // the last re-ping fired without waiting for the relative label to update.
+  const absolute = hasLast ? format(last!, "MMM d, yyyy h:mm a") : undefined;
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span
           className="inline-flex items-center gap-1 text-[11.5px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 dark:bg-violet-500/20 dark:text-violet-200 cursor-help"
           data-testid={`badge-reping-${count}`}
+          title={absolute ? `Last re-ping: ${absolute}` : undefined}
         >
           <BellRing className="w-3 h-3" />
           {label}

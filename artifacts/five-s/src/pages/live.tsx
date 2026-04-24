@@ -20,10 +20,25 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Link } from "wouter";
 import { useShiftConfig } from "@/lib/shift-config";
+import { useMinuteTick } from "@/hooks/use-minute-tick";
 
-function timeAgo(d: Date | string | null | undefined) {
+// Renders a relative "x ago" label that ticks every minute via the shared
+// minute-tick subscription, and exposes the absolute timestamp on hover via a
+// `title` attribute. Returning null for missing dates lets callers treat it as
+// optional inline content.
+function Ago({ d }: { d: Date | string | null | undefined }) {
+  useMinuteTick();
   if (!d) return null;
-  return formatDistanceToNowStrict(new Date(d), { addSuffix: true });
+  const date = new Date(d);
+  if (Number.isNaN(date.getTime())) return null;
+  return (
+    <time
+      dateTime={date.toISOString()}
+      title={format(date, "MMM d, yyyy h:mm a")}
+    >
+      {formatDistanceToNowStrict(date, { addSuffix: true })}
+    </time>
+  );
 }
 
 function NudgeButton({
@@ -93,7 +108,7 @@ function DismissedWithoutSubmitChip({
       data-testid="indicator-operator-dismissed"
     >
       <BellOff className="w-3 h-3" />
-      {label} {timeAgo(at)}
+      {label} <Ago d={at} />
     </span>
   );
 }
@@ -108,7 +123,12 @@ function PendingAreaCard({ item, shift }: { item: LiveShiftPendingArea; shift: C
         </div>
         <p className="text-[12px] text-muted-foreground mt-0.5">
           No submission yet this shift
-          {item.lastNudgeAt && ` · last nudged ${timeAgo(item.lastNudgeAt)}`}
+          {item.lastNudgeAt && (
+            <>
+              {" · last nudged "}
+              <Ago d={item.lastNudgeAt} />
+            </>
+          )}
         </p>
         {item.lastOperatorDismissedNudgeAt && (
           <DismissedWithoutSubmitChip
@@ -141,7 +161,12 @@ function OverdueCard({ item, shift }: { item: LiveShiftOverdueCheck; shift: Crea
         </div>
         <p className="text-[12px] text-amber-700 dark:text-amber-300 mt-0.5">
           {overdueText}
-          {item.lastNudgeAt && ` · last nudged ${timeAgo(item.lastNudgeAt)}`}
+          {item.lastNudgeAt && (
+            <>
+              {" · last nudged "}
+              <Ago d={item.lastNudgeAt} />
+            </>
+          )}
         </p>
         {item.lastOperatorDismissedNudgeAt && (
           <DismissedWithoutSubmitChip
@@ -245,7 +270,7 @@ function OpenEscalationRow({ item }: { item: Escalation }) {
           <RepingBadge count={item.repingCount} lastRepingAt={item.lastRepingAt} />
         </div>
         <p className="text-[12px] text-muted-foreground mt-0.5 break-words">
-          {item.operatorEmail} · {timeAgo(item.createdAt)}
+          {item.operatorEmail} · <Ago d={item.createdAt} />
           {item.failingPillars.length > 0 && ` · failing ${item.failingPillars.join(", ")}`}
         </p>
       </div>

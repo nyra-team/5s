@@ -93,6 +93,7 @@ import { useShiftConfig } from "@/lib/shift-config";
 import { useFacilitySettingsChangeListener } from "@/lib/facility-settings";
 import { useEffectiveOperatorThresholds } from "@/lib/operator-thresholds";
 import { EnvironmentChecklist, normalizeEnvironment } from "@/lib/environment";
+import { useMinuteTick } from "@/hooks/use-minute-tick";
 
 const RECENT_STRIP_PREF_KEY = "operator.recentStrip.collapsed";
 
@@ -2072,34 +2073,6 @@ export function AreaCard({
 }
 
 /* ----------------------------- Nudge banner ------------------------------ */
-
-// Forces the calling component to re-render once per minute so any
-// "x minutes ago" labels it owns stay fresh while the page is open.
-// All subscribers share a single module-level interval so a grid full
-// of pending area cards doesn't spin up one timer per card.
-const minuteTickListeners = new Set<() => void>();
-let minuteTickIntervalId: ReturnType<typeof setInterval> | null = null;
-
-function subscribeMinuteTick(listener: () => void) {
-  minuteTickListeners.add(listener);
-  if (minuteTickIntervalId == null) {
-    minuteTickIntervalId = setInterval(() => {
-      for (const fn of minuteTickListeners) fn();
-    }, 60_000);
-  }
-  return () => {
-    minuteTickListeners.delete(listener);
-    if (minuteTickListeners.size === 0 && minuteTickIntervalId != null) {
-      clearInterval(minuteTickIntervalId);
-      minuteTickIntervalId = null;
-    }
-  };
-}
-
-function useMinuteTick() {
-  const [, setTick] = useState(0);
-  useEffect(() => subscribeMinuteTick(() => setTick((t) => t + 1)), []);
-}
 
 // Renders the manager's prompts inline on a pending area card. Picks the most
 // recent active nudge as the primary message; if there are multiple (rare —
