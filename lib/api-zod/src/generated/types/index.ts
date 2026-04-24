@@ -30,6 +30,8 @@ export * from "./errorResponse";
 export * from "./escalation";
 export * from "./escalationCount";
 export * from "./escalationStatus";
+export * from "./getActiveNudgesByAreaParams";
+export * from "./getActiveNudgesByAreaShift";
 export * from "./getDashboardComplianceParams";
 export * from "./getDashboardComplianceShift";
 export * from "./getDashboardScoresGroupBy";

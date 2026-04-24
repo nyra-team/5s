@@ -8,17 +8,20 @@ import {
   useGetAreaProfile,
   useGetSubmission,
   useGetActiveNudges,
+  useGetActiveNudgesByArea,
   getGetSubmissionQueryKey,
   getGetAreaProfileQueryKey,
   AreaStatus,
   RecentSubmission,
   NextCheck,
+  Nudge,
   AreaProfile,
   getGetCurrentShiftQueryKey,
   getGetOperatorStatusQueryKey,
   getGetNextChecksQueryKey,
   getGetOperatorRecentQueryKey,
   getGetActiveNudgesQueryKey,
+  getGetActiveNudgesByAreaQueryKey,
 } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +45,7 @@ import {
   ChevronDown,
   ChevronUp,
   CalendarClock,
+  Bell,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -121,6 +125,19 @@ export default function OperatorHome() {
   const { data: activeNudges } = useGetActiveNudges({
     query: { refetchInterval: 60_000, queryKey: getGetActiveNudgesQueryKey() },
   });
+  // Persistent per-area badges. Same data shape, but the toast endpoint above
+  // dismisses on read; this one does not, so the badge stays until the area
+  // gets a submission this shift (or the operator switches shift). Filtered
+  // server-side to the active shift so we only see relevant prompts.
+  const { data: activeNudgesByArea } = useGetActiveNudgesByArea(
+    { shift: activeShift as "A" | "B" | "C" },
+    {
+      query: {
+        refetchInterval: 60_000,
+        queryKey: getGetActiveNudgesByAreaQueryKey({ shift: activeShift as "A" | "B" | "C" }),
+      },
+    },
+  );
   const { toast } = useToast();
   const seenNudgesRef = useRef<Set<number>>(new Set());
 
@@ -146,6 +163,19 @@ export default function OperatorHome() {
     }
     return m;
   }, [nextChecks]);
+
+  // Group active nudges by area so each AreaCard can render its prompts. Most
+  // areas have at most one open nudge; we still pass the full list so the card
+  // can show a count when a manager has piled on (e.g. "Mixer #2" + area-level).
+  const nudgesByAreaId = useMemo(() => {
+    const m = new Map<number, Nudge[]>();
+    for (const n of activeNudgesByArea ?? []) {
+      const arr = m.get(n.areaId);
+      if (arr) arr.push(n);
+      else m.set(n.areaId, [n]);
+    }
+    return m;
+  }, [activeNudgesByArea]);
 
   // Detect overdue transitions (still useful even without the standalone
   // section): surface a toast when a previously-OK area becomes overdue.
@@ -313,6 +343,7 @@ export default function OperatorHome() {
                       : undefined
                   }
                   lastGood={lastGoodByAreaId.get(status.areaId) ?? null}
+                  activeNudges={nudgesByAreaId.get(status.areaId) ?? []}
                 />
               </motion.div>
             ))}
@@ -589,6 +620,7 @@ function AreaCard({
   dueInfo,
   recentForSubmission,
   lastGood,
+  activeNudges,
 }: {
   status: AreaStatus;
   selectedShift: "A" | "B" | "C";
@@ -596,6 +628,7 @@ function AreaCard({
   dueInfo: NextCheck | undefined;
   recentForSubmission: RecentSubmission | undefined;
   lastGood: { scorePercent: number; createdAt: string } | null;
+  activeNudges: Nudge[];
 }) {
   const [isCaptureOpen, setIsCaptureOpen] = useState(false);
   const [isReuploadMode, setIsReuploadMode] = useState(false);
@@ -750,6 +783,12 @@ function AreaCard({
     queryClient.invalidateQueries({ queryKey: getGetOperatorStatusQueryKey() });
     queryClient.invalidateQueries({ queryKey: getGetNextChecksQueryKey() });
     queryClient.invalidateQueries({ queryKey: getGetOperatorRecentQueryKey({ limit: 12 }) });
+    // Submitting clears any active manager nudges for this area+shift on the
+    // server (see dismissNudgesForSubmission); refetch so the badge disappears
+    // immediately rather than after the 60s poll.
+    queryClient.invalidateQueries({
+      queryKey: getGetActiveNudgesByAreaQueryKey({ shift: selectedShift }),
+    });
     if (operatorId != null && !isReuploadMode) {
       void deleteCaptureDraft(operatorId, status.areaId);
     }
@@ -885,6 +924,18 @@ function AreaCard({
                 <Tag className="w-3 h-3" /> {sub.machineTag}
               </span>
             )}
+            {/* A machine-specific nudge can survive the area's first submission
+                if the operator captured a different machine. Surface it so they
+                know to re-capture for the requested machine. */}
+            {activeNudges.length > 0 && (
+              <span
+                className="ml-1 inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200"
+                data-testid={`pill-nudge-${status.areaId}`}
+              >
+                <Bell className="w-3 h-3" /> Manager nudge
+                {activeNudges.length > 1 && <span className="ml-0.5">×{activeNudges.length}</span>}
+              </span>
+            )}
             {encouragement && (
               <motion.span
                 initial={{ opacity: 0, y: -4 }}
@@ -977,9 +1028,12 @@ function AreaCard({
 
   const overdue = dueState === "overdue";
   const dueSoon = dueState === "due-soon";
-  const cardBorder = overdue
-    ? "ring-1 ring-rose-200 dark:ring-rose-500/30 bg-rose-50/40 dark:bg-rose-500/5"
-    : "";
+  const hasNudge = activeNudges.length > 0;
+  const cardBorder = hasNudge
+    ? "ring-1 ring-indigo-200 dark:ring-indigo-500/30 bg-indigo-50/40 dark:bg-indigo-500/5"
+    : overdue
+      ? "ring-1 ring-rose-200 dark:ring-rose-500/30 bg-rose-50/40 dark:bg-rose-500/5"
+      : "";
 
   return (
     <>
@@ -994,6 +1048,17 @@ function AreaCard({
               <p className="inline-flex items-center gap-1.5 text-[13px] font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/15 px-2.5 py-1 rounded-full">
                 <AlertTriangle className="w-3.5 h-3.5" /> Pending
               </p>
+              {hasNudge && (
+                <p
+                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-indigo-700 dark:text-indigo-200 bg-indigo-100 dark:bg-indigo-500/20 px-2.5 py-1 rounded-full"
+                  data-testid={`pill-nudge-${status.areaId}`}
+                >
+                  <Bell className="w-3.5 h-3.5" /> Manager nudge
+                  {activeNudges.length > 1 && (
+                    <span className="ml-1 text-[11px] opacity-80">×{activeNudges.length}</span>
+                  )}
+                </p>
+              )}
               {overdue && (
                 <p
                   className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-rose-700 dark:text-rose-200 bg-rose-100 dark:bg-rose-500/20 px-2.5 py-1 rounded-full"
@@ -1022,6 +1087,10 @@ function AreaCard({
             )}
           </div>
         </div>
+
+        {hasNudge && (
+          <NudgeBanner nudges={activeNudges} areaId={status.areaId} />
+        )}
 
         <div className="mt-auto pt-8">
           <Button
@@ -1076,6 +1145,46 @@ function AreaCard({
         onChange={handleFileSelect("create")}
       />
     </>
+  );
+}
+
+/* ----------------------------- Nudge banner ------------------------------ */
+
+// Renders the manager's prompts inline on a pending area card. Picks the most
+// recent active nudge as the primary message; if there are multiple (rare —
+// area-level + machine-specific), shows a compact "+N more" hint instead of
+// stacking full banners.
+function NudgeBanner({ nudges, areaId }: { nudges: Nudge[]; areaId: number }) {
+  if (nudges.length === 0) return null;
+  // nudges are returned newest-first by fetchByIds; pick index 0 as primary.
+  const primary = nudges[0];
+  const extra = nudges.length - 1;
+  return (
+    <div
+      className="mt-3 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-100 dark:border-indigo-500/20 p-3 space-y-1"
+      data-testid={`nudge-banner-${areaId}`}
+    >
+      <div className="flex items-center gap-1.5 text-[12px] font-semibold text-indigo-700 dark:text-indigo-200">
+        <Bell className="w-3.5 h-3.5" />
+        <span>
+          {primary.machine
+            ? `Manager flagged ${primary.machine}`
+            : "Manager flagged this area"}
+        </span>
+        <span className="text-indigo-500/80 dark:text-indigo-300/80 font-medium">
+          · {formatDistanceToNowStrict(new Date(primary.createdAt), { addSuffix: true })}
+        </span>
+      </div>
+      {primary.message && (
+        <p className="text-[12.5px] text-indigo-900/85 dark:text-indigo-100/90 leading-snug">
+          “{primary.message}”
+        </p>
+      )}
+      <p className="text-[11px] text-indigo-700/70 dark:text-indigo-200/70">
+        From {primary.createdByEmail}
+        {extra > 0 && <> · +{extra} more open</>}
+      </p>
+    </div>
   );
 }
 

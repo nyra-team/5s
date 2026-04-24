@@ -652,6 +652,28 @@ paths:
               schema:
                 $ref: "#/components/schemas/Nudge"
 
+  /nudges/active-by-area:
+    get:
+      operationId: getActiveNudgesByArea
+      tags: [nudges]
+      summary: Operator pulls undismissed nudges (without dismissing them) so they can render as persistent badges on area cards
+      parameters:
+        - in: query
+          name: shift
+          required: false
+          schema:
+            type: string
+            enum: [A, B, C]
+      responses:
+        "200":
+          description: Active (undismissed) nudges, optionally filtered by shift
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Nudge"
+
   /shift/live:
     get:
       operationId: getLiveShift

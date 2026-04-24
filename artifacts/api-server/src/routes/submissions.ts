@@ -17,6 +17,7 @@ import { scoreSubmission, type ScoringOutput } from "../lib/ai-scoring.js";
 import { isVideoFile } from "../lib/keyframes.js";
 import { ingestProfileExtract, getOrCreateProfile, TRAINING_THRESHOLD } from "../lib/learning";
 import { recordCheck } from "../lib/schedule";
+import { dismissNudgesForSubmission } from "./nudges";
 import { logger } from "../lib/logger.js";
 import { notifyEscalationCreated } from "../lib/notifications.js";
 
@@ -289,6 +290,14 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
   // Update schedule cadence and last-check time (area baseline + per-machine if tagged)
   try { await recordCheck(areaId, machineTag ?? null, submission.createdAt); } catch (err) { logger.error({ err }, "recordCheck failed"); }
 
+  // Implicitly clear any active manager nudges this submission satisfies so the
+  // operator's badge disappears and Live shift no longer flags the area.
+  try {
+    await dismissNudgesForSubmission({ areaId, shift, machineTag: machineTag ?? null });
+  } catch (err) {
+    logger.error({ err }, "dismissNudgesForSubmission failed");
+  }
+
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
 
   // Auto-escalate on failure
@@ -377,6 +386,17 @@ router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req
 
   try { await ingestProfileExtract(existing.areaId, scoring.profile); } catch (err) { logger.error({ err }, "ingest profile failed"); }
   try { await recordCheck(existing.areaId, machineTag ?? null, new Date()); } catch (err) { logger.error({ err }, "recordCheck failed"); }
+
+  // Re-uploads also satisfy the manager's nudge for the same area+machine+shift.
+  try {
+    await dismissNudgesForSubmission({
+      areaId: existing.areaId,
+      shift,
+      machineTag: machineTag ?? null,
+    });
+  } catch (err) {
+    logger.error({ err }, "dismissNudgesForSubmission failed on reupload");
+  }
 
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
 

@@ -587,3 +587,16 @@ export const ListEscalationsStatus = {
   RESOLVED: "RESOLVED",
   ALL: "ALL",
 } as const;
+
+export type GetActiveNudgesByAreaParams = {
+  shift?: GetActiveNudgesByAreaShift;
+};
+
+export type GetActiveNudgesByAreaShift =
+  (typeof GetActiveNudgesByAreaShift)[keyof typeof GetActiveNudgesByAreaShift];
+
+export const GetActiveNudgesByAreaShift = {
+  A: "A",
+  B: "B",
+  C: "C",
+} as const;

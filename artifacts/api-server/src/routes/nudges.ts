@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, eq, isNull, inArray, sql } from "drizzle-orm";
+import { and, eq, isNull, inArray, or, sql } from "drizzle-orm";
 import { db, nudgesTable, areasTable, usersTable } from "@workspace/db";
 import { authMiddleware, requireRole } from "../lib/auth";
 
@@ -77,6 +77,42 @@ router.get("/nudges", authMiddleware, requireRole("OPERATOR"), async (req, res):
   res.json(shaped);
 });
 
+// Persistent variant: returns active (undismissed) nudges WITHOUT marking them
+// seen/dismissed, so the operator UI can render a sticky badge per area card
+// until the corresponding submission clears the nudge. Optionally filtered by
+// shift so /operator's per-shift grid only sees relevant prompts.
+router.get(
+  "/nudges/active-by-area",
+  authMiddleware,
+  requireRole("OPERATOR"),
+  async (req, res): Promise<void> => {
+    const queryShift = typeof req.query.shift === "string" ? req.query.shift : undefined;
+    const validShifts = ["A", "B", "C"];
+    if (queryShift !== undefined && !validShifts.includes(queryShift)) {
+      res.status(400).json({ error: "shift must be A, B, or C" });
+      return;
+    }
+    const shift = queryShift ?? null;
+
+    const conditions = [isNull(nudgesTable.dismissedAt)];
+    if (shift) conditions.push(eq(nudgesTable.shift, shift));
+
+    const rows = await db
+      .select({ id: nudgesTable.id })
+      .from(nudgesTable)
+      .where(and(...conditions));
+
+    const ids = rows.map((r) => r.id);
+    if (ids.length === 0) {
+      res.json([]);
+      return;
+    }
+
+    const shaped = await fetchByIds(ids);
+    res.json(shaped);
+  },
+);
+
 router.post("/nudges", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
   const { userId } = (req as any).user as { userId: number };
   const areaId = Number(req.body?.areaId);
@@ -131,6 +167,35 @@ router.post("/nudges", authMiddleware, requireRole("MANAGER"), async (req, res):
   const [shaped] = await fetchByIds([created.id]);
   res.status(201).json(shaped);
 });
+
+// Implicitly dismiss any active nudges that this submission satisfies. Called
+// from submissions.ts after both create and reupload so the operator's badge
+// disappears and the manager's Live shift view reflects the cleared state on
+// next refresh. Matching rules:
+//   - area-level nudge (machine IS NULL)  → cleared by ANY submission to area+shift
+//   - machine-specific nudge              → cleared only when submission's
+//                                            machineTag matches that machine
+export async function dismissNudgesForSubmission(args: {
+  areaId: number;
+  shift: string;
+  machineTag: string | null;
+}): Promise<void> {
+  const machinePredicate = args.machineTag
+    ? or(isNull(nudgesTable.machine), eq(nudgesTable.machine, args.machineTag))
+    : isNull(nudgesTable.machine);
+
+  await db
+    .update(nudgesTable)
+    .set({ dismissedAt: new Date() })
+    .where(
+      and(
+        eq(nudgesTable.areaId, args.areaId),
+        eq(nudgesTable.shift, args.shift),
+        isNull(nudgesTable.dismissedAt),
+        machinePredicate,
+      ),
+    );
+}
 
 // Helper used by /shift/live to look up the most recent open nudge per area/machine.
 export async function getLatestActiveNudgesByAreaMachine(): Promise<

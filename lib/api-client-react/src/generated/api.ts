@@ -30,6 +30,7 @@ import type {
   DashboardSummary,
   Escalation,
   EscalationCount,
+  GetActiveNudgesByAreaParams,
   GetDashboardComplianceParams,
   GetDashboardScoresParams,
   GetDashboardTrendsParams,
@@ -2633,6 +2634,106 @@ export const useCreateNudge = <
 > => {
   return useMutation(getCreateNudgeMutationOptions(options));
 };
+
+/**
+ * @summary Operator pulls undismissed nudges (without dismissing them) so they can render as persistent badges on area cards
+ */
+export const getGetActiveNudgesByAreaUrl = (
+  params?: GetActiveNudgesByAreaParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/nudges/active-by-area?${stringifiedParams}`
+    : `/api/nudges/active-by-area`;
+};
+
+export const getActiveNudgesByArea = async (
+  params?: GetActiveNudgesByAreaParams,
+  options?: RequestInit,
+): Promise<Nudge[]> => {
+  return customFetch<Nudge[]>(getGetActiveNudgesByAreaUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetActiveNudgesByAreaQueryKey = (
+  params?: GetActiveNudgesByAreaParams,
+) => {
+  return [`/api/nudges/active-by-area`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetActiveNudgesByAreaQueryOptions = <
+  TData = Awaited<ReturnType<typeof getActiveNudgesByArea>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetActiveNudgesByAreaParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getActiveNudgesByArea>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetActiveNudgesByAreaQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getActiveNudgesByArea>>
+  > = ({ signal }) =>
+    getActiveNudgesByArea(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getActiveNudgesByArea>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetActiveNudgesByAreaQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getActiveNudgesByArea>>
+>;
+export type GetActiveNudgesByAreaQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Operator pulls undismissed nudges (without dismissing them) so they can render as persistent badges on area cards
+ */
+
+export function useGetActiveNudgesByArea<
+  TData = Awaited<ReturnType<typeof getActiveNudgesByArea>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetActiveNudgesByAreaParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getActiveNudgesByArea>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetActiveNudgesByAreaQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Single-pane snapshot of the in-progress IST shift for managers

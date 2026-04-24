@@ -778,6 +778,28 @@ export const CreateNudgeBody = zod.object({
 });
 
 /**
+ * @summary Operator pulls undismissed nudges (without dismissing them) so they can render as persistent badges on area cards
+ */
+export const GetActiveNudgesByAreaQueryParams = zod.object({
+  shift: zod.enum(["A", "B", "C"]).optional(),
+});
+
+export const GetActiveNudgesByAreaResponseItem = zod.object({
+  id: zod.number(),
+  areaId: zod.number(),
+  areaName: zod.string(),
+  machine: zod.string().nullish(),
+  shift: zod.enum(["A", "B", "C"]),
+  message: zod.string().nullish(),
+  createdByEmail: zod.string(),
+  createdAt: zod.coerce.date(),
+  dismissedAt: zod.coerce.date().nullish(),
+});
+export const GetActiveNudgesByAreaResponse = zod.array(
+  GetActiveNudgesByAreaResponseItem,
+);
+
+/**
  * @summary Single-pane snapshot of the in-progress IST shift for managers
  */
 export const GetLiveShiftResponse = zod.object({
