@@ -3,7 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import sharp from "sharp";
-import { __test__, compressForVLM, resolveCandidateCap } from "../keyframes.js";
+import { __test__, compressForVLM, resolveCandidateCap, pickUniqueByHash } from "../keyframes.js";
 
 const { computeDHash, hammingDistance } = __test__;
 
@@ -101,6 +101,68 @@ describe("resolveCandidateCap", () => {
   it("floors fractional values", () => {
     delete process.env.KEYFRAMES_MAX_CANDIDATES;
     expect(resolveCandidateCap(6, 12.7)).toBe(12);
+  });
+});
+
+describe("pickUniqueByHash", () => {
+  // Build an 8-byte buffer where every byte is `b`. Two such buffers with
+  // different `b` values differ in every comparable bit slot — well above the
+  // dedup hammingThreshold of 5 — so distinct values are reliably "unique".
+  const h = (b: number) => Buffer.from([b, b, b, b, b, b, b, b]);
+
+  it("keeps every frame when nothing is a near-duplicate", () => {
+    const frames = [
+      { name: "a.jpg", hash: h(0x00) },
+      { name: "b.jpg", hash: h(0xff) },
+      { name: "c.jpg", hash: h(0x0f) },
+    ];
+    const r = pickUniqueByHash(frames, 5, 6);
+    expect(r.kept.map((k) => k.name)).toEqual(["a.jpg", "b.jpg", "c.jpg"]);
+    expect(r.droppedDuplicate).toBe(0);
+    expect(r.droppedOverCap).toBe(0);
+  });
+
+  it("counts duplicates dropped by the dedup pass separately from over-cap drops", () => {
+    // a, a-dup, b, b-dup, c, d, e — with maxKeep=3 only a, b, c get kept.
+    // a-dup and b-dup are dropped as duplicates; d and e are dropped as over-cap.
+    const frames = [
+      { name: "a.jpg", hash: h(0x00) },
+      { name: "a-dup.jpg", hash: h(0x00) }, // identical → dup
+      { name: "b.jpg", hash: h(0xff) },
+      { name: "b-dup.jpg", hash: h(0xff) }, // identical → dup
+      { name: "c.jpg", hash: h(0x0f) },
+      { name: "d.jpg", hash: h(0xf0) }, // unique but cap is full
+      { name: "e.jpg", hash: h(0x33) }, // unique but cap is full
+    ];
+    const r = pickUniqueByHash(frames, 5, 3);
+    expect(r.kept.map((k) => k.name)).toEqual(["a.jpg", "b.jpg", "c.jpg"]);
+    expect(r.droppedDuplicate).toBe(2);
+    expect(r.droppedOverCap).toBe(2);
+  });
+
+  it("treats empty hash buffers as unhashable and keeps them defensively", () => {
+    // First frame has a valid hash; the second's hash failed (empty buffer)
+    // and must still be kept rather than silently dropped as evidence.
+    const frames = [
+      { name: "a.jpg", hash: h(0x00) },
+      { name: "broken.jpg", hash: Buffer.alloc(0) },
+      { name: "a-dup.jpg", hash: h(0x00) }, // identical to a → dup
+    ];
+    const r = pickUniqueByHash(frames, 5, 6);
+    expect(r.kept.map((k) => k.name)).toEqual(["a.jpg", "broken.jpg"]);
+    expect(r.droppedDuplicate).toBe(1);
+    expect(r.droppedOverCap).toBe(0);
+  });
+
+  it("respects maxKeep=0 by dropping every candidate as over-cap", () => {
+    const frames = [
+      { name: "a.jpg", hash: h(0x00) },
+      { name: "b.jpg", hash: h(0xff) },
+    ];
+    const r = pickUniqueByHash(frames, 5, 0);
+    expect(r.kept).toEqual([]);
+    expect(r.droppedDuplicate).toBe(0);
+    expect(r.droppedOverCap).toBe(2);
   });
 });
 

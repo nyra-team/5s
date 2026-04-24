@@ -45,10 +45,51 @@ export function isVideoFile(file: { mimetype?: string; originalname?: string; fi
   return VIDEO_EXTS.has(ext);
 }
 
+/**
+ * Per-call metrics for a single video walk-through analysis. Returned from
+ * `extractKeyframes` and emitted as a structured info log so operators can see
+ * exactly where time went and how aggressive the dedup pass was.
+ *
+ * - `candidatesProduced` is the total number of raw frames ffmpeg yielded
+ *   (across the scene-detect pass and, if it found nothing, the fallback
+ *   interval pass).
+ * - `candidatesKept` is the number of frames that survived dedup and made it
+ *   into the VLM payload.
+ * - `droppedDuplicate` is the number of frames the perceptual-hash dedup pass
+ *   discarded as visually-identical to an already-kept frame.
+ * - `droppedOverCap` is the number of remaining candidates that were
+ *   discarded after `maxFrames` slots had already been filled. (They are
+ *   still hashed first, so this number reflects evidence we threw away to
+ *   respect the output cap, not work we skipped.)
+ */
+export interface KeyframeMetrics {
+  candidatesProduced: number;
+  candidatesKept: number;
+  droppedDuplicate: number;
+  droppedOverCap: number;
+  /** True iff the fallback fixed-interval pass had to run. */
+  usedFallback: boolean;
+  totalMs: number;
+  sceneDetectMs: number;
+  /** Only present when scene detection produced nothing. */
+  fallbackSampleMs?: number;
+  dedupMs: number;
+  compressMs: number;
+}
+
 export interface KeyframeResult {
   frameUrls: string[];
   frameAbsPaths: string[];
+  metrics: KeyframeMetrics;
 }
+
+/**
+ * Stable log event name for the structured per-call timing/counts payload.
+ * Emitted from `extractKeyframes` so log consumers (operators triaging slow
+ * audits, dashboards) can filter on a single field instead of grepping a
+ * human-readable message string.
+ */
+export const KEYFRAME_LOG_EVENT = "keyframe_extraction";
 
 export interface KeyframeOptions {
   /** Hard cap on number of frames returned. Default: 6. */
@@ -234,6 +275,54 @@ async function runFfmpeg(videoAbsPath: string, vfilter: string, maxCandidates: n
 }
 
 /**
+ * One frame produced by ffmpeg, paired with its perceptual hash. A zero-length
+ * hash buffer signals "hashing failed for this frame" so the dedup helper can
+ * keep the frame defensively without comparing it against anything.
+ */
+interface HashedFrame {
+  name: string;
+  hash: Buffer;
+}
+
+/**
+ * Pure dedup decision: walk `candidates` in order, keep the first `maxKeep`
+ * that aren't within `hammingThreshold` bits of an already-kept frame, and
+ * report counts of what was kept vs. dropped vs. never looked at.
+ *
+ * Extracted so the dropped-as-duplicate vs. dropped-as-over-cap accounting
+ * can be unit-tested without spinning up ffmpeg or touching the filesystem.
+ *
+ * NOTE: Frames whose hash buffer is empty (length 0) are treated as
+ * unhashable: they bypass the duplicate check (so they're kept rather than
+ * silently dropped as evidence), but they still respect `maxKeep` and will
+ * be counted as `droppedOverCap` if the cap is already full.
+ */
+export function pickUniqueByHash(
+  candidates: HashedFrame[],
+  hammingThreshold: number,
+  maxKeep: number,
+): { kept: HashedFrame[]; droppedDuplicate: number; droppedOverCap: number } {
+  const kept: HashedFrame[] = [];
+  let droppedDuplicate = 0;
+  let droppedOverCap = 0;
+  for (const c of candidates) {
+    if (kept.length >= maxKeep) {
+      droppedOverCap++;
+      continue;
+    }
+    const isDup =
+      c.hash.length > 0 &&
+      kept.some((k) => k.hash.length > 0 && hammingDistance(k.hash, c.hash) <= hammingThreshold);
+    if (isDup) {
+      droppedDuplicate++;
+      continue;
+    }
+    kept.push(c);
+  }
+  return { kept, droppedDuplicate, droppedOverCap };
+}
+
+/**
  * Extract up to `maxFrames` keyframes from a video. Uses ffmpeg's scene-change
  * detection so the model sees visually distinct moments rather than a stream
  * of near-identical 2-second snapshots. A perceptual-hash dedup pass drops any
@@ -243,6 +332,12 @@ async function runFfmpeg(videoAbsPath: string, vfilter: string, maxCandidates: n
  *
  * If scene detection returns nothing (very static video), we fall back to a
  * fixed-interval sample so the operator still gets analysis.
+ *
+ * Per-step timings and per-call counts (candidates produced, kept, dropped as
+ * duplicate, dropped as over-cap) are recorded on the returned `metrics` and
+ * also emitted as a single structured info log under the `KEYFRAME_LOG_EVENT`
+ * event name so an operator/manager can audit how long a walk-through took
+ * and how aggressive the dedup pass was.
  */
 export async function extractKeyframes(
   videoAbsPath: string,
@@ -257,12 +352,13 @@ export async function extractKeyframes(
 
   // Per-step timings let operators (and on-call) see exactly where a slow
   // walk-through went: scene detection vs. fallback sample vs. dedup vs.
-  // VLM-prep compression. Exposed as a single structured log line at the end.
+  // VLM-prep compression. Exposed via the returned metrics AND a single
+  // structured log line at the end.
   const t0 = Date.now();
-  const timings: Record<string, number> = {};
-  const tick = (label: string, since: number) => {
-    timings[label] = Date.now() - since;
-  };
+  let sceneDetectMs = 0;
+  let fallbackSampleMs: number | undefined;
+  let dedupMs = 0;
+  let compressMs = 0;
 
   // 1. Scene-change selection. Pre-scale to keep ffmpeg cheap.
   const sceneFilter = `select='gt(scene\\,${sceneThreshold})',scale=720:-2`;
@@ -273,10 +369,12 @@ export async function extractKeyframes(
   } catch (err) {
     logger.warn({ err, videoAbsPath }, "scene-change ffmpeg pass failed");
   }
-  tick("sceneDetectMs", tScene);
+  sceneDetectMs = Date.now() - tScene;
 
   // 2. Fallback to fixed interval if scene detection found nothing.
+  let usedFallback = false;
   if (candidates.length === 0) {
+    usedFallback = true;
     const intervalFilter = `fps=1/${fallbackInterval},scale=720:-2`;
     const tFallback = Date.now();
     try {
@@ -284,46 +382,58 @@ export async function extractKeyframes(
     } catch (err) {
       logger.warn({ err, videoAbsPath }, "fallback interval ffmpeg pass failed");
     }
-    tick("fallbackSampleMs", tFallback);
+    fallbackSampleMs = Date.now() - tFallback;
   }
 
   if (candidates.length === 0) {
+    const metrics: KeyframeMetrics = {
+      candidatesProduced: 0,
+      candidatesKept: 0,
+      droppedDuplicate: 0,
+      droppedOverCap: 0,
+      usedFallback,
+      totalMs: Date.now() - t0,
+      sceneDetectMs,
+      ...(fallbackSampleMs !== undefined ? { fallbackSampleMs } : {}),
+      dedupMs: 0,
+      compressMs: 0,
+    };
     logger.warn(
-      { videoAbsPath, totalMs: Date.now() - t0, ...timings },
+      { event: KEYFRAME_LOG_EVENT, videoAbsPath, ...metrics },
       "Keyframe extraction produced no frames",
     );
-    return { frameUrls: [], frameAbsPaths: [] };
+    return { frameUrls: [], frameAbsPaths: [], metrics };
   }
 
-  // 3. Perceptual-hash dedup — drop any frame within hammingThreshold bits of
-  //    an already-kept frame. This catches duplicates that survive scene
-  //    detection (e.g. flicker / slow pans) before the expensive VLM call.
+  // 3. Perceptual-hash dedup — hash each candidate, then let pickUniqueByHash
+  //    decide what to keep vs. drop. The dropped-as-duplicate vs.
+  //    dropped-as-over-cap split is what we surface in the metrics.
   const tDedup = Date.now();
-  const kept: { name: string; hash: Buffer }[] = [];
+  const hashed: HashedFrame[] = [];
   for (const name of candidates) {
     const abs = path.join(UPLOAD_DIR, name);
-    let hash: Buffer;
-    try { hash = await computeDHash(abs); }
-    catch (err) {
-      // If hashing fails, keep the frame defensively rather than dropping it.
+    try {
+      hashed.push({ name, hash: await computeDHash(abs) });
+    } catch (err) {
+      // Mark unhashable so pickUniqueByHash keeps the frame defensively
+      // (see helper docstring).
       logger.warn({ err, name }, "dHash failed; keeping frame without dedup");
-      kept.push({ name, hash: Buffer.alloc(8) });
-      if (kept.length >= maxFrames) break;
-      continue;
+      hashed.push({ name, hash: Buffer.alloc(0) });
     }
-    const dup = kept.some((k) => k.hash.length > 0 && hammingDistance(k.hash, hash) <= hammingThreshold);
-    if (dup) {
-      try { fs.unlinkSync(abs); } catch { /* best-effort */ }
-      continue;
-    }
-    kept.push({ name, hash });
-    if (kept.length >= maxFrames) break;
   }
-  tick("dedupMs", tDedup);
+  const { kept, droppedDuplicate, droppedOverCap } = pickUniqueByHash(
+    hashed,
+    hammingThreshold,
+    maxFrames,
+  );
+  dedupMs = Date.now() - tDedup;
 
-  // Anything beyond the cap that we never inspected — clean up disk too.
+  // Drop the on-disk files for everything we discarded (duplicates and
+  // over-cap candidates alike) so the uploads dir doesn't accumulate
+  // inspector frames between submissions.
+  const keptNames = new Set(kept.map((k) => k.name));
   for (const name of candidates) {
-    if (kept.find((k) => k.name === name)) continue;
+    if (keptNames.has(name)) continue;
     const abs = path.join(UPLOAD_DIR, name);
     if (fs.existsSync(abs)) {
       try { fs.unlinkSync(abs); } catch { /* best-effort */ }
@@ -336,22 +446,30 @@ export async function extractKeyframes(
   await Promise.all(
     survivors.map((name) => compressForVLM(path.join(UPLOAD_DIR, name)))
   );
-  tick("compressMs", tCompress);
+  compressMs = Date.now() - tCompress;
+
+  const metrics: KeyframeMetrics = {
+    candidatesProduced: candidates.length,
+    candidatesKept: survivors.length,
+    droppedDuplicate,
+    droppedOverCap,
+    usedFallback,
+    totalMs: Date.now() - t0,
+    sceneDetectMs,
+    ...(fallbackSampleMs !== undefined ? { fallbackSampleMs } : {}),
+    dedupMs,
+    compressMs,
+  };
 
   logger.info(
-    {
-      videoAbsPath,
-      candidates: candidates.length,
-      survivors: survivors.length,
-      totalMs: Date.now() - t0,
-      ...timings,
-    },
+    { event: KEYFRAME_LOG_EVENT, videoAbsPath, ...metrics },
     "keyframe extraction completed",
   );
 
   return {
     frameUrls: survivors.map((f) => `/uploads/${f}`),
     frameAbsPaths: survivors.map((f) => path.join(UPLOAD_DIR, f)),
+    metrics,
   };
 }
 

@@ -2,7 +2,7 @@ import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "./logger.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { extractKeyframes, compressForVLM } from "./keyframes.js";
+import { extractKeyframes, compressForVLM, type KeyframeMetrics } from "./keyframes.js";
 import type { EnvironmentType } from "@workspace/db";
 
 type Severity = "high" | "medium" | "low";
@@ -82,6 +82,22 @@ export interface ScoringInput {
 
 export interface ScoringOutput extends AIScoringResult {
   keyframeUrls: string[];
+  /**
+   * Per-step timings + counts for the keyframe pipeline. Only populated for
+   * video submissions (image submissions skip keyframe extraction). Surfaced
+   * here so callers (e.g. the submissions route) can attach the metrics to
+   * the response or persist them alongside the audit record without having
+   * to plumb a second return value through.
+   */
+  keyframeMetrics?: KeyframeMetrics;
+  /**
+   * Wall-clock duration of the VLM call (including the optional one-shot
+   * retry on JSON-validation failure). Recorded for both image and video
+   * submissions so operators can compare ffmpeg/dedup time against the
+   * model's own latency. `null` when the call threw before producing a
+   * response (the fallback `emptyResult` path).
+   */
+  vlmMs: number | null;
 }
 
 const FACTORY_RUBRIC = `
@@ -538,21 +554,23 @@ export async function scoreSubmission(input: ScoringInput): Promise<ScoringOutpu
 
   let framePaths: string[];
   let frameUrls: string[];
+  let keyframeMetrics: KeyframeMetrics | undefined;
 
   if (input.mediaType === "video") {
     try {
       const kf = await extractKeyframes(fullMediaPath, { maxFrames: 6 });
       framePaths = kf.frameAbsPaths;
       frameUrls = kf.frameUrls;
+      keyframeMetrics = kf.metrics;
       if (framePaths.length === 0) {
         // Fall back to the raw video file as a single still won't work; bail to fallback.
         const fb = emptyResult("No keyframes could be extracted from the video.");
-        return { ...fb, keyframeUrls: [] };
+        return { ...fb, keyframeUrls: [], keyframeMetrics, vlmMs: null };
       }
     } catch (err) {
       logger.error({ err }, "Keyframe extraction failed");
       const fb = emptyResult("Keyframe extraction failed.");
-      return { ...fb, keyframeUrls: [] };
+      return { ...fb, keyframeUrls: [], vlmMs: null };
     }
   } else {
     // Image submissions: shrink + recompress before the VLM call so the
@@ -579,6 +597,7 @@ export async function scoreSubmission(input: ScoringInput): Promise<ScoringOutpu
     framePaths = [vlmPath];
     frameUrls = [];
 
+    const tVlm = Date.now();
     try {
       const result = await callVLM({
         framePaths,
@@ -587,11 +606,12 @@ export async function scoreSubmission(input: ScoringInput): Promise<ScoringOutpu
         learnedProfile: input.learnedProfile,
         environmentType: input.environmentType,
       });
-      return { ...result, keyframeUrls: frameUrls };
+      const vlmMs = Date.now() - tVlm;
+      return { ...result, keyframeUrls: frameUrls, vlmMs };
     } catch (err) {
       logger.error({ err }, "VLM scoring failed");
       const fb = emptyResult(err instanceof Error ? err.message : "VLM error");
-      return { ...fb, keyframeUrls: frameUrls };
+      return { ...fb, keyframeUrls: frameUrls, vlmMs: null };
     } finally {
       if (vlmDerivative && fs.existsSync(vlmDerivative)) {
         try { fs.unlinkSync(vlmDerivative); } catch { /* best-effort */ }
@@ -599,6 +619,7 @@ export async function scoreSubmission(input: ScoringInput): Promise<ScoringOutpu
     }
   }
 
+  const tVlm = Date.now();
   try {
     const result = await callVLM({
       framePaths,
@@ -607,10 +628,26 @@ export async function scoreSubmission(input: ScoringInput): Promise<ScoringOutpu
       learnedProfile: input.learnedProfile,
       environmentType: input.environmentType,
     });
-    return { ...result, keyframeUrls: frameUrls };
+    const vlmMs = Date.now() - tVlm;
+    // For video submissions, fold the VLM call time into the same structured
+    // event as the keyframe metrics so an operator/manager sees one combined
+    // line per audit covering ffmpeg → dedup → compress → VLM.
+    if (keyframeMetrics) {
+      logger.info(
+        {
+          event: "video_analysis",
+          videoAbsPath: fullMediaPath,
+          ...keyframeMetrics,
+          vlmMs,
+          totalAnalysisMs: keyframeMetrics.totalMs + vlmMs,
+        },
+        "video analysis completed",
+      );
+    }
+    return { ...result, keyframeUrls: frameUrls, keyframeMetrics, vlmMs };
   } catch (err) {
     logger.error({ err }, "VLM scoring failed");
     const fb = emptyResult(err instanceof Error ? err.message : "VLM error");
-    return { ...fb, keyframeUrls: frameUrls };
+    return { ...fb, keyframeUrls: frameUrls, keyframeMetrics, vlmMs: null };
   }
 }
