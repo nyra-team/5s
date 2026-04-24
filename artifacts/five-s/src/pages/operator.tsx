@@ -1148,15 +1148,32 @@ function AreaCard({
 
 /* ----------------------------- Nudge banner ------------------------------ */
 
+// Forces the calling component to re-render once per minute so any
+// "x minutes ago" labels it owns stay fresh while the page is open.
+// Each caller installs its own interval; that is fine at the current
+// (single-banner) scale but would warrant a shared ticker if we ever
+// render many of these on one page.
+function useMinuteTick() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+}
+
 // Renders the manager's prompts inline on a pending area card. Picks the most
 // recent active nudge as the primary message; if there are multiple (rare —
 // area-level + machine-specific), shows a compact "+N more" hint instead of
 // stacking full banners.
 function NudgeBanner({ nudges, areaId }: { nudges: Nudge[]; areaId: number }) {
+  useMinuteTick();
   if (nudges.length === 0) return null;
   // nudges are returned newest-first by fetchByIds; pick index 0 as primary.
   const primary = nudges[0];
   const extra = nudges.length - 1;
+  const createdAt = new Date(primary.createdAt);
+  const relative = formatDistanceToNowStrict(createdAt, { addSuffix: true });
+  const absolute = format(createdAt, "MMM d, yyyy h:mm a");
   return (
     <div
       className="mt-3 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-100 dark:border-indigo-500/20 p-3 space-y-1"
@@ -1169,9 +1186,15 @@ function NudgeBanner({ nudges, areaId }: { nudges: Nudge[]; areaId: number }) {
             ? `Manager flagged ${primary.machine}`
             : "Manager flagged this area"}
         </span>
-        <span className="text-indigo-500/80 dark:text-indigo-300/80 font-medium">
-          · {formatDistanceToNowStrict(new Date(primary.createdAt), { addSuffix: true })}
-        </span>
+        <time
+          dateTime={createdAt.toISOString()}
+          title={absolute}
+          aria-label={`Sent ${relative} (${absolute})`}
+          className="text-indigo-500/80 dark:text-indigo-300/80 font-medium"
+          data-testid={`nudge-banner-time-${areaId}`}
+        >
+          · {relative}
+        </time>
       </div>
       {primary.message && (
         <p className="text-[12.5px] text-indigo-900/85 dark:text-indigo-100/90 leading-snug">
