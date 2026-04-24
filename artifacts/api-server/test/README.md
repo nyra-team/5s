@@ -8,7 +8,12 @@ pool the api-server uses.
 `pnpm test` invokes `tsx ./test/setup.ts`. That wrapper:
 
 1. Connects to `DATABASE_URL` (or `TEST_DATABASE_URL`, if set) as an admin
-   connection.
+   connection and **sweeps any leftover per-run `<basename>_test_<hex>`
+   databases older than 1 hour** (orphans from a prior run that was killed
+   before its cleanup `finally` could run — SIGKILL, OOM, container
+   teardown). The sweep logs what it dropped (or that there was nothing
+   to drop). The cached template DB (see below) has a fixed name and is
+   never touched by the sweep.
 2. Makes sure a cached **template database** named
    `<basename>_test_template` exists with the current schema applied. We
    hash the drizzle schema source (everything under `lib/db/src/schema/`,
@@ -16,10 +21,13 @@ pool the api-server uses.
    against a stamp stored inside the template DB itself. The expensive
    `pnpm --filter @workspace/db push-force` only runs when the stamp is
    missing or stale; on a warm cache this step is a single `SELECT`.
-3. Issues `CREATE DATABASE <basename>_test_<random> TEMPLATE
+3. Issues `CREATE DATABASE <basename>_test_<hex> TEMPLATE
    <basename>_test_template` to mint a fresh, private database for this
    run by cloning the template. Postgres clones a small schema in well
-   under a second.
+   under a second. The hex suffix on the per-run name is
+   `<8 hex unix-seconds><8 hex random>` so the sweeper can recover the
+   creation time from the name without needing `pg_stat_file` or any
+   elevated privileges.
 4. Spawns the actual `tsx --test` runner (`./test/run.ts`) as a child
    process with `DATABASE_URL` pointing at the new database. That way
    `@workspace/db`'s connection pool — constructed at module init from
@@ -47,9 +55,13 @@ This means:
   per-run database, both cloned from the shared template.
 - Running the suite while the dev server is up no longer pollutes the dev
   database.
-- A crash leaves at most one orphan `<basename>_test_<hex>` database —
-  easy to spot and `DROP DATABASE` manually if needed. The template DB
-  is safe to drop manually too; the next run will rebuild it.
+- A hard crash (SIGKILL, OOM, container teardown) may leave one orphan
+  `<basename>_test_<hex>` per-run database behind because the cleanup
+  `finally` doesn't run. The next `pnpm test` invocation sweeps any such
+  orphan older than 1 hour, so they don't accumulate over time.
+  Concurrent in-flight runs are unaffected because the threshold is well
+  above any realistic suite duration. The template DB is safe to drop
+  manually too; the next run will rebuild it.
 
 ## Environment
 

@@ -2,18 +2,22 @@
  * Wrapper entry point for the integration suite. We do NOT load tests in this
  * process; instead we:
  *
- *   1. Make sure a cached "template" Postgres database exists with the current
+ *   1. Sweep any leftover `<basename>_test_<hex>` per-run databases older
+ *      than the safe threshold (orphans from previous runs that were
+ *      SIGKILL'd / OOM killed / had their container torn down before the
+ *      cleanup `finally` could run).
+ *   2. Make sure a cached "template" Postgres database exists with the current
  *      `@workspace/db` schema applied. We hash the drizzle schema source and
  *      only re-run `drizzle-kit push` when the hash has drifted from what's
  *      stamped in the template DB. On a warm cache this step is a single
  *      cheap `SELECT` against an existing database.
- *   2. Mint a brand-new Postgres database for THIS test run by cloning the
+ *   3. Mint a brand-new Postgres database for THIS test run by cloning the
  *      template via `CREATE DATABASE ... TEMPLATE`. Cloning is essentially
  *      an `O(template-size)` file copy inside Postgres and on a tiny test
  *      schema completes in well under a second.
- *   3. Spawn the actual `tsx --test` process with `DATABASE_URL` pointing at
+ *   4. Spawn the actual `tsx --test` process with `DATABASE_URL` pointing at
  *      that fresh database.
- *   4. Wait for it to finish, then drop the per-run database (NOT the
+ *   5. Wait for it to finish, then drop the per-run database (NOT the
  *      template) and forward the exit code.
  *
  * Why a wrapper process rather than top-level-await in the test entry?
@@ -42,6 +46,18 @@
  *
  * A per-run dedicated database eliminates all of those.
  *
+ * Why encode a timestamp in the per-run db name?
+ *
+ * The cleanup `finally` block drops the per-run database, but a hard kill
+ * (SIGKILL, OOM, container teardown) skips it. Postgres has no portable
+ * "creation time" column on `pg_database` we can query without elevated
+ * privileges, so we encode the creation time into the database name itself
+ * as a fixed-width hex prefix. The sweep at startup parses that prefix and
+ * drops anything older than `SWEEP_THRESHOLD_MS`. The threshold is well
+ * above a normal run's wall time, so concurrent in-flight runs are never
+ * touched. The cached template DB has a fixed name (`_test_template`) so it
+ * doesn't match the per-run regex and is never swept.
+ *
  * Override knob: if `TEST_DATABASE_URL` is set, we use it as the admin
  * connection (used to issue `CREATE DATABASE`/`DROP DATABASE`) so CI can
  * keep the blast radius off the production cluster. Otherwise we fall back
@@ -61,11 +77,27 @@ if (!adminUrl) {
   );
 }
 
+const SWEEP_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
+
 const parsed = new URL(adminUrl);
 const baseDbName =
   decodeURIComponent(parsed.pathname.replace(/^\//, "")) || "postgres";
-const suffix = randomBytes(4).toString("hex");
-const testDbName = `${baseDbName}_test_${suffix}`;
+
+// Suffix layout for per-run clones: 8 hex chars of unix-seconds (good through
+// year 2106) followed by 8 hex chars of randomness. Together they keep the
+// conventional `<basename>_test_<hex>` shape while letting the sweeper
+// recover the creation time without needing pg_stat_file or any extra
+// privileges.
+const TIME_HEX_LEN = 8;
+const RAND_HEX_LEN = 8;
+const SUFFIX_RE = new RegExp(
+  `^${escapeRegex(baseDbName)}_test_([0-9a-f]{${TIME_HEX_LEN}})[0-9a-f]{${RAND_HEX_LEN}}$`,
+);
+
+const nowSec = Math.floor(Date.now() / 1000);
+const timeHex = nowSec.toString(16).padStart(TIME_HEX_LEN, "0");
+const randHex = randomBytes(RAND_HEX_LEN / 2).toString("hex");
+const testDbName = `${baseDbName}_test_${timeHex}${randHex}`;
 const templateDbName = `${baseDbName}_test_template`;
 
 // Stable advisory-lock id derived from the template name. Postgres advisory
@@ -77,6 +109,10 @@ const TEMPLATE_LOCK_ID = (() => {
     .digest();
   return digest.readInt32BE(0);
 })();
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
@@ -154,6 +190,80 @@ async function withAdmin<T>(
     return await fn(client);
   } finally {
     await client.end();
+  }
+}
+
+async function dropDatabase(client: pg.Client, name: string): Promise<void> {
+  // Force-disconnect anything still attached so the DROP doesn't block.
+  await client.query(
+    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+    [name],
+  );
+  await client.query(`DROP DATABASE IF EXISTS ${quoteIdent(name)}`);
+}
+
+async function sweepOrphanTestDatabases(): Promise<void> {
+  const cutoffSec = Math.floor((Date.now() - SWEEP_THRESHOLD_MS) / 1000);
+  const thresholdMin = Math.round(SWEEP_THRESHOLD_MS / 60000);
+  try {
+    await withAdmin(async (admin) => {
+      // `_` is a single-char wildcard in LIKE; that's fine — we re-validate
+      // each match against SUFFIX_RE below, and explicitly exclude the
+      // cached template DB.
+      const res = await admin.query<{ datname: string }>(
+        "SELECT datname FROM pg_database WHERE datname LIKE $1 AND datname <> $2",
+        [`${baseDbName}\\_test\\_%`, templateDbName],
+      );
+      const dropped: string[] = [];
+      const skippedRecent: string[] = [];
+      const skippedUnparseable: string[] = [];
+      for (const row of res.rows) {
+        const m = SUFFIX_RE.exec(row.datname);
+        if (!m) {
+          // Doesn't match the timestamp-prefixed format. We don't know how
+          // old it is, so leave it alone — a human can drop it manually.
+          skippedUnparseable.push(row.datname);
+          continue;
+        }
+        const createdSec = parseInt(m[1], 16);
+        if (Number.isNaN(createdSec) || createdSec >= cutoffSec) {
+          skippedRecent.push(row.datname);
+          continue;
+        }
+        try {
+          await dropDatabase(admin, row.datname);
+          dropped.push(row.datname);
+        } catch (err) {
+          console.error(
+            `[test-setup] sweep: failed to drop orphan ${row.datname}:`,
+            err,
+          );
+        }
+      }
+      if (dropped.length > 0) {
+        console.log(
+          `[test-setup] sweep: dropped ${dropped.length} orphan test database(s) older than ${thresholdMin}m: ${dropped.join(", ")}`,
+        );
+      } else {
+        console.log(
+          `[test-setup] sweep: no orphan test databases older than ${thresholdMin}m`,
+        );
+      }
+      if (skippedRecent.length > 0) {
+        console.log(
+          `[test-setup] sweep: left ${skippedRecent.length} recent test database(s) in place (likely in-flight runs)`,
+        );
+      }
+      if (skippedUnparseable.length > 0) {
+        console.log(
+          `[test-setup] sweep: left ${skippedUnparseable.length} test database(s) with unrecognized name format in place: ${skippedUnparseable.join(", ")}`,
+        );
+      }
+    });
+  } catch (err) {
+    // The sweep is a nicety, not a correctness requirement. Don't fail the
+    // run if it errors out (e.g. transient connection blip).
+    console.error("[test-setup] sweep: failed, continuing anyway:", err);
   }
 }
 
@@ -269,12 +379,7 @@ async function createTestDatabase(): Promise<void> {
 
 async function dropTestDatabase(): Promise<void> {
   await withAdmin(async (admin) => {
-    // Force-disconnect anything still attached so the DROP doesn't block.
-    await admin.query(
-      "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
-      [testDbName],
-    );
-    await admin.query(`DROP DATABASE IF EXISTS ${quoteIdent(testDbName)}`);
+    await dropDatabase(admin, testDbName);
   });
 }
 
@@ -301,6 +406,7 @@ function runTests(testUrl: string): Promise<number> {
   });
 }
 
+await sweepOrphanTestDatabases();
 const schemaHash = computeSchemaHash();
 await ensureTemplate(schemaHash);
 await createTestDatabase();
