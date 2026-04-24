@@ -1,5 +1,5 @@
-import { db, usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, usersTable, escalationsTable, areasTable } from "@workspace/db";
+import { and, eq, inArray, isNull, lt } from "drizzle-orm";
 import { logger } from "./logger.js";
 
 export interface EscalationNotification {
@@ -21,6 +21,7 @@ export interface QuietHoursPrefs {
 }
 
 const DEFAULT_GROUPING_WINDOW_MS = 5 * 60 * 1000;
+const DEFAULT_RECOVERY_WINDOW_MS = 60 * 60 * 1000;
 
 function groupingWindowMs(): number {
   const raw = process.env.ESCALATION_NOTIFICATION_WINDOW_MS?.trim();
@@ -32,6 +33,20 @@ function groupingWindowMs(): number {
       "notify: invalid ESCALATION_NOTIFICATION_WINDOW_MS, falling back to default",
     );
     return DEFAULT_GROUPING_WINDOW_MS;
+  }
+  return Math.floor(parsed);
+}
+
+function recoveryWindowMs(): number {
+  const raw = process.env.ESCALATION_NOTIFICATION_RECOVERY_WINDOW_MS?.trim();
+  if (!raw) return DEFAULT_RECOVERY_WINDOW_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    logger.warn(
+      { value: raw },
+      "notify: invalid ESCALATION_NOTIFICATION_RECOVERY_WINDOW_MS, falling back to default",
+    );
+    return DEFAULT_RECOVERY_WINDOW_MS;
   }
   return Math.floor(parsed);
 }
@@ -196,6 +211,24 @@ interface ManagerRow {
   quietHoursWeekdayMask: number;
 }
 
+async function markEscalationsNotified(escalationIds: number[]): Promise<void> {
+  if (escalationIds.length === 0) return;
+  try {
+    await db
+      .update(escalationsTable)
+      .set({ notifiedAt: new Date() })
+      .where(inArray(escalationsTable.id, escalationIds));
+  } catch (err) {
+    // Best-effort: even if we fail to stamp notified_at, the alert was already
+    // delivered. The startup sweep will then re-deliver, which is annoying
+    // but better than silent loss — log loudly so we notice.
+    logger.error(
+      { err, escalationIds },
+      "notify: failed to stamp notified_at after dispatch (may re-notify on next restart)",
+    );
+  }
+}
+
 async function dispatch(events: EscalationNotification[]): Promise<void> {
   if (events.length === 0) return;
 
@@ -215,9 +248,10 @@ async function dispatch(events: EscalationNotification[]): Promise<void> {
       .from(usersTable)
       .where(eq(usersTable.role, "MANAGER"));
   } catch (err) {
+    // Leave notified_at NULL so the next startup sweep retries these events.
     logger.error(
       { err, count: events.length, areaName: events[0]?.areaName },
-      "notify: failed to load managers",
+      "notify: failed to load managers (will retry on next restart)",
     );
     return;
   }
@@ -248,6 +282,140 @@ async function dispatch(events: EscalationNotification[]): Promise<void> {
     emailRecipients.length > 0 ? sendEmails(emailRecipients, events) : Promise.resolve(),
     anySlackSubscriberActive ? sendSlack(events) : Promise.resolve(),
   ]);
+
+  // Stamp notified_at after the best-effort dispatch attempt — including the
+  // case where no provider is configured (those are explicitly logged inside
+  // sendSlack/sendEmails). We only skip stamping when manager loading itself
+  // failed above, because that's a transient condition we want to retry.
+  await markEscalationsNotified(events.map((e) => e.escalationId));
+}
+
+/**
+ * On API startup, find any escalations that were created recently but never
+ * had a notification dispatched (their `notified_at` is still NULL). This
+ * happens when the server is restarted mid-grouping-window and the in-memory
+ * `pendingByArea` buffer is lost. We re-group by area and dispatch right away
+ * so a flaky deploy can't silently swallow manager alerts.
+ *
+ * Escalations older than the recovery window are explicitly logged as
+ * undeliverable and stamped notified_at = now() so we don't re-warn forever.
+ */
+export async function recoverPendingEscalationNotifications(): Promise<void> {
+  const lookbackMs = recoveryWindowMs();
+  const cutoff = new Date(Date.now() - lookbackMs);
+  // Only consider escalations created strictly before this process started
+  // accepting requests. Anything created after we booted is being handled by
+  // the live in-memory pipeline; including it here would race the buffered
+  // dispatch and double-send to managers.
+  const bootCutoff = new Date();
+
+  let unnotified: Array<{
+    escalationId: number;
+    submissionId: number;
+    areaId: number;
+    areaName: string;
+    scorePercent: number;
+    failingPillarsJson: unknown;
+    recommendedActionsJson: unknown;
+    operatorEmail: string | null;
+    createdAt: Date;
+  }>;
+  try {
+    unnotified = await db
+      .select({
+        escalationId: escalationsTable.id,
+        submissionId: escalationsTable.submissionId,
+        areaId: escalationsTable.areaId,
+        areaName: areasTable.name,
+        scorePercent: escalationsTable.scorePercent,
+        failingPillarsJson: escalationsTable.failingPillarsJson,
+        recommendedActionsJson: escalationsTable.recommendedActionsJson,
+        operatorEmail: usersTable.email,
+        createdAt: escalationsTable.createdAt,
+      })
+      .from(escalationsTable)
+      .innerJoin(areasTable, eq(escalationsTable.areaId, areasTable.id))
+      .innerJoin(usersTable, eq(escalationsTable.operatorId, usersTable.id))
+      .where(
+        and(
+          isNull(escalationsTable.notifiedAt),
+          lt(escalationsTable.createdAt, bootCutoff),
+        ),
+      );
+  } catch (err) {
+    logger.error({ err }, "notify: startup recovery sweep failed to query escalations");
+    return;
+  }
+
+  if (unnotified.length === 0) {
+    logger.info("notify: startup recovery sweep found no unnotified escalations");
+    return;
+  }
+
+  const tooOld = unnotified.filter((row) => row.createdAt < cutoff);
+  const recent = unnotified.filter((row) => row.createdAt >= cutoff);
+
+  if (tooOld.length > 0) {
+    // Explicitly log so a manager auditing "why didn't I get an alert?" can
+    // see the trail. We still stamp notified_at so we don't re-log forever.
+    for (const row of tooOld) {
+      logger.warn(
+        {
+          escalationId: row.escalationId,
+          areaId: row.areaId,
+          areaName: row.areaName,
+          createdAt: row.createdAt,
+          lookbackMs,
+        },
+        "notify: undeliverable — escalation older than recovery window, marking notified",
+      );
+    }
+    await markEscalationsNotified(tooOld.map((r) => r.escalationId));
+  }
+
+  if (recent.length === 0) return;
+
+  const byArea = new Map<number, EscalationNotification[]>();
+  for (const row of recent) {
+    const failing = Array.isArray(row.failingPillarsJson)
+      ? (row.failingPillarsJson as unknown[]).filter((v): v is string => typeof v === "string")
+      : [];
+    const actions = Array.isArray(row.recommendedActionsJson)
+      ? (row.recommendedActionsJson as unknown[]).filter((v): v is string => typeof v === "string")
+      : [];
+    const event: EscalationNotification = {
+      escalationId: row.escalationId,
+      submissionId: row.submissionId,
+      areaId: row.areaId,
+      areaName: row.areaName,
+      scorePercent: row.scorePercent,
+      failingPillars: failing,
+      operatorEmail: row.operatorEmail ?? "",
+      recommendedActions: actions,
+    };
+    const bucket = byArea.get(row.areaId);
+    if (bucket) {
+      bucket.push(event);
+    } else {
+      byArea.set(row.areaId, [event]);
+    }
+  }
+
+  logger.info(
+    { areaCount: byArea.size, eventCount: recent.length, skippedTooOld: tooOld.length },
+    "notify: startup recovery — re-dispatching unnotified escalations",
+  );
+
+  for (const events of byArea.values()) {
+    try {
+      await dispatch(events);
+    } catch (err) {
+      logger.error(
+        { err, areaId: events[0].areaId, count: events.length },
+        "notify: startup recovery dispatch failed (will retry on next restart)",
+      );
+    }
+  }
 }
 
 function formatPillars(pillars: string[]): string {

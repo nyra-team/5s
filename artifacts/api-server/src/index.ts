@@ -1,7 +1,10 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { checkFfmpegAvailable } from "./lib/keyframes";
-import { flushPendingEscalationNotifications } from "./lib/notifications";
+import {
+  flushPendingEscalationNotifications,
+  recoverPendingEscalationNotifications,
+} from "./lib/notifications";
 
 const rawPort = process.env["PORT"];
 
@@ -30,6 +33,14 @@ const server = app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  // Sweep escalations that were buffered in-memory by a previous process and
+  // never made it out the door (e.g. mid-grouping-window restart). Fire and
+  // forget so a slow DB doesn't block accepting requests; errors are logged
+  // inside the sweep itself.
+  recoverPendingEscalationNotifications().catch((err) =>
+    logger.error({ err }, "Startup escalation recovery failed unexpectedly"),
+  );
 });
 
 // Graceful shutdown: flush any in-memory escalation digests so we don't drop

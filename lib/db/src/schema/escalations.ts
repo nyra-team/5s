@@ -20,6 +20,11 @@ export const escalationsTable = pgTable("escalations", {
   ackedAt: timestamp("acked_at", { withTimezone: true }),
   resolvedByUserId: integer("resolved_by_user_id").references(() => usersTable.id),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  // Stamped after we've made our best-effort attempt to send the email/Slack
+  // notification (or explicitly logged it as undeliverable). Rows where this
+  // is NULL are scanned at startup so an API restart mid-grouping-window
+  // doesn't silently swallow manager alerts.
+  notifiedAt: timestamp("notified_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
