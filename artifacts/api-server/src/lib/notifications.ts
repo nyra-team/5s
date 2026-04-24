@@ -283,12 +283,41 @@ export async function notifyEscalationCreated(payload: EscalationNotification): 
  * escalation that has been sitting in OPEN past the threshold, so coalescing
  * them with other events would dilute the signal and make the "Aging X min"
  * banner meaningless.
+ *
+ * Implementation note: the actual delivery is routed through a swappable
+ * module-level handler so tests can stub out Slack/Resend without monkey-
+ * patching `globalThis.fetch`. The default handler dispatches normally; tests
+ * call `setRepingNotifierForTesting` to install a recorder and restore.
  */
+export type RepingNotifierFn = (
+  payload: EscalationNotification,
+  context: RepingContext,
+) => Promise<void>;
+
+const defaultRepingNotifier: RepingNotifierFn = async (payload, context) => {
+  await dispatch([payload], context);
+};
+
+let repingNotifierImpl: RepingNotifierFn = defaultRepingNotifier;
+
 export async function notifyEscalationReping(
   payload: EscalationNotification,
   context: RepingContext,
 ): Promise<void> {
-  await dispatch([payload], context);
+  await repingNotifierImpl(payload, context);
+}
+
+/**
+ * Test-only seam: replace the re-ping notifier with `fn`, or restore the
+ * default by passing `null`. Returns the previously-installed notifier so
+ * suites can chain stubs/restorations cleanly.
+ */
+export function setRepingNotifierForTesting(
+  fn: RepingNotifierFn | null,
+): RepingNotifierFn {
+  const prev = repingNotifierImpl;
+  repingNotifierImpl = fn ?? defaultRepingNotifier;
+  return prev;
 }
 
 async function flushArea(areaId: number): Promise<void> {
