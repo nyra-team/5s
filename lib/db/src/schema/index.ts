@@ -7,7 +7,7 @@ export * from "./escalations";
 export * from "./area-schedules";
 export * from "./nudges";
 export * from "./operator-settings";
-export * from "./operator-settings-audit";
+export * from "./operator-threshold-changes";
 export * from "./settings-audit";
 export * from "./area-operator-settings";
 export * from "./area-assignments";

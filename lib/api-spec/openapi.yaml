@@ -2033,6 +2033,14 @@ components:
         updatedByUserId:
           type: integer
           nullable: true
+        auditHistory:
+          type: array
+          description: |
+            Most recent per-field changes to THIS area's override row
+            (newest first), capped at 5. Each entry corresponds to a
+            single field changed by a single PUT/DELETE.
+          items:
+            $ref: "#/components/schemas/OperatorThresholdAuditEntry"
       required:
         - areaId
         - areaName
@@ -2043,6 +2051,7 @@ components:
         - envOverrides
         - globalOverrides
         - areaOverrides
+        - auditHistory
 
     UpdateOperatorThresholdsBody:
       type: object

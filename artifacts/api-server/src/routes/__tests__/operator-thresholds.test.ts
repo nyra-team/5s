@@ -6,7 +6,7 @@ import {
   pool,
   usersTable,
   operatorSettingsTable,
-  operatorSettingsAuditTable,
+  operatorThresholdChangesTable,
   areasTable,
   areaOperatorSettingsTable,
 } from "@workspace/db";
@@ -26,7 +26,7 @@ let managerToken: string;
 let operatorToken: string;
 
 async function clearOverrides() {
-  await db.delete(operatorSettingsAuditTable);
+  await db.delete(operatorThresholdChangesTable);
   await db.delete(areaOperatorSettingsTable);
   await db.delete(operatorSettingsTable);
 }
@@ -373,8 +373,8 @@ describe("operator-thresholds audit trail", () => {
           .send({ priorBestWindowDays: v });
       }
       const rows = await db
-        .select({ newValue: operatorSettingsAuditTable.newValue })
-        .from(operatorSettingsAuditTable);
+        .select({ newValue: operatorThresholdChangesTable.newValue })
+        .from(operatorThresholdChangesTable);
       expect(rows).toHaveLength(3);
       const sorted = rows.map((r) => r.newValue).sort((a, b) => (a! - b!));
       // Exactly the three highest-numbered (most recent) values survived.
@@ -409,10 +409,10 @@ describe("operator-thresholds audit trail", () => {
 
       const rows = await db
         .select({
-          field: operatorSettingsAuditTable.field,
-          newValue: operatorSettingsAuditTable.newValue,
+          field: operatorThresholdChangesTable.field,
+          newValue: operatorThresholdChangesTable.newValue,
         })
-        .from(operatorSettingsAuditTable);
+        .from(operatorThresholdChangesTable);
       const grouped = new Map<string, number[]>();
       for (const r of rows) {
         const list = grouped.get(r.field) ?? [];
@@ -667,5 +667,172 @@ describe("DELETE /operator-thresholds/areas/:id", () => {
       .delete(`/api/operator-thresholds/areas/${areaA.id}`)
       .set("Authorization", `Bearer ${operatorToken}`);
     expect(res.status).toBe(403);
+  });
+});
+
+describe("operator-thresholds per-area audit trail", () => {
+  it("returns an empty per-area history when nothing has changed yet", async () => {
+    const res = await request(app)
+      .get(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.auditHistory).toEqual([]);
+  });
+
+  it("emits one audit row per field that actually moved on a single area PUT", async () => {
+    const put = await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ encouragementMinPercent: 78, priorBestWindowDays: 9 });
+    expect(put.status).toBe(200);
+
+    expect(put.body.auditHistory).toHaveLength(2);
+    const fields = put.body.auditHistory.map(
+      (e: { field: string }) => e.field,
+    );
+    expect(fields.sort()).toEqual([
+      "encouragementMinPercent",
+      "priorBestWindowDays",
+    ]);
+    for (const entry of put.body.auditHistory) {
+      expect(entry.changedByUserId).toBe(managerId);
+      expect(entry.changedByUserEmail).toBe(`${RUN_TAG}-mgr@test.local`);
+      expect(entry.oldValue).toBeNull();
+      if (entry.field === "encouragementMinPercent") {
+        expect(entry.newValue).toBe(78);
+      } else {
+        expect(entry.newValue).toBe(9);
+      }
+    }
+  });
+
+  it("records old → new transitions and clears (set to null) for an area", async () => {
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 4 });
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 6 });
+
+    const cleared = await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: null });
+
+    // Newest first.
+    expect(cleared.body.auditHistory[0]).toMatchObject({
+      field: "priorBestWindowDays",
+      oldValue: 6,
+      newValue: null,
+    });
+    expect(cleared.body.auditHistory[1]).toMatchObject({
+      field: "priorBestWindowDays",
+      oldValue: 4,
+      newValue: 6,
+    });
+    expect(cleared.body.auditHistory[2]).toMatchObject({
+      field: "priorBestWindowDays",
+      oldValue: null,
+      newValue: 4,
+    });
+  });
+
+  it("records DELETE as one audit row per previously-set field", async () => {
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ encouragementMinPercent: 70, priorBestWindowDays: 4 });
+
+    const del = await request(app)
+      .delete(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(del.status).toBe(200);
+
+    // Two clearing rows (one per previously-set field) at the head, then
+    // the two original PUT rows behind them.
+    expect(del.body.auditHistory).toHaveLength(4);
+    const cleared = del.body.auditHistory.slice(0, 2);
+    for (const entry of cleared) {
+      expect(entry.newValue).toBeNull();
+      expect(entry.changedByUserId).toBe(managerId);
+    }
+    const fields = cleared.map((e: { field: string }) => e.field).sort();
+    expect(fields).toEqual([
+      "encouragementMinPercent",
+      "priorBestWindowDays",
+    ]);
+  });
+
+  it("does not record an audit row for DELETE when no fields were set", async () => {
+    const del = await request(app)
+      .delete(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(del.status).toBe(200);
+    expect(del.body.auditHistory).toEqual([]);
+  });
+
+  it("isolates per-area history between areas", async () => {
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 3 });
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaB.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 5 });
+
+    const a = await request(app)
+      .get(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    const b = await request(app)
+      .get(`/api/operator-thresholds/areas/${areaB.id}`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(a.body.auditHistory).toHaveLength(1);
+    expect(a.body.auditHistory[0].newValue).toBe(3);
+    expect(b.body.auditHistory).toHaveLength(1);
+    expect(b.body.auditHistory[0].newValue).toBe(5);
+  });
+
+  it("does not surface global changes in a per-area history view", async () => {
+    await request(app)
+      .put(`/api/operator-thresholds`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ encouragementMinPercent: 60 });
+
+    const area = await request(app)
+      .get(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(area.body.auditHistory).toEqual([]);
+  });
+
+  it("does not surface per-area changes in the global history view", async () => {
+    await request(app)
+      .put(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ priorBestWindowDays: 3 });
+
+    const global = await request(app)
+      .get(`/api/operator-thresholds`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(global.body.auditHistory).toEqual([]);
+  });
+
+  it("caps the per-area history at 5 entries (newest first)", async () => {
+    for (const v of [1, 2, 3, 4, 5, 6, 7]) {
+      await request(app)
+        .put(`/api/operator-thresholds/areas/${areaA.id}`)
+        .set("Authorization", `Bearer ${managerToken}`)
+        .send({ priorBestWindowDays: v });
+    }
+    const get = await request(app)
+      .get(`/api/operator-thresholds/areas/${areaA.id}`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(get.body.auditHistory).toHaveLength(5);
+    const newValues = get.body.auditHistory.map(
+      (e: { newValue: number }) => e.newValue,
+    );
+    expect(newValues).toEqual([7, 6, 5, 4, 3]);
   });
 });

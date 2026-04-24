@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AreaOperatorThresholdsTypeDefaults } from "./areaOperatorThresholdsTypeDefaults";
+import type { OperatorThresholdAuditEntryType } from "./operatorThresholdAuditEntryType";
 import type { OperatorThresholdSourcesType } from "./operatorThresholdSourcesType";
 
 /**
@@ -41,4 +42,9 @@ export interface AreaOperatorThresholdsType {
   /** When this area's per-area override row was last touched. */
   updatedAt?: Date | null;
   updatedByUserId?: number | null;
+  /** Most recent per-field changes to THIS area's override row
+(newest first), capped at 5. Each entry corresponds to a
+single field changed by a single PUT/DELETE.
+ */
+  auditHistory: OperatorThresholdAuditEntryType[];
 }

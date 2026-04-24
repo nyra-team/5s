@@ -503,6 +503,12 @@ function AreaEditor({
       </div>
 
       <AreaFootNote data={data} globalData={globalData} />
+      <AuditHistory
+        entries={data.auditHistory}
+        title={`Recent changes in ${data.areaName}`}
+        emptyHint="No per-area threshold changes have been recorded for this area yet."
+        testId="area-thresholds-audit-history"
+      />
     </>
   );
 }
@@ -654,7 +660,11 @@ function FootNote({ data }: { data: OperatorThresholds }) {
   return (
     <div className="space-y-3" data-testid="thresholds-footnote">
       <LastChangeLine data={data} />
-      <AuditHistory entries={data.auditHistory} />
+      <AuditHistory
+        entries={data.auditHistory}
+        title="Recent global changes"
+        testId="thresholds-audit-history"
+      />
       <p className="text-[12px] text-muted-foreground">
         Precedence: <span className="font-medium">env var</span> &gt;{" "}
         <span className="font-medium">area DB override</span> &gt;{" "}
@@ -746,19 +756,30 @@ function formatAuditValue(field: string, v: number | null | undefined): string {
 
 function AuditHistory({
   entries,
+  title,
+  emptyHint,
+  testId,
 }: {
   entries: OperatorThresholdAuditEntry[];
+  title: string;
+  emptyHint?: string;
+  testId: string;
 }) {
   if (entries.length === 0) {
-    return null;
+    if (!emptyHint) return null;
+    return (
+      <p className="text-[12px] text-muted-foreground" data-testid={`${testId}-empty`}>
+        {emptyHint}
+      </p>
+    );
   }
   return (
     <div
       className="bg-card rounded-2xl shadow-soft hairline px-4 sm:px-5 py-4"
-      data-testid="thresholds-audit-history"
+      data-testid={testId}
     >
       <p className="eyebrow inline-flex items-center gap-1.5">
-        <History className="w-3 h-3" /> Recent changes
+        <History className="w-3 h-3" /> {title}
       </p>
       <ul className="mt-3 divide-y divide-border">
         {entries.map((entry) => {
@@ -766,7 +787,10 @@ function AuditHistory({
           const oldText = formatAuditValue(entry.field, entry.oldValue);
           const newText = formatAuditValue(entry.field, entry.newValue);
           const who =
-            entry.changedByUserEmail ?? `user #${entry.changedByUserId}`;
+            entry.changedByUserEmail ??
+            (entry.changedByUserId != null
+              ? `user #${entry.changedByUserId}`
+              : "an unknown manager");
           const when = new Date(entry.changedAt).toLocaleString();
           return (
             <li

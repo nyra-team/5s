@@ -1,9 +1,9 @@
 import { Router, type IRouter } from "express";
-import { sql, desc, eq, inArray } from "drizzle-orm";
+import { sql, and, desc, eq, isNull, inArray } from "drizzle-orm";
 import {
   db,
   operatorSettingsTable,
-  operatorSettingsAuditTable,
+  operatorThresholdChangesTable,
   areaOperatorSettingsTable,
   areasTable,
   usersTable,
@@ -34,6 +34,13 @@ type ThresholdField = (typeof THRESHOLD_FIELDS)[number];
 
 /** How many rows to surface on the admin page. */
 const AUDIT_HISTORY_LIMIT = 5;
+
+/**
+ * Scope tags written into `operator_threshold_changes.scope`. Mirrored on
+ * the client by filtering the unified history view by the same tag.
+ */
+const SCOPE_GLOBAL = "global";
+const SCOPE_AREA = "area";
 
 interface AuditEntry {
   id: number;
@@ -71,42 +78,93 @@ interface ThresholdsPayload {
   areaOverrides: AreaOverrideEntry[];
 }
 
-async function loadAuditHistory(): Promise<AuditEntry[]> {
-  // Pull the most recent N rows, then resolve user emails in a single
-  // follow-up query keyed by the distinct ids we actually need. We don't
-  // join in SQL because the audit row is intentionally append-only and
-  // we want the email lookup tolerant of deleted users.
-  const rows = await db
-    .select()
-    .from(operatorSettingsAuditTable)
-    .orderBy(
-      desc(operatorSettingsAuditTable.changedAt),
-      desc(operatorSettingsAuditTable.id),
-    )
-    .limit(AUDIT_HISTORY_LIMIT);
-  if (rows.length === 0) return [];
+type ChangeRow = typeof operatorThresholdChangesTable.$inferSelect;
 
-  const userIds = Array.from(
-    new Set(rows.map((r) => r.changedByUserId).filter((id): id is number => id !== null)),
+/** Resolve emails for the user ids referenced by a batch of audit rows. */
+async function emailMapForRows(
+  rows: ChangeRow[],
+): Promise<Map<number, string | null>> {
+  const ids = Array.from(
+    new Set(
+      rows
+        .map((r) => r.changedByUserId)
+        .filter((id): id is number => id != null),
+    ),
   );
-  const users = userIds.length
-    ? await db
-        .select({ id: usersTable.id, email: usersTable.email })
-        .from(usersTable)
-        .where(inArray(usersTable.id, userIds))
-    : [];
-  const emailById = new Map(users.map((u) => [u.id, u.email]));
+  if (ids.length === 0) return new Map();
+  const users = await db
+    .select({ id: usersTable.id, email: usersTable.email })
+    .from(usersTable)
+    .where(inArray(usersTable.id, ids));
+  return new Map(users.map((u) => [u.id, u.email] as const));
+}
 
+function rowsToAuditEntries(
+  rows: ChangeRow[],
+  emailById: Map<number, string | null>,
+): AuditEntry[] {
   return rows.map((r) => ({
     id: r.id,
     changedAt: r.changedAt.toISOString(),
     changedByUserId: r.changedByUserId,
     changedByUserEmail:
-      r.changedByUserId !== null ? emailById.get(r.changedByUserId) ?? null : null,
+      r.changedByUserId == null
+        ? null
+        : (emailById.get(r.changedByUserId) ?? null),
     field: r.field,
     oldValue: r.oldValue,
     newValue: r.newValue,
   }));
+}
+
+/**
+ * Pull the most recent N global-scope audit rows. We don't join in SQL
+ * because the audit row is intentionally append-only and we want the email
+ * lookup tolerant of deleted users (FK already does ON DELETE SET NULL).
+ */
+async function loadGlobalAuditHistory(): Promise<AuditEntry[]> {
+  const rows = await db
+    .select()
+    .from(operatorThresholdChangesTable)
+    .where(
+      and(
+        eq(operatorThresholdChangesTable.scope, SCOPE_GLOBAL),
+        isNull(operatorThresholdChangesTable.areaId),
+      ),
+    )
+    .orderBy(
+      desc(operatorThresholdChangesTable.changedAt),
+      desc(operatorThresholdChangesTable.id),
+    )
+    .limit(AUDIT_HISTORY_LIMIT);
+  if (rows.length === 0) return [];
+  const emailById = await emailMapForRows(rows);
+  return rowsToAuditEntries(rows, emailById);
+}
+
+/**
+ * Pull the most recent N audit rows for a specific area. Filters by both
+ * scope and areaId so a manager who later renames or recreates the area
+ * still gets a clean per-area view.
+ */
+async function loadAreaAuditHistory(areaId: number): Promise<AuditEntry[]> {
+  const rows = await db
+    .select()
+    .from(operatorThresholdChangesTable)
+    .where(
+      and(
+        eq(operatorThresholdChangesTable.scope, SCOPE_AREA),
+        eq(operatorThresholdChangesTable.areaId, areaId),
+      ),
+    )
+    .orderBy(
+      desc(operatorThresholdChangesTable.changedAt),
+      desc(operatorThresholdChangesTable.id),
+    )
+    .limit(AUDIT_HISTORY_LIMIT);
+  if (rows.length === 0) return [];
+  const emailById = await emailMapForRows(rows);
+  return rowsToAuditEntries(rows, emailById);
 }
 
 async function resolveEmail(userId: number | null): Promise<string | null> {
@@ -125,7 +183,7 @@ async function buildPayload(): Promise<ThresholdsPayload> {
       loadEffectiveOperatorThresholds(),
       Promise.resolve(getEnvOperatorThresholds()),
       getDbOperatorThresholds(),
-      loadAuditHistory(),
+      loadGlobalAuditHistory(),
       getAllAreaOperatorThresholds(),
       db
         .select({ id: areasTable.id, name: areasTable.name })
@@ -193,6 +251,31 @@ function parseThresholdPatch(
   return patch;
 }
 
+/**
+ * Build the per-field audit row payloads from a (previous, patch) pair.
+ * Skips no-op writes (oldValue === newValue) so saving the same value back
+ * doesn't pollute the history. Caller adds scope / areaId / changedByUserId
+ * / changedAt.
+ */
+function diffPatch(
+  previous: ThresholdSources,
+  patch: Partial<Record<ThresholdField, number | null>>,
+): Array<{ field: ThresholdField; oldValue: number | null; newValue: number | null }> {
+  const out: Array<{
+    field: ThresholdField;
+    oldValue: number | null;
+    newValue: number | null;
+  }> = [];
+  for (const field of THRESHOLD_FIELDS) {
+    if (!(field in patch)) continue;
+    const oldValue = previous[field];
+    const newValue = patch[field] ?? null;
+    if (oldValue === newValue) continue;
+    out.push({ field, oldValue, newValue });
+  }
+  return out;
+}
+
 // Authenticated read — operators need the effective values to render the
 // encouragement chip and "due soon" badge. Diagnostic fields (envOverrides,
 // dbOverrides, areaOverrides, updatedAt, auditHistory) are returned
@@ -257,40 +340,31 @@ router.put(
       // One audit row per field that actually moved. Reuses the same
       // changedAt as the settings write so a UI can group simultaneous
       // tweaks together.
-      const auditValues: Array<{
-        changedByUserId: number;
-        changedAt: Date;
-        field: string;
-        oldValue: number | null;
-        newValue: number | null;
-      }> = [];
-      for (const field of THRESHOLD_FIELDS) {
-        if (!(field in patch)) continue;
-        const oldValue = previous[field];
-        const newValue = patch[field] ?? null;
-        if (oldValue === newValue) continue;
-        auditValues.push({
-          changedByUserId: userId,
-          changedAt,
-          field,
-          oldValue,
-          newValue,
-        });
-      }
-      if (auditValues.length > 0) {
-        await db.insert(operatorSettingsAuditTable).values(auditValues);
-        // Enforce the per-field retention cap right after we insert. Pruning
-        // inline (instead of on a timer) means the table can only grow when
-        // a manager actually edits a threshold, and each edit immediately
-        // bounds the table to a known size — no separate scheduler needed.
-        // Failures are logged and swallowed so a transient prune error never
-        // rejects the manager's save.
+      const diffs = diffPatch(previous, patch);
+      if (diffs.length > 0) {
+        await db.insert(operatorThresholdChangesTable).values(
+          diffs.map((d) => ({
+            scope: SCOPE_GLOBAL,
+            areaId: null,
+            changedByUserId: userId,
+            changedAt,
+            field: d.field,
+            oldValue: d.oldValue,
+            newValue: d.newValue,
+          })),
+        );
+        // Enforce the per-(scope, area, field) retention cap right after
+        // we insert. Pruning inline (instead of on a timer) means the
+        // table can only grow when a manager actually edits a threshold,
+        // and each edit immediately bounds the table to a known size — no
+        // separate scheduler needed. Failures are logged and swallowed so
+        // a transient prune error never rejects the manager's save.
         try {
           await pruneOperatorSettingsAudit();
         } catch (err) {
           logger.error(
             { err },
-            "operator_settings_audit: post-insert prune failed",
+            "operator_threshold_changes: post-insert prune failed",
           );
         }
       }
@@ -315,16 +389,19 @@ interface AreaThresholdsPayload {
   areaOverrides: ThresholdSources;
   updatedAt: string | null;
   updatedByUserId: number | null;
+  /** Most recent per-area changes for this area, newest first. */
+  auditHistory: AuditEntry[];
 }
 
 async function buildAreaPayload(args: {
   areaId: number;
   areaName: string;
 }): Promise<AreaThresholdsPayload> {
-  const [env, globalRow, areaRow] = await Promise.all([
+  const [env, globalRow, areaRow, auditHistory] = await Promise.all([
     Promise.resolve(getEnvOperatorThresholds()),
     getDbOperatorThresholds(),
     getDbAreaOperatorThresholds(args.areaId),
+    loadAreaAuditHistory(args.areaId),
   ]);
   const effective = resolveOperatorThresholds({
     env,
@@ -349,6 +426,7 @@ async function buildAreaPayload(args: {
     },
     updatedAt: areaRow.updatedAt ? areaRow.updatedAt.toISOString() : null,
     updatedByUserId: areaRow.updatedByUserId,
+    auditHistory,
   };
 }
 
@@ -405,7 +483,11 @@ router.put(
     const patch = parseThresholdPatch(body);
 
     if (Object.keys(patch).length > 0) {
-      // Per-area changes are not audited yet — see follow-up #135.
+      // Snapshot current per-area values before the upsert so audit rows
+      // describe each field that actually moved (no-ops are filtered out).
+      const previous = await getDbAreaOperatorThresholds(area.id);
+
+      const changedAt = new Date();
       await db
         .insert(areaOperatorSettingsTable)
         .values({
@@ -414,16 +496,46 @@ router.put(
           priorBestWindowDays: patch.priorBestWindowDays ?? null,
           dueSoonThresholdMinutes: patch.dueSoonThresholdMinutes ?? null,
           updatedByUserId: userId,
-          updatedAt: new Date(),
+          updatedAt: changedAt,
         })
         .onConflictDoUpdate({
           target: areaOperatorSettingsTable.areaId,
           set: {
             ...patch,
             updatedByUserId: userId,
-            updatedAt: new Date(),
+            updatedAt: changedAt,
           },
         });
+
+      const diffs = diffPatch(
+        {
+          encouragementMinPercent: previous.encouragementMinPercent,
+          priorBestWindowDays: previous.priorBestWindowDays,
+          dueSoonThresholdMinutes: previous.dueSoonThresholdMinutes,
+        },
+        patch,
+      );
+      if (diffs.length > 0) {
+        await db.insert(operatorThresholdChangesTable).values(
+          diffs.map((d) => ({
+            scope: SCOPE_AREA,
+            areaId: area.id,
+            changedByUserId: userId,
+            changedAt,
+            field: d.field,
+            oldValue: d.oldValue,
+            newValue: d.newValue,
+          })),
+        );
+        try {
+          await pruneOperatorSettingsAudit();
+        } catch (err) {
+          logger.error(
+            { err },
+            "operator_threshold_changes: post-insert prune failed",
+          );
+        }
+      }
 
       // Tidy the row away if the manager cleared every override for this
       // area (all stored values are NULL). Keeps `areaOverrides` in the
@@ -452,6 +564,7 @@ router.delete(
   authMiddleware,
   requireRole("MANAGER"),
   async (req, res): Promise<void> => {
+    const { userId } = (req as any).user as { userId: number };
     const id = parseInt(String(req.params.id), 10);
     if (!Number.isFinite(id)) {
       res.status(400).json({ error: "Invalid area id" });
@@ -466,10 +579,49 @@ router.delete(
       res.status(404).json({ error: "Area not found" });
       return;
     }
-    // Per-area changes are not audited yet — see follow-up #135.
+
+    // Snapshot per-area values so we can emit one audit row per field that
+    // was actually clearing — fields that were already null produce no
+    // entry (no movement to record).
+    const previous = await getDbAreaOperatorThresholds(area.id);
+    const changedAt = new Date();
+
     await db
       .delete(areaOperatorSettingsTable)
       .where(eq(areaOperatorSettingsTable.areaId, area.id));
+
+    const diffs: Array<{
+      field: ThresholdField;
+      oldValue: number | null;
+      newValue: number | null;
+    }> = [];
+    for (const field of THRESHOLD_FIELDS) {
+      const oldValue = previous[field];
+      if (oldValue == null) continue;
+      diffs.push({ field, oldValue, newValue: null });
+    }
+    if (diffs.length > 0) {
+      await db.insert(operatorThresholdChangesTable).values(
+        diffs.map((d) => ({
+          scope: SCOPE_AREA,
+          areaId: area.id,
+          changedByUserId: userId,
+          changedAt,
+          field: d.field,
+          oldValue: d.oldValue,
+          newValue: d.newValue,
+        })),
+      );
+      try {
+        await pruneOperatorSettingsAudit();
+      } catch (err) {
+        logger.error(
+          { err },
+          "operator_threshold_changes: post-insert prune failed",
+        );
+      }
+    }
+
     res.json(await buildAreaPayload({ areaId: area.id, areaName: area.name }));
   },
 );

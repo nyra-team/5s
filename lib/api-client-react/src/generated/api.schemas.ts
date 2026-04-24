@@ -411,6 +411,11 @@ export interface AreaOperatorThresholds {
   /** When this area's per-area override row was last touched. */
   updatedAt?: string | null;
   updatedByUserId?: number | null;
+  /** Most recent per-field changes to THIS area's override row
+(newest first), capped at 5. Each entry corresponds to a
+single field changed by a single PUT/DELETE.
+ */
+  auditHistory: OperatorThresholdAuditEntry[];
 }
 
 /**

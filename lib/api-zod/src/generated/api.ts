@@ -3184,6 +3184,41 @@ export const GetAreaOperatorThresholdsResponse = zod
       .nullish()
       .describe("When this area's per-area override row was last touched."),
     updatedByUserId: zod.number().nullish(),
+    auditHistory: zod
+      .array(
+        zod.object({
+          id: zod.number(),
+          changedAt: zod.coerce.date(),
+          changedByUserId: zod
+            .number()
+            .nullish()
+            .describe(
+              "Manager who made the change. Goes null if that user is later\ndeleted (the FK uses ON DELETE SET NULL so the rest of the\naudit row — what moved, when, from\/to — is preserved).\n",
+            ),
+          changedByUserEmail: zod
+            .string()
+            .nullish()
+            .describe("Resolved at read time; null if the user was deleted."),
+          field: zod
+            .string()
+            .describe(
+              "The threshold key that moved. One of:\nencouragementMinPercent, priorBestWindowDays,\ndueSoonThresholdMinutes.\n",
+            ),
+          oldValue: zod
+            .number()
+            .nullish()
+            .describe(
+              "Previous DB override (null = no override \/ fell back to env or default).",
+            ),
+          newValue: zod
+            .number()
+            .nullish()
+            .describe("New DB override (null = override cleared)."),
+        }),
+      )
+      .describe(
+        "Most recent per-field changes to THIS area's override row\n(newest first), capped at 5. Each entry corresponds to a\nsingle field changed by a single PUT\/DELETE.\n",
+      ),
   })
   .describe(
     "Effective per-area operator thresholds (env > area-DB > global-DB >\ndefault) plus every layer's source values so the admin UI can show\nprovenance per field.\n",
@@ -3377,6 +3412,41 @@ export const UpdateAreaOperatorThresholdsResponse = zod
       .nullish()
       .describe("When this area's per-area override row was last touched."),
     updatedByUserId: zod.number().nullish(),
+    auditHistory: zod
+      .array(
+        zod.object({
+          id: zod.number(),
+          changedAt: zod.coerce.date(),
+          changedByUserId: zod
+            .number()
+            .nullish()
+            .describe(
+              "Manager who made the change. Goes null if that user is later\ndeleted (the FK uses ON DELETE SET NULL so the rest of the\naudit row — what moved, when, from\/to — is preserved).\n",
+            ),
+          changedByUserEmail: zod
+            .string()
+            .nullish()
+            .describe("Resolved at read time; null if the user was deleted."),
+          field: zod
+            .string()
+            .describe(
+              "The threshold key that moved. One of:\nencouragementMinPercent, priorBestWindowDays,\ndueSoonThresholdMinutes.\n",
+            ),
+          oldValue: zod
+            .number()
+            .nullish()
+            .describe(
+              "Previous DB override (null = no override \/ fell back to env or default).",
+            ),
+          newValue: zod
+            .number()
+            .nullish()
+            .describe("New DB override (null = override cleared)."),
+        }),
+      )
+      .describe(
+        "Most recent per-field changes to THIS area's override row\n(newest first), capped at 5. Each entry corresponds to a\nsingle field changed by a single PUT\/DELETE.\n",
+      ),
   })
   .describe(
     "Effective per-area operator thresholds (env > area-DB > global-DB >\ndefault) plus every layer's source values so the admin UI can show\nprovenance per field.\n",
@@ -3540,6 +3610,41 @@ export const ClearAreaOperatorThresholdsResponse = zod
       .nullish()
       .describe("When this area's per-area override row was last touched."),
     updatedByUserId: zod.number().nullish(),
+    auditHistory: zod
+      .array(
+        zod.object({
+          id: zod.number(),
+          changedAt: zod.coerce.date(),
+          changedByUserId: zod
+            .number()
+            .nullish()
+            .describe(
+              "Manager who made the change. Goes null if that user is later\ndeleted (the FK uses ON DELETE SET NULL so the rest of the\naudit row — what moved, when, from\/to — is preserved).\n",
+            ),
+          changedByUserEmail: zod
+            .string()
+            .nullish()
+            .describe("Resolved at read time; null if the user was deleted."),
+          field: zod
+            .string()
+            .describe(
+              "The threshold key that moved. One of:\nencouragementMinPercent, priorBestWindowDays,\ndueSoonThresholdMinutes.\n",
+            ),
+          oldValue: zod
+            .number()
+            .nullish()
+            .describe(
+              "Previous DB override (null = no override \/ fell back to env or default).",
+            ),
+          newValue: zod
+            .number()
+            .nullish()
+            .describe("New DB override (null = override cleared)."),
+        }),
+      )
+      .describe(
+        "Most recent per-field changes to THIS area's override row\n(newest first), capped at 5. Each entry corresponds to a\nsingle field changed by a single PUT\/DELETE.\n",
+      ),
   })
   .describe(
     "Effective per-area operator thresholds (env > area-DB > global-DB >\ndefault) plus every layer's source values so the admin UI can show\nprovenance per field.\n",
