@@ -30,7 +30,7 @@ import {
 import {
   Plus, Pencil, Trash2, Check, X, BookOpen, RefreshCw, Sparkles, Wrench, Workflow, AlertCircle, Save, Edit3, Users, LayoutGrid, UserCog, ListChecks, RotateCcw,
 } from "lucide-react";
-import { EnvironmentBadge, ENVIRONMENT_LABELS, ENVIRONMENT_CHECKLIST, type EnvironmentType } from "@/lib/environment";
+import { EnvironmentBadge, EnvironmentChecklist, ENVIRONMENT_LABELS, ENVIRONMENT_CHECKLIST, type EnvironmentType } from "@/lib/environment";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -152,6 +152,10 @@ export default function Areas() {
                 <Button variant="outline" onClick={() => { setShowAddForm(false); setNewAreaName(""); setNewEnvType("factory"); }} className="rounded-full h-11 w-11 p-0" data-testid="button-cancel-add">
                   <X className="w-4 h-4" />
                 </Button>
+              </div>
+              <div className="mt-4">
+                <p className="text-[12px] text-muted-foreground mb-2">Operators will be asked to capture…</p>
+                <EnvironmentChecklist type={newEnvType} testId="environment-checklist-new-area" />
               </div>
             </div>
           )}
@@ -310,43 +314,49 @@ function AreaConfigCard({ area }: { area: Area }) {
       <div className="bg-card rounded-2xl shadow-soft transition-all duration-150 hover:shadow-elevated active:scale-[0.99] motion-reduce:active:scale-100 motion-reduce:transition-none flex flex-col p-5 sm:p-6" data-testid={`card-area-${area.id}`}>
         <div className="flex items-start justify-between gap-2 mb-5">
           {isEditing ? (
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-1">
-              <Input
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleSaveEdits();
-                  if (e.key === "Escape") {
-                    setIsEditing(false);
-                    setEditName(area.name);
-                    setEditEnvType(currentEnvType);
-                  }
-                }}
-                autoFocus
-                className="h-10 rounded-xl bg-secondary/60 border-transparent flex-1"
-                data-testid={`input-rename-area-${area.id}`}
-              />
-              <Select value={editEnvType} onValueChange={(v) => setEditEnvType(v as EnvironmentType)}>
-                <SelectTrigger
-                  className="h-10 rounded-xl bg-secondary/60 border-transparent w-full sm:w-36"
-                  data-testid={`select-environment-${area.id}`}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="factory" data-testid={`option-environment-factory-${area.id}`}>{ENVIRONMENT_LABELS.factory}</SelectItem>
-                  <SelectItem value="warehouse" data-testid={`option-environment-warehouse-${area.id}`}>{ENVIRONMENT_LABELS.warehouse}</SelectItem>
-                  <SelectItem value="home" data-testid={`option-environment-home-${area.id}`}>{ENVIRONMENT_LABELS.home}</SelectItem>
-                  <SelectItem value="corporate_office" data-testid={`option-environment-corporate_office-${area.id}`}>{ENVIRONMENT_LABELS.corporate_office}</SelectItem>
-                </SelectContent>
-              </Select>
-              <div className="flex items-center gap-1">
-                <Button size="sm" variant="ghost" onClick={handleSaveEdits} disabled={updateArea.isPending} data-testid={`button-confirm-rename-${area.id}`}>
-                  <Check className="w-4 h-4" />
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => { setIsEditing(false); setEditName(area.name); setEditEnvType(currentEnvType); }}>
-                  <X className="w-4 h-4" />
-                </Button>
+            <div className="flex flex-col gap-3 flex-1">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <Input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleSaveEdits();
+                    if (e.key === "Escape") {
+                      setIsEditing(false);
+                      setEditName(area.name);
+                      setEditEnvType(currentEnvType);
+                    }
+                  }}
+                  autoFocus
+                  className="h-10 rounded-xl bg-secondary/60 border-transparent flex-1"
+                  data-testid={`input-rename-area-${area.id}`}
+                />
+                <Select value={editEnvType} onValueChange={(v) => setEditEnvType(v as EnvironmentType)}>
+                  <SelectTrigger
+                    className="h-10 rounded-xl bg-secondary/60 border-transparent w-full sm:w-36"
+                    data-testid={`select-environment-${area.id}`}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="factory" data-testid={`option-environment-factory-${area.id}`}>{ENVIRONMENT_LABELS.factory}</SelectItem>
+                    <SelectItem value="warehouse" data-testid={`option-environment-warehouse-${area.id}`}>{ENVIRONMENT_LABELS.warehouse}</SelectItem>
+                    <SelectItem value="home" data-testid={`option-environment-home-${area.id}`}>{ENVIRONMENT_LABELS.home}</SelectItem>
+                    <SelectItem value="corporate_office" data-testid={`option-environment-corporate_office-${area.id}`}>{ENVIRONMENT_LABELS.corporate_office}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center gap-1">
+                  <Button size="sm" variant="ghost" onClick={handleSaveEdits} disabled={updateArea.isPending} data-testid={`button-confirm-rename-${area.id}`}>
+                    <Check className="w-4 h-4" />
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => { setIsEditing(false); setEditName(area.name); setEditEnvType(currentEnvType); }}>
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+              <div>
+                <p className="text-[12px] text-muted-foreground mb-2">Operators will be asked to capture…</p>
+                <EnvironmentChecklist type={editEnvType} testId={`environment-checklist-edit-${area.id}`} />
               </div>
             </div>
           ) : (
