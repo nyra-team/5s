@@ -19,6 +19,7 @@ import Escalations from "@/pages/escalations";
 import LiveShift from "@/pages/live";
 import Notifications from "@/pages/notifications";
 import OperatorThresholds from "@/pages/operator-thresholds";
+import AiSettingsPage from "@/pages/ai-settings";
 import FacilitySettingsPage from "@/pages/facility-settings";
 
 const queryClient = new QueryClient();
@@ -96,6 +97,14 @@ function Router() {
         <ProtectedRoute allowedRoles={["MANAGER"]}>
           <Layout>
             <FacilitySettingsPage />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+
+      <Route path="/ai-settings">
+        <ProtectedRoute allowedRoles={["MANAGER"]}>
+          <Layout>
+            <AiSettingsPage />
           </Layout>
         </ProtectedRoute>
       </Route>

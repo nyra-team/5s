@@ -12,13 +12,35 @@ vi.mock("@workspace/integrations-openai-ai-server", () => ({
   },
 }));
 
+// loadEffectiveVlmModel reads ai_settings via select/from/orderBy/limit;
+// the terminal stage is awaited as Promise<unknown[]> so we model the chain
+// as PromiseLike returning no rows — pushing the resolver to the env (unset
+// here) → shipped-default ("gpt-5") path.
+interface SelectChain extends PromiseLike<unknown[]> {
+  from: () => SelectChain;
+  orderBy: () => SelectChain;
+  limit: () => SelectChain;
+}
+function emptySelectChain(): SelectChain {
+  const chain: SelectChain = {
+    from: () => chain,
+    orderBy: () => chain,
+    limit: () => chain,
+    then: (onfulfilled) =>
+      Promise.resolve([]).then(onfulfilled) as unknown as PromiseLike<never>,
+  };
+  return chain;
+}
+
 vi.mock("@workspace/db", () => ({
   db: {
     insert: () => ({
       values: async () => undefined,
     }),
+    select: () => emptySelectChain(),
   },
   aiScoringMetricsTable: {},
+  aiSettingsTable: {},
 }));
 
 const { callVLM } = await import("../ai-scoring.js");
@@ -103,7 +125,7 @@ describe("callVLM request payload", () => {
 
     const req = createMock.mock.calls[0][0];
 
-    expect(req.model).toBe("gpt-5-mini");
+    expect(req.model).toBe("gpt-5");
     expect(req.response_format).toEqual({ type: "json_object" });
     // Must be high enough to cover the gpt-5 family's hidden reasoning tokens AND the
     // structured JSON output — see the comment on `baseRequest` in
@@ -144,7 +166,7 @@ describe("callVLM request payload", () => {
       for (const k of FORBIDDEN_PARAMS) {
         expect(req, `call #${i + 1} must NOT include "${k}"`).not.toHaveProperty(k);
       }
-      expect(req.model).toBe("gpt-5-mini");
+      expect(req.model).toBe("gpt-5");
       expect(req.response_format).toEqual({ type: "json_object" });
       expect(req.max_completion_tokens).toBe(8192);
       expect(req.top_p).toBe(1);

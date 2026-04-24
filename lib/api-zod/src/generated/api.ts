@@ -2501,6 +2501,93 @@ export const GetAreaModelStatusResponse = zod.object({
 });
 
 /**
+ * @summary Get the effective VLM model id (with override provenance)
+ */
+export const GetAiSettingsResponse = zod
+  .object({
+    vlmModel: zod
+      .string()
+      .describe(
+        "Effective VLM model id used by both scoring and identification calls.",
+      ),
+    defaults: zod
+      .object({
+        vlmModel: zod.string(),
+      })
+      .describe("Static fallback values shipped with the build."),
+    envOverrides: zod.object({
+      vlmModel: zod.string().nullish(),
+    }),
+    dbOverrides: zod.object({
+      vlmModel: zod.string().nullish(),
+    }),
+    updatedAt: zod.coerce
+      .date()
+      .nullish()
+      .describe("When the DB override row was last touched."),
+    updatedByUserId: zod
+      .number()
+      .nullish()
+      .describe("Manager who last touched the DB override row."),
+    updatedByUserEmail: zod
+      .string()
+      .nullish()
+      .describe("Email of the manager who last touched the DB override row."),
+  })
+  .describe(
+    "Effective AI settings (env > DB > default) plus the per-layer\noverrides so the admin UI can show provenance.\n",
+  );
+
+/**
+ * @summary Update DB-backed AI settings overrides (manager only)
+ */
+export const UpdateAiSettingsBody = zod
+  .object({
+    vlmModel: zod
+      .string()
+      .nullish()
+      .describe('Model id (e.g. \"gpt-5\", \"gpt-5-mini\").'),
+  })
+  .describe(
+    "Patch for the DB-backed ai_settings row. Per-field semantics:\nomitted = leave existing value, null = clear the override\n(fall back to env\/default), value = set the override.\n",
+  );
+
+export const UpdateAiSettingsResponse = zod
+  .object({
+    vlmModel: zod
+      .string()
+      .describe(
+        "Effective VLM model id used by both scoring and identification calls.",
+      ),
+    defaults: zod
+      .object({
+        vlmModel: zod.string(),
+      })
+      .describe("Static fallback values shipped with the build."),
+    envOverrides: zod.object({
+      vlmModel: zod.string().nullish(),
+    }),
+    dbOverrides: zod.object({
+      vlmModel: zod.string().nullish(),
+    }),
+    updatedAt: zod.coerce
+      .date()
+      .nullish()
+      .describe("When the DB override row was last touched."),
+    updatedByUserId: zod
+      .number()
+      .nullish()
+      .describe("Manager who last touched the DB override row."),
+    updatedByUserEmail: zod
+      .string()
+      .nullish()
+      .describe("Email of the manager who last touched the DB override row."),
+  })
+  .describe(
+    "Effective AI settings (env > DB > default) plus the per-layer\noverrides so the admin UI can show provenance.\n",
+  );
+
+/**
  * @summary Get the effective facility shift schedule (with override provenance)
  */
 export const getFacilitySettingsResponseShiftAStartHourMin = 0;

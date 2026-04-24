@@ -46,6 +46,14 @@ vi.mock("@workspace/api-client-react", () => {
     error: null,
     refetch: vi.fn(),
   });
+  const noopMutation = () => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(async () => undefined),
+    isPending: false,
+    isSuccess: false,
+    isError: false,
+    reset: vi.fn(),
+  });
   const noopParamQuery = (data: unknown = undefined) =>
     function ParamQuery() {
       return {
@@ -104,6 +112,7 @@ vi.mock("@workspace/api-client-react", () => {
       isError: false,
       reset: vi.fn(),
     }),
+    useRebuildAreaProfile: noopMutation,
     getGetBackfillReasoningStatusQueryKey: () => ["backfill-reasoning-status"],
     getGetDashboardOperatorDismissesDetailQueryKey: () => ["dismisses-detail"],
     getGetAreaProfileQueryKey: () => ["area-profile"],

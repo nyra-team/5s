@@ -14,13 +14,7 @@ import * as path from "node:path";
 import { logger } from "./logger.js";
 import { extractKeyframes, isVideoFile } from "./keyframes.js";
 import { db, aiScoringMetricsTable } from "@workspace/db";
-
-// modelVersion string written into the metrics row for identification calls.
-// Distinct from the scoring rows' `gpt-5-mini-<env>-v1` so the dashboard's
-// per-model rollup can split scoring vs identification spend even when both
-// pipelines share the underlying OpenAI model. Bump the suffix if the model
-// or prompt changes meaningfully.
-const IDENTIFICATION_MODEL_VERSION = "gpt-5-mini-identification-v1";
+import { loadEffectiveVlmModel } from "./ai-settings.js";
 
 // Coerce a possibly-undefined token-count field to a finite number, or null.
 // Centralized so the three usage fields (prompt/completion/total) share one
@@ -141,16 +135,19 @@ export async function callIdentificationVLM(
     content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}` } });
   }
 
+  // Same admin-toggle resolution as the scoring path; modelVersion embeds
+  // the live id so post-rollback dashboards stay correct.
+  const model = await loadEffectiveVlmModel();
+  const modelVersion = `${model}-identification-v1`;
+
   // Wrap the chat call so we can record latency + token usage in the same
-  // ai_scoring_metrics table the scoring pipeline writes to. This is what
-  // lets the manager-facing per-model cost panel show identification spend
-  // side by side with scoring spend. Logging is best-effort: a DB hiccup
-  // must never break identification.
+  // ai_scoring_metrics table the scoring pipeline writes to. Logging is
+  // best-effort: a DB hiccup must never break identification.
   const tStart = Date.now();
   let response: Awaited<ReturnType<typeof openai.chat.completions.create>>;
   try {
     response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model,
       response_format: { type: "json_object" },
       max_completion_tokens: 1024,
       messages: [
@@ -165,7 +162,7 @@ export async function callIdentificationVLM(
     const latencyMs = Date.now() - tStart;
     try {
       await db.insert(aiScoringMetricsTable).values({
-        modelVersion: IDENTIFICATION_MODEL_VERSION,
+        modelVersion,
         retried: false,
         validationError: err instanceof Error ? err.message.slice(0, 500) : "identification call threw",
         callKind: "identification",
@@ -190,7 +187,7 @@ export async function callIdentificationVLM(
   const totalTokens = numericOrNull(usage?.total_tokens);
   try {
     await db.insert(aiScoringMetricsTable).values({
-      modelVersion: IDENTIFICATION_MODEL_VERSION,
+      modelVersion,
       retried: false,
       validationError: null,
       callKind: "identification",

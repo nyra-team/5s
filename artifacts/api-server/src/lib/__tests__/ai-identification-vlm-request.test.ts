@@ -15,6 +15,33 @@ vi.mock("@workspace/integrations-openai-ai-server", () => ({
   },
 }));
 
+// callIdentificationVLM now resolves the model via loadEffectiveVlmModel,
+// which reads ai_settings (single-row select). Stub the chain to return no
+// rows so the resolver falls through to the shipped default ("gpt-5").
+interface SelectChain extends PromiseLike<unknown[]> {
+  from: () => SelectChain;
+  orderBy: () => SelectChain;
+  limit: () => SelectChain;
+}
+function emptySelectChain(): SelectChain {
+  const chain: SelectChain = {
+    from: () => chain,
+    orderBy: () => chain,
+    limit: () => chain,
+    then: (onfulfilled) =>
+      Promise.resolve([]).then(onfulfilled) as unknown as PromiseLike<never>,
+  };
+  return chain;
+}
+
+vi.mock("@workspace/db", () => ({
+  db: {
+    select: () => emptySelectChain(),
+  },
+  aiScoringMetricsTable: {},
+  aiSettingsTable: {},
+}));
+
 const { callIdentificationVLM } = await import("../ai-identification.js");
 
 const validIdentificationBody = {
@@ -99,7 +126,7 @@ describe("callIdentificationVLM request payload", () => {
 
     const req = createMock.mock.calls[0][0];
 
-    expect(req.model).toBe("gpt-5-mini");
+    expect(req.model).toBe("gpt-5");
     expect(req.response_format).toEqual({ type: "json_object" });
     expect(req.max_completion_tokens).toBe(1024);
     expect(Array.isArray(req.messages)).toBe(true);

@@ -41,6 +41,7 @@ A full-stack web application for manufacturing environments to enforce 5S compli
     - Managers receive notifications via email (Resend) and Slack for new and aging escalations, with configurable grouping and re-ping mechanisms.
 - **Operator Threshold Tuning**: Runtime-tunable parameters (`encouragementMinPercent`, `priorBestWindowDays`, `dueSoonThresholdMinutes`) with precedence: environment variables > per-area DB override > global DB override > shipped default. Every per-field change writes to `operator_settings_audit`; that table is bounded by an inline post-insert prune that keeps the last N rows per field (default 50, override via `OPERATOR_SETTINGS_AUDIT_KEEP_PER_FIELD`) so the table can't grow unbounded — see `artifacts/api-server/src/lib/audit-prune.ts`.
 - **Shift Management**: Automatically detects operator shifts. Managers can configure timezone and shift start hours in-app, with environment variables taking precedence.
+- **AI Model Override**: Managers can roll the VLM model used by both scoring and identification calls (e.g. swap `gpt-5` ↔ `gpt-5-mini`) at runtime via the `/ai-settings` admin page. Precedence: `VLM_MODEL` env var > DB `ai_settings` row > shipped default (`gpt-5`). The recorded `modelVersion` label on each submission tracks the active model automatically; takes effect on the next request without a redeploy.
 
 ### Feature Specifications
 - **Roles**: OPERATOR and MANAGER with distinct access levels.

@@ -14,3 +14,4 @@ export * from "./area-assignments";
 export * from "./ai-scoring-metrics";
 export * from "./facility-settings";
 export * from "./area-detection-events";
+export * from "./ai-settings";

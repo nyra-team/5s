@@ -26,8 +26,22 @@
     {
       "idx": 3,
       "version": "7",
-      "when": 1777039141885,
+      "when": 1777045000000,
       "tag": "0003_illegal_daredevil",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1777050000000,
+      "tag": "0004_task167_ai_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1777055000000,
+      "tag": "0005_add_reping_settings",
       "breakpoints": true
     }
   ]

@@ -91,6 +91,7 @@ vi.mock("@workspace/api-client-react", () => {
     useBackfillReasoning: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, isError: false, isSuccess: false, reset: vi.fn() }),
     getGetBackfillReasoningStatusQueryKey: () => ["backfill-reasoning-status"],
     useSendOperatorCoachingNudge: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, isError: false, isSuccess: false, reset: vi.fn() }),
+    useRebuildAreaProfile: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, isError: false, isSuccess: false, reset: vi.fn() }),
   };
 });
 

@@ -1328,6 +1328,42 @@ paths:
               schema:
                 $ref: "#/components/schemas/ModelStatus"
 
+  /ai-settings:
+    get:
+      operationId: getAiSettings
+      tags: [settings]
+      summary: Get the effective VLM model id (with override provenance)
+      responses:
+        "200":
+          description: Effective AI settings + per-layer overrides
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiSettings"
+    put:
+      operationId: updateAiSettings
+      tags: [settings]
+      summary: Update DB-backed AI settings overrides (manager only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAiSettingsBody"
+      responses:
+        "200":
+          description: Effective AI settings after the update
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiSettings"
+        "400":
+          description: Validation failed (bad model id)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /facility-settings:
     get:
       operationId: getFacilitySettings
@@ -1739,6 +1775,65 @@ components:
         - encouragementMinPercent
         - priorBestWindowDays
         - dueSoonThresholdMinutes
+
+    AiSettings:
+      type: object
+      description: |
+        Effective AI settings (env > DB > default) plus the per-layer
+        overrides so the admin UI can show provenance.
+      properties:
+        vlmModel:
+          type: string
+          description: Effective VLM model id used by both scoring and identification calls.
+        defaults:
+          type: object
+          description: Static fallback values shipped with the build.
+          properties:
+            vlmModel:
+              type: string
+          required:
+            - vlmModel
+        envOverrides:
+          $ref: "#/components/schemas/AiSettingsSources"
+        dbOverrides:
+          $ref: "#/components/schemas/AiSettingsSources"
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the DB override row was last touched.
+        updatedByUserId:
+          type: integer
+          nullable: true
+          description: Manager who last touched the DB override row.
+        updatedByUserEmail:
+          type: string
+          nullable: true
+          description: Email of the manager who last touched the DB override row.
+      required:
+        - vlmModel
+        - defaults
+        - envOverrides
+        - dbOverrides
+
+    AiSettingsSources:
+      type: object
+      properties:
+        vlmModel:
+          type: string
+          nullable: true
+
+    UpdateAiSettingsBody:
+      type: object
+      description: |
+        Patch for the DB-backed ai_settings row. Per-field semantics:
+        omitted = leave existing value, null = clear the override
+        (fall back to env/default), value = set the override.
+      properties:
+        vlmModel:
+          type: string
+          nullable: true
+          description: Model id (e.g. "gpt-5", "gpt-5-mini").
 
     FacilitySettings:
       type: object

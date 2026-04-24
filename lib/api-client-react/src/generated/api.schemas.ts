@@ -189,6 +189,48 @@ export interface OperatorThresholdSources {
 /**
  * Static fallback values shipped with the build.
  */
+export type AiSettingsDefaults = {
+  vlmModel: string;
+};
+
+export interface AiSettingsSources {
+  vlmModel?: string | null;
+}
+
+/**
+ * Effective AI settings (env > DB > default) plus the per-layer
+overrides so the admin UI can show provenance.
+
+ */
+export interface AiSettings {
+  /** Effective VLM model id used by both scoring and identification calls. */
+  vlmModel: string;
+  /** Static fallback values shipped with the build. */
+  defaults: AiSettingsDefaults;
+  envOverrides: AiSettingsSources;
+  dbOverrides: AiSettingsSources;
+  /** When the DB override row was last touched. */
+  updatedAt?: string | null;
+  /** Manager who last touched the DB override row. */
+  updatedByUserId?: number | null;
+  /** Email of the manager who last touched the DB override row. */
+  updatedByUserEmail?: string | null;
+}
+
+/**
+ * Patch for the DB-backed ai_settings row. Per-field semantics:
+omitted = leave existing value, null = clear the override
+(fall back to env/default), value = set the override.
+
+ */
+export interface UpdateAiSettingsBody {
+  /** Model id (e.g. "gpt-5", "gpt-5-mini"). */
+  vlmModel?: string | null;
+}
+
+/**
+ * Static fallback values shipped with the build.
+ */
 export type FacilitySettingsDefaults = {
   timeZone: string;
   shiftAStartHour: number;

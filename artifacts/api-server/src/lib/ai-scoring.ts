@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { extractKeyframes, compressForVLM, type KeyframeMetrics } from "./keyframes.js";
 import { db, aiScoringMetricsTable, type EnvironmentType } from "@workspace/db";
+import { loadEffectiveVlmModel } from "./ai-settings.js";
 
 type Severity = "high" | "medium" | "low";
 
@@ -439,7 +440,11 @@ async function recordScoringMetric(
 
 export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
   const { framePaths, areaName, machineTag, learnedProfile, environmentType } = opts;
-  const modelVersion = `gpt-5-mini-${environmentType ?? "factory"}-v1`;
+  // Resolve per call (Task #167) so admin toggles take effect on the next
+  // request. modelVersion embeds the live id so post-rollback dashboards
+  // stay correct.
+  const model = await loadEffectiveVlmModel();
+  const modelVersion = `${model}-${environmentType ?? "factory"}-v1`;
 
   const profileBlock = learnedProfile && learnedProfile.status === "TRAINED"
     ? `\nLEARNED AREA PROFILE (this area's own norm — score deviations from it as well):
@@ -483,7 +488,7 @@ export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
   // for complex scenes that need extra reasoning. gpt-5-mini reasons less
   // than flagship gpt-5, so the headroom is comfortable.
   const baseRequest = {
-    model: "gpt-5-mini",
+    model,
     response_format: { type: "json_object" as const },
     max_completion_tokens: 8192,
     top_p: 1,
