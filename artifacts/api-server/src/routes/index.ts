@@ -12,6 +12,7 @@ import nudgesRouter from "./nudges";
 import liveRouter from "./live";
 import preferencesRouter from "./preferences";
 import operatorThresholdsRouter from "./operator-thresholds";
+import adminRouter from "./admin";
 
 const router: IRouter = Router();
 
@@ -28,5 +29,6 @@ router.use(nudgesRouter);
 router.use(liveRouter);
 router.use(preferencesRouter);
 router.use(operatorThresholdsRouter);
+router.use(adminRouter);
 
 export default router;
