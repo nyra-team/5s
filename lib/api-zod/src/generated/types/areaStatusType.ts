@@ -5,11 +5,14 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { AreaStatusTypeEnvironmentType } from "./areaStatusTypeEnvironmentType";
 import type { SubmissionType } from "./submissionType";
 
 export interface AreaStatusType {
   areaId: number;
   areaName: string;
+  /** Physical environment of the area. Drives the environment-specific quick-start checklist shown to operators in the capture sheet. */
+  environmentType: AreaStatusTypeEnvironmentType;
   submitted: boolean;
   submission?: SubmissionType;
 }

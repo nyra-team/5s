@@ -95,6 +95,24 @@ vi.mock("@workspace/api-client-react", () => {
       mutate: vi.fn(),
       isPending: false,
     }),
+    // Auto-detect area runs when the operator picks media in the capture sheet.
+    // The tests don't exercise the real network call, so a no-op mutation is
+    // enough — but the hook must exist on the mock or AreaCard crashes during
+    // render with "useIdentifySubmissionArea is not defined".
+    useIdentifySubmissionArea: () => ({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(async () => ({
+        candidates: [],
+        hasTrainedAreas: false,
+        rationale: null,
+      })),
+      isPending: false,
+    }),
+    useDismissNudge: () => ({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(async () => undefined),
+      isPending: false,
+    }),
     getGetCurrentShiftQueryKey: () => ["shift"],
     getGetOperatorStatusQueryKey: () => ["status"],
     getGetNextChecksQueryKey: () => ["next-checks"],
@@ -194,6 +212,7 @@ function makeStatus(overrides: Partial<AreaStatus>): AreaStatus {
   return {
     areaId: 1,
     areaName: "Mixing Floor",
+    environmentType: "factory",
     submitted: false,
     ...overrides,
   };
@@ -431,6 +450,103 @@ describe("OperatorHome — capture sheet", () => {
     const submit = within(sheet).getByTestId("button-capture-submit");
     expect(submit).toBeDisabled();
     expect(submit).toHaveTextContent(/^Submit$/);
+  });
+
+  // Regression: the operator capture sheet must show an environment-specific
+  // "what to include in your walk-through" hint list before the operator
+  // records, so the resulting video is grounded enough for the AI rubric to
+  // score well — especially in the new Corporate Office environment, where
+  // what to capture is least obvious.
+  it.each([
+    [
+      "corporate_office",
+      "Corporate Office",
+      [
+        "Walk past every desk in the workspace",
+        "Open meeting room doors and pan inside",
+        "Capture the shared kitchen and sink",
+        "Show storage cupboards and supply closets",
+        "Include the printer and copy zones",
+      ],
+    ],
+    [
+      "factory",
+      "Factory",
+      [
+        "Walk past every machine and workstation",
+        "Pan over PPE racks and emergency exits",
+      ],
+    ],
+    [
+      "warehouse",
+      "Warehouse",
+      [
+        "Walk each aisle end-to-end",
+        "Capture the loading dock and outbound staging",
+      ],
+    ],
+    [
+      "home",
+      "Home",
+      [
+        "Walk through every room you're auditing",
+        "Open the pantry and main cupboards",
+      ],
+    ],
+  ] as const)(
+    "shows the %s walk-through checklist when the area's environmentType is %s",
+    async (environmentType, _label, expectedItems) => {
+      mockState.statuses = [
+        makeStatus({
+          areaId: 1,
+          areaName: "Bay 1",
+          environmentType: environmentType as
+            | "factory"
+            | "warehouse"
+            | "home"
+            | "corporate_office",
+        }),
+      ];
+      renderOperator();
+
+      await userEvent.click(screen.getByTestId("button-add-evidence-1"));
+      const sheet = await screen.findByTestId("sheet-capture");
+
+      const checklist = within(sheet).getByTestId("environment-checklist");
+      expect(checklist).toBeInTheDocument();
+      expect(checklist).toHaveAttribute("data-environment", environmentType);
+      // Verify the bullets are environment-specific, not the generic copy.
+      for (const text of expectedItems) {
+        expect(within(checklist).getByText(text)).toBeInTheDocument();
+      }
+    },
+  );
+
+  // Defensive default: an area whose environmentType is missing from the
+  // payload (older API, partial response) must still render *some* checklist
+  // rather than crashing or showing a blank slot. We fall back to the
+  // factory hints — that's what normalizeEnvironment() does today and what
+  // the rest of the operator UI assumes.
+  it("falls back to the factory checklist when an area has no environmentType", async () => {
+    mockState.statuses = [
+      makeStatus({
+        areaId: 1,
+        areaName: "Bay 1",
+        // Cast away the required field so we can simulate the upgrade-window
+        // case where a server build hasn't shipped environmentType yet.
+        environmentType: undefined as unknown as "factory",
+      }),
+    ];
+    renderOperator();
+
+    await userEvent.click(screen.getByTestId("button-add-evidence-1"));
+    const sheet = await screen.findByTestId("sheet-capture");
+
+    const checklist = within(sheet).getByTestId("environment-checklist");
+    expect(checklist).toHaveAttribute("data-environment", "factory");
+    expect(
+      within(checklist).getByText("Walk past every machine and workstation"),
+    ).toBeInTheDocument();
   });
 });
 

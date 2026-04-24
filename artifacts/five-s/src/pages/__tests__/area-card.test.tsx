@@ -22,12 +22,28 @@ vi.mock("@workspace/api-client-react", async () => {
   const actual = await vi.importActual<Record<string, unknown>>(
     "@workspace/api-client-react",
   );
-  const idle = () => ({ mutate: vi.fn(), isPending: false });
+  const idle = () => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(async () => undefined),
+    isPending: false,
+  });
   const noopQuery = () => ({ data: undefined, isLoading: false });
   return {
     ...actual,
     useCreateSubmission: idle,
     useReuploadSubmission: idle,
+    // AreaCard now also calls useIdentifySubmissionArea() and useDismissNudge()
+    // — provide both so the component can render in isolation here.
+    useIdentifySubmissionArea: () => ({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(async () => ({
+        candidates: [],
+        hasTrainedAreas: false,
+        rationale: null,
+      })),
+      isPending: false,
+    }),
+    useDismissNudge: idle,
     useGetAreaProfile: noopQuery,
     useGetSubmission: noopQuery,
   };
@@ -73,6 +89,7 @@ function withQueryClient(node: ReactNode) {
 const baseStatus: AreaStatus = {
   areaId: 42,
   areaName: "Packing Floor",
+  environmentType: "factory",
   submitted: false,
 };
 
@@ -102,11 +119,13 @@ describe("operator <AreaCard> manager-nudge surfaces", () => {
         <AreaCard
           status={baseStatus}
           selectedShift="A"
+          assignedAreas={[baseStatus]}
           dueState="ok"
           dueInfo={undefined}
           recentForSubmission={undefined}
           lastGood={null}
           activeNudges={[makeNudge()]}
+          encouragementMinPercent={80}
         />,
       ),
     );
@@ -125,11 +144,13 @@ describe("operator <AreaCard> manager-nudge surfaces", () => {
         <AreaCard
           status={baseStatus}
           selectedShift="A"
+          assignedAreas={[baseStatus]}
           dueState="ok"
           dueInfo={undefined}
           recentForSubmission={undefined}
           lastGood={null}
           activeNudges={[]}
+          encouragementMinPercent={80}
         />,
       ),
     );
@@ -144,6 +165,7 @@ describe("operator <AreaCard> manager-nudge surfaces", () => {
         <AreaCard
           status={baseStatus}
           selectedShift="A"
+          assignedAreas={[baseStatus]}
           dueState="ok"
           dueInfo={undefined}
           recentForSubmission={undefined}
@@ -152,6 +174,7 @@ describe("operator <AreaCard> manager-nudge surfaces", () => {
             makeNudge({ id: 1, machine: "Mixer-1" }),
             makeNudge({ id: 2, machine: "Mixer-2" }),
           ]}
+          encouragementMinPercent={80}
         />,
       ),
     );

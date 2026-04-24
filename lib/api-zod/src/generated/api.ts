@@ -625,6 +625,11 @@ export const GetOperatorStatusQueryParams = zod.object({
 export const GetOperatorStatusResponseItem = zod.object({
   areaId: zod.number(),
   areaName: zod.string(),
+  environmentType: zod
+    .enum(["factory", "warehouse", "home", "corporate_office"])
+    .describe(
+      "Physical environment of the area. Drives the environment-specific quick-start checklist shown to operators in the capture sheet.",
+    ),
   submitted: zod.boolean(),
   submission: zod
     .object({

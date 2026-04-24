@@ -15,6 +15,7 @@ export * from "./areaIdentificationResultType";
 export * from "./areaProfileType";
 export * from "./areaProfileTypeStatus";
 export * from "./areaStatusType";
+export * from "./areaStatusTypeEnvironmentType";
 export * from "./areaTrendPointType";
 export * from "./areaTrendType";
 export * from "./areaTrendTypeEnvironmentType";

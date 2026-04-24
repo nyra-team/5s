@@ -1,4 +1,4 @@
-import { Factory, Warehouse, Home, Building2 } from "lucide-react";
+import { Factory, Warehouse, Home, Building2, ListChecks } from "lucide-react";
 import type { ComponentType } from "react";
 
 export type EnvironmentType = "factory" | "warehouse" | "home" | "corporate_office";
@@ -8,6 +8,42 @@ export const ENVIRONMENT_LABELS: Record<EnvironmentType, string> = {
   warehouse: "Warehouse",
   home: "Home",
   corporate_office: "Corporate Office",
+};
+
+// Quick-start "what to include in your walk-through" hints shown to operators
+// in the capture sheet, tailored to the area's environmentType. Kept to 3-5
+// short bullets per environment so the list is scannable on a phone before
+// the operator hits record. The Corporate Office set is the original
+// motivator — desks/meeting rooms/kitchen/cupboards/print zones are the
+// least obvious targets in an office 5S walk-through.
+export const ENVIRONMENT_CHECKLIST: Record<EnvironmentType, string[]> = {
+  factory: [
+    "Walk past every machine and workstation",
+    "Pan over PPE racks and emergency exits",
+    "Capture chemical or oil storage areas",
+    "Show the scrap and waste collection points",
+  ],
+  warehouse: [
+    "Walk each aisle end-to-end",
+    "Capture the loading dock and outbound staging",
+    "Show forklift and pallet-jack parking spots",
+    "Pan over the receiving area and inventory racks",
+    "Include spill kits and fire-safety stations",
+  ],
+  home: [
+    "Walk through every room you're auditing",
+    "Open the pantry and main cupboards",
+    "Capture the kitchen sink and counters",
+    "Show the laundry or utility area",
+    "Include shared spaces like the entryway",
+  ],
+  corporate_office: [
+    "Walk past every desk in the workspace",
+    "Open meeting room doors and pan inside",
+    "Capture the shared kitchen and sink",
+    "Show storage cupboards and supply closets",
+    "Include the printer and copy zones",
+  ],
 };
 
 const ENVIRONMENT_ICONS: Record<EnvironmentType, ComponentType<{ className?: string }>> = {
@@ -60,5 +96,47 @@ export function EnvironmentBadge({
       <Icon />
       {ENVIRONMENT_LABELS[type]}
     </span>
+  );
+}
+
+// Renders the environment-specific quick-start checklist as a compact card
+// in the operator capture sheet. Lives next to ProfileHint so the operator
+// sees both "what good looks like" (from the AI profile) AND "what to point
+// the camera at" (from the static, environment-aware list) before they
+// hit record.
+export function EnvironmentChecklist({
+  type,
+  testId = "environment-checklist",
+}: {
+  type: EnvironmentType;
+  testId?: string;
+}) {
+  const items = ENVIRONMENT_CHECKLIST[type];
+  if (!items || items.length === 0) return null;
+  return (
+    <div
+      className="rounded-xl bg-secondary/60 p-3 space-y-2"
+      data-testid={testId}
+      data-environment={type}
+    >
+      <p className="eyebrow inline-flex items-center gap-1.5">
+        <ListChecks className="w-3 h-3" /> Include in your walk-through
+      </p>
+      <ul className="space-y-1">
+        {items.map((item, i) => (
+          <li
+            key={i}
+            className="text-[12.5px] text-foreground/85 leading-snug flex gap-2 items-start"
+            data-testid={`${testId}-item-${i}`}
+          >
+            <span
+              className="mt-1.5 inline-block w-1 h-1 rounded-full bg-foreground/60 shrink-0"
+              aria-hidden="true"
+            />
+            <span className="flex-1">{item}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

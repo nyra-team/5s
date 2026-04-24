@@ -507,9 +507,24 @@ export interface CurrentShift {
   endTime: string;
 }
 
+/**
+ * Physical environment of the area. Drives the environment-specific quick-start checklist shown to operators in the capture sheet.
+ */
+export type AreaStatusEnvironmentType =
+  (typeof AreaStatusEnvironmentType)[keyof typeof AreaStatusEnvironmentType];
+
+export const AreaStatusEnvironmentType = {
+  factory: "factory",
+  warehouse: "warehouse",
+  home: "home",
+  corporate_office: "corporate_office",
+} as const;
+
 export interface AreaStatus {
   areaId: number;
   areaName: string;
+  /** Physical environment of the area. Drives the environment-specific quick-start checklist shown to operators in the capture sheet. */
+  environmentType: AreaStatusEnvironmentType;
   submitted: boolean;
   submission?: Submission;
 }

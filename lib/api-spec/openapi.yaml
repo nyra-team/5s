@@ -1532,11 +1532,17 @@ components:
           type: integer
         areaName:
           type: string
+        environmentType:
+          type: string
+          enum: [factory, warehouse, home, corporate_office]
+          description: >-
+            Physical environment of the area. Drives the environment-specific
+            quick-start checklist shown to operators in the capture sheet.
         submitted:
           type: boolean
         submission:
           $ref: "#/components/schemas/Submission"
-      required: [areaId, areaName, submitted]
+      required: [areaId, areaName, environmentType, submitted]
 
     Escalation:
       type: object

@@ -664,6 +664,7 @@ router.get("/operator/status", authMiddleware, async (req, res): Promise<void> =
     return {
       areaId: area.id,
       areaName: area.name,
+      environmentType: area.environmentType,
       submitted: !!sub,
       ...(sub ? { submission: sub } : {}),
     };

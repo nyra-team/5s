@@ -85,6 +85,7 @@ import {
 } from "@/lib/capture-drafts";
 import { getShiftLabels } from "@/lib/theme";
 import { useEffectiveOperatorThresholds } from "@/lib/operator-thresholds";
+import { EnvironmentChecklist, normalizeEnvironment } from "@/lib/environment";
 
 const SHIFT_OPTIONS = getShiftLabels();
 
@@ -1748,6 +1749,14 @@ function CaptureSheet({
                 </button>
               )}
             </div>
+          )}
+
+          {mode === "create" && !previewUrl && (
+            <EnvironmentChecklist
+              type={normalizeEnvironment(
+                assignedAreas.find((a) => a.areaId === chosenAreaId)?.environmentType,
+              )}
+            />
           )}
 
           <ProfileHint profile={profile} lastGood={lastGood} />
