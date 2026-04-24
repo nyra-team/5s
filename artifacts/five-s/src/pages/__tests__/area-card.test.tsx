@@ -12,7 +12,8 @@
  * the parent will re-render the same card with [] once the query is refetched.
  */
 import { describe, test, expect, vi, beforeEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
@@ -78,6 +79,7 @@ vi.mock("@/lib/capture-drafts", () => ({
 }));
 
 import { AreaCard } from "@/pages/operator";
+import { loadCaptureDraft, peekCaptureDraftMeta } from "@/lib/capture-drafts";
 import type { AreaStatus, Nudge, Submission } from "@workspace/api-client-react";
 
 function withQueryClient(node: ReactNode) {
@@ -112,6 +114,14 @@ function makeNudge(overrides: Partial<Nudge> = {}): Nudge {
 describe("operator <AreaCard> manager-nudge surfaces", () => {
   beforeEach(() => {
     cleanup();
+    // Reset capture-draft mock call history between tests so the
+    // "pill triggers loadCaptureDraft" assertions can't accidentally
+    // pass on stale calls from a previous test in this file.
+    vi.mocked(loadCaptureDraft).mockReset();
+    vi.mocked(peekCaptureDraftMeta).mockReset();
+    // Re-establish the default (no-draft) resolved value.
+    vi.mocked(loadCaptureDraft).mockResolvedValue(null);
+    vi.mocked(peekCaptureDraftMeta).mockResolvedValue(null);
   });
 
   test("renders the nudge pill AND banner when activeNudges is non-empty", () => {
@@ -320,6 +330,89 @@ describe("operator <AreaCard> manager-nudge surfaces", () => {
       screen.queryByTestId(`area-observed-issues-${baseStatus.areaId}`),
     ).toBeNull();
     expect(screen.queryByText("Observed issues")).toBeNull();
+  });
+
+  test("renders the 'Draft saved' pill as a <button> that hydrates the draft on click (regression for task #78)", async () => {
+    // Resolve a saved draft from the metadata peek so the pending card surfaces
+    // the resume pill. If a future refactor of <AreaCard> demotes this back to
+    // a read-only <p>, the tag assertion below fails — and if the click no
+    // longer triggers the lazy hydration path, the loadCaptureDraft assertion
+    // fails. Either failure means operators have lost the one-tap resume UX.
+    const peek = vi.mocked(peekCaptureDraftMeta);
+    const load = vi.mocked(loadCaptureDraft);
+    peek.mockResolvedValueOnce({ savedAt: Date.now() - 30_000 });
+    load.mockResolvedValueOnce(null);
+
+    render(
+      withQueryClient(
+        <AreaCard
+          status={baseStatus}
+          selectedShift="A"
+          assignedAreas={[baseStatus]}
+          dueState="ok"
+          dueInfo={undefined}
+          recentForSubmission={undefined}
+          lastGood={null}
+          activeNudges={[]}
+          encouragementMinPercent={80}
+        />,
+      ),
+    );
+
+    // The pill is rendered after the peekCaptureDraftMeta promise resolves
+    // inside an effect — wait for it to appear.
+    const pill = await screen.findByTestId(`pill-draft-saved-${baseStatus.areaId}`);
+    // The whole point of the regression: the pill MUST be a real button so
+    // it's tappable, focusable, and keyboard-activatable. A <p> would silently
+    // break the resume flow.
+    expect(pill.tagName).toBe("BUTTON");
+    expect(pill).toHaveAttribute("type", "button");
+
+    // Tap → should kick off the lazy hydration that pulls the draft media out
+    // of IndexedDB. We don't care about the resolved value here, only that the
+    // wiring is intact.
+    expect(load).not.toHaveBeenCalled();
+    await userEvent.click(pill);
+    await waitFor(() => {
+      expect(load).toHaveBeenCalledTimes(1);
+    });
+    expect(load).toHaveBeenCalledWith(99, baseStatus.areaId);
+  });
+
+  test("activates the 'Draft saved' pill via the keyboard (Enter) just like a click", async () => {
+    // Bonus coverage: a real <button> auto-activates on Enter, but if a
+    // future refactor wraps the pill in a non-interactive element with a
+    // role hack, this test catches it.
+    const peek = vi.mocked(peekCaptureDraftMeta);
+    const load = vi.mocked(loadCaptureDraft);
+    peek.mockResolvedValueOnce({ savedAt: Date.now() - 30_000 });
+    load.mockResolvedValueOnce(null);
+
+    render(
+      withQueryClient(
+        <AreaCard
+          status={baseStatus}
+          selectedShift="A"
+          assignedAreas={[baseStatus]}
+          dueState="ok"
+          dueInfo={undefined}
+          recentForSubmission={undefined}
+          lastGood={null}
+          activeNudges={[]}
+          encouragementMinPercent={80}
+        />,
+      ),
+    );
+
+    const pill = await screen.findByTestId(`pill-draft-saved-${baseStatus.areaId}`);
+    pill.focus();
+    expect(pill).toHaveFocus();
+    expect(load).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(load).toHaveBeenCalledTimes(1);
+    });
+    expect(load).toHaveBeenCalledWith(99, baseStatus.areaId);
   });
 
   test("shows a count badge on the pill when multiple nudges are open for the area", () => {
