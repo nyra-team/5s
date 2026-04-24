@@ -1510,6 +1510,11 @@ components:
           type: string
           format: date-time
           nullable: true
+        lastOperatorDismissedNudgeAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the operator most recently dismissed a nudge for this area in the current shift without submitting fresh evidence. Null if no such dismissal occurred.
       required: [areaId, areaName]
 
     LiveShiftOverdueCheck:
@@ -1530,6 +1535,11 @@ components:
           type: string
           format: date-time
           nullable: true
+        lastOperatorDismissedNudgeAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the operator most recently dismissed a nudge for this area+machine in the current shift without submitting fresh evidence. Null if no such dismissal occurred.
       required: [areaId, areaName, overdueSinceMinutes, cadenceSeconds]
 
     LiveShiftLowScoring:

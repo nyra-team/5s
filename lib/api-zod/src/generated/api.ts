@@ -837,6 +837,12 @@ export const GetLiveShiftResponse = zod.object({
       areaId: zod.number(),
       areaName: zod.string(),
       lastNudgeAt: zod.coerce.date().nullish(),
+      lastOperatorDismissedNudgeAt: zod.coerce
+        .date()
+        .nullish()
+        .describe(
+          "When the operator most recently dismissed a nudge for this area in the current shift without submitting fresh evidence. Null if no such dismissal occurred.",
+        ),
     }),
   ),
   overdueChecks: zod.array(
@@ -847,6 +853,12 @@ export const GetLiveShiftResponse = zod.object({
       overdueSinceMinutes: zod.number(),
       cadenceSeconds: zod.number(),
       lastNudgeAt: zod.coerce.date().nullish(),
+      lastOperatorDismissedNudgeAt: zod.coerce
+        .date()
+        .nullish()
+        .describe(
+          "When the operator most recently dismissed a nudge for this area+machine in the current shift without submitting fresh evidence. Null if no such dismissal occurred.",
+        ),
     }),
   ),
   lowScoring: zod.array(

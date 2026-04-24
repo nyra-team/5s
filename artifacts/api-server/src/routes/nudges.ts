@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
-import { and, eq, isNull, inArray, or, sql } from "drizzle-orm";
+import { and, eq, isNull, isNotNull, inArray, or, gte, sql } from "drizzle-orm";
 import { db, nudgesTable, areasTable, usersTable } from "@workspace/db";
+import type { NudgeDismissReason } from "@workspace/db";
 import { authMiddleware, requireRole } from "../lib/auth";
 
 const router: IRouter = Router();
@@ -124,6 +125,7 @@ router.post(
   authMiddleware,
   requireRole("OPERATOR"),
   async (req, res): Promise<void> => {
+    const { userId } = (req as any).user as { userId: number };
     const id = Number.parseInt(String(req.params.id), 10);
     if (!Number.isFinite(id) || id <= 0) {
       res.status(400).json({ error: "Invalid id" });
@@ -141,9 +143,10 @@ router.post(
     }
 
     if (existing.dismissedAt == null) {
+      const reason: NudgeDismissReason = "OPERATOR_DISMISS";
       await db
         .update(nudgesTable)
-        .set({ dismissedAt: new Date() })
+        .set({ dismissedAt: new Date(), dismissedByUserId: userId, dismissReason: reason })
         .where(and(eq(nudgesTable.id, id), isNull(nudgesTable.dismissedAt)));
     }
 
@@ -218,14 +221,16 @@ export async function dismissNudgesForSubmission(args: {
   areaId: number;
   shift: string;
   machineTag: string | null;
+  userId: number;
 }): Promise<void> {
   const machinePredicate = args.machineTag
     ? or(isNull(nudgesTable.machine), eq(nudgesTable.machine, args.machineTag))
     : isNull(nudgesTable.machine);
 
+  const reason: NudgeDismissReason = "SUBMISSION";
   await db
     .update(nudgesTable)
-    .set({ dismissedAt: new Date() })
+    .set({ dismissedAt: new Date(), dismissedByUserId: args.userId, dismissReason: reason })
     .where(
       and(
         eq(nudgesTable.areaId, args.areaId),
@@ -273,6 +278,68 @@ export async function getLatestActiveNudgeByArea(): Promise<Map<number, Date>> {
     const prev = map.get(r.areaId);
     if (!prev || prev.getTime() < r.createdAt.getTime()) {
       map.set(r.areaId, r.createdAt);
+    }
+  }
+  return map;
+}
+
+// Helpers for /shift/live: surface nudges the operator explicitly dismissed
+// without submitting fresh evidence, so managers can spot habitual
+// "swipe-away" behaviour. We restrict to the current shift window so a stale
+// dismissal from yesterday doesn't keep flagging the area.
+const OPERATOR_DISMISS_REASON: NudgeDismissReason = "OPERATOR_DISMISS";
+
+export async function getOperatorDismissedNudgeByArea(
+  sinceDismissedAt: Date,
+): Promise<Map<number, Date>> {
+  const rows = await db
+    .select({
+      areaId: nudgesTable.areaId,
+      dismissedAt: nudgesTable.dismissedAt,
+    })
+    .from(nudgesTable)
+    .where(
+      and(
+        eq(nudgesTable.dismissReason, OPERATOR_DISMISS_REASON),
+        isNotNull(nudgesTable.dismissedAt),
+        gte(nudgesTable.dismissedAt, sinceDismissedAt),
+      ),
+    );
+  const map = new Map<number, Date>();
+  for (const r of rows) {
+    if (!r.dismissedAt) continue;
+    const prev = map.get(r.areaId);
+    if (!prev || prev.getTime() < r.dismissedAt.getTime()) {
+      map.set(r.areaId, r.dismissedAt);
+    }
+  }
+  return map;
+}
+
+export async function getOperatorDismissedNudgesByAreaMachine(
+  sinceDismissedAt: Date,
+): Promise<Map<string, Date>> {
+  const rows = await db
+    .select({
+      areaId: nudgesTable.areaId,
+      machine: nudgesTable.machine,
+      dismissedAt: nudgesTable.dismissedAt,
+    })
+    .from(nudgesTable)
+    .where(
+      and(
+        eq(nudgesTable.dismissReason, OPERATOR_DISMISS_REASON),
+        isNotNull(nudgesTable.dismissedAt),
+        gte(nudgesTable.dismissedAt, sinceDismissedAt),
+      ),
+    );
+  const map = new Map<string, Date>();
+  for (const r of rows) {
+    if (!r.dismissedAt) continue;
+    const key = `${r.areaId}|${r.machine ?? ""}`;
+    const prev = map.get(key);
+    if (!prev || prev.getTime() < r.dismissedAt.getTime()) {
+      map.set(key, r.dismissedAt);
     }
   }
   return map;

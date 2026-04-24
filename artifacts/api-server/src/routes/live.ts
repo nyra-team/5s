@@ -21,6 +21,8 @@ import {
 import {
   getLatestActiveNudgeByArea,
   getLatestActiveNudgesByAreaMachine,
+  getOperatorDismissedNudgeByArea,
+  getOperatorDismissedNudgesByAreaMachine,
 } from "./nudges";
 
 const router: IRouter = Router();
@@ -55,12 +57,19 @@ router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, r
   const submittedSet = new Set(submittedThisShift.map((r) => r.areaId));
   const allAreas = await db.select().from(areasTable).orderBy(areasTable.name);
   const nudgesByArea = await getLatestActiveNudgeByArea();
+  // Operator-dismissed-without-resubmit nudges, scoped to this shift window so
+  // an old swipe-away from yesterday doesn't keep flagging the area today.
+  const operatorDismissedByArea = await getOperatorDismissedNudgeByArea(start);
   const pendingAreas = allAreas
     .filter((a) => !submittedSet.has(a.id))
     .map((a) => ({
       areaId: a.id,
       areaName: a.name,
       lastNudgeAt: nudgesByArea.get(a.id) ?? null,
+      // Pending areas have no submission this shift by definition, so any
+      // operator-dismissed nudge here is unambiguously a "swipe-away without
+      // re-capturing" event we want managers to see.
+      lastOperatorDismissedNudgeAt: operatorDismissedByArea.get(a.id) ?? null,
     }));
 
   // Overdue checks: area_schedules whose nextDueAt is in the past, joined to areas.
@@ -80,23 +89,31 @@ router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, r
     .where(isNotNull(areaSchedulesTable.nextDueAt));
 
   const nudgesByAreaMachine = await getLatestActiveNudgesByAreaMachine();
+  // Same shift window as pendingAreas: an overdue check accompanied by a
+  // recent operator-dismissed nudge means the operator silenced the reminder
+  // instead of capturing fresh evidence.
+  const operatorDismissedByAreaMachine = await getOperatorDismissedNudgesByAreaMachine(start);
   const overdueChecks = schedules
     .filter((s) => s.nextDueAt && s.nextDueAt.getTime() <= now.getTime())
     // Only surface per-machine overdue rows once the area is TRAINED — same rule
     // as the operator's "next checks" feed, so managers don't see noise from
     // machines we're still learning about.
     .filter((s) => s.machine === AREA_BASELINE_KEY || s.profileStatus === "TRAINED")
-    .map((s) => ({
-      areaId: s.areaId,
-      areaName: s.areaName,
-      machine: s.machine === AREA_BASELINE_KEY ? null : s.machine,
-      overdueSinceMinutes: s.nextDueAt
-        ? Math.round((now.getTime() - s.nextDueAt.getTime()) / 60000)
-        : 0,
-      cadenceSeconds: s.cadenceSeconds,
-      lastNudgeAt:
-        nudgesByAreaMachine.get(`${s.areaId}|${s.machine === AREA_BASELINE_KEY ? "" : s.machine}`) ?? null,
-    }))
+    .map((s) => {
+      const nudgeKey = `${s.areaId}|${s.machine === AREA_BASELINE_KEY ? "" : s.machine}`;
+      return {
+        areaId: s.areaId,
+        areaName: s.areaName,
+        machine: s.machine === AREA_BASELINE_KEY ? null : s.machine,
+        overdueSinceMinutes: s.nextDueAt
+          ? Math.round((now.getTime() - s.nextDueAt.getTime()) / 60000)
+          : 0,
+        cadenceSeconds: s.cadenceSeconds,
+        lastNudgeAt: nudgesByAreaMachine.get(nudgeKey) ?? null,
+        lastOperatorDismissedNudgeAt:
+          operatorDismissedByAreaMachine.get(nudgeKey) ?? null,
+      };
+    })
     .sort((a, b) => b.overdueSinceMinutes - a.overdueSinceMinutes);
 
   // Low scoring submissions this shift (< 60%). scoreTotal is 0-25; percent = total*4.

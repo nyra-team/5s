@@ -436,6 +436,8 @@ export interface LiveShiftPendingArea {
   areaId: number;
   areaName: string;
   lastNudgeAt?: string | null;
+  /** When the operator most recently dismissed a nudge for this area in the current shift without submitting fresh evidence. Null if no such dismissal occurred. */
+  lastOperatorDismissedNudgeAt?: string | null;
 }
 
 export interface LiveShiftOverdueCheck {
@@ -445,6 +447,8 @@ export interface LiveShiftOverdueCheck {
   overdueSinceMinutes: number;
   cadenceSeconds: number;
   lastNudgeAt?: string | null;
+  /** When the operator most recently dismissed a nudge for this area+machine in the current shift without submitting fresh evidence. Null if no such dismissal occurred. */
+  lastOperatorDismissedNudgeAt?: string | null;
 }
 
 export interface LiveShiftLowScoring {

@@ -52,6 +52,7 @@ vi.mock("@/lib/auth", () => ({
 // which fails the whole run even when assertions pass.
 vi.mock("@/lib/capture-drafts", () => ({
   loadCaptureDraft: vi.fn(async () => null),
+  peekCaptureDraftMeta: vi.fn(async () => null),
   saveCaptureDraft: vi.fn(async () => undefined),
   deleteCaptureDraft: vi.fn(async () => undefined),
   purgeStaleCaptureDrafts: vi.fn(async () => undefined),

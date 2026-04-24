@@ -13,7 +13,7 @@ import {
   type CreateNudgeBodyShift,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Bell, CheckCircle2, Clock, Eye, Inbox, MapPin, Sparkles } from "lucide-react";
+import { Activity, AlertTriangle, Bell, BellOff, CheckCircle2, Clock, Eye, Inbox, MapPin, Sparkles } from "lucide-react";
 import { format, formatDistanceToNowStrict } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -72,6 +72,19 @@ function NudgeButton({
   );
 }
 
+function DismissedWithoutSubmitChip({ at }: { at: Date | string }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/15 rounded-full px-2 py-0.5 mt-1.5"
+      title="Operator dismissed the nudge without submitting fresh evidence"
+      data-testid="indicator-operator-dismissed"
+    >
+      <BellOff className="w-3 h-3" />
+      Operator dismissed {timeAgo(at)}
+    </span>
+  );
+}
+
 function PendingAreaCard({ item, shift }: { item: LiveShiftPendingArea; shift: CreateNudgeBodyShift }) {
   return (
     <div className="bg-card rounded-2xl shadow-soft p-4 flex items-center justify-between gap-3" data-testid={`card-pending-${item.areaId}`}>
@@ -84,6 +97,9 @@ function PendingAreaCard({ item, shift }: { item: LiveShiftPendingArea; shift: C
           No submission yet this shift
           {item.lastNudgeAt && ` · last nudged ${timeAgo(item.lastNudgeAt)}`}
         </p>
+        {item.lastOperatorDismissedNudgeAt && (
+          <DismissedWithoutSubmitChip at={item.lastOperatorDismissedNudgeAt} />
+        )}
       </div>
       <NudgeButton areaId={item.areaId} shift={shift} lastNudgeAt={item.lastNudgeAt} />
     </div>
@@ -109,6 +125,9 @@ function OverdueCard({ item, shift }: { item: LiveShiftOverdueCheck; shift: Crea
           {overdueText}
           {item.lastNudgeAt && ` · last nudged ${timeAgo(item.lastNudgeAt)}`}
         </p>
+        {item.lastOperatorDismissedNudgeAt && (
+          <DismissedWithoutSubmitChip at={item.lastOperatorDismissedNudgeAt} />
+        )}
       </div>
       <NudgeButton areaId={item.areaId} machine={item.machine ?? undefined} shift={shift} lastNudgeAt={item.lastNudgeAt} />
     </div>

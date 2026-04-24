@@ -316,7 +316,7 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
   // Implicitly clear any active manager nudges this submission satisfies so the
   // operator's badge disappears and Live shift no longer flags the area.
   try {
-    await dismissNudgesForSubmission({ areaId, shift, machineTag: machineTag ?? null });
+    await dismissNudgesForSubmission({ areaId, shift, machineTag: machineTag ?? null, userId });
   } catch (err) {
     logger.error({ err }, "dismissNudgesForSubmission failed");
   }
@@ -416,6 +416,7 @@ router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req
       areaId: existing.areaId,
       shift,
       machineTag: machineTag ?? null,
+      userId,
     });
   } catch (err) {
     logger.error({ err }, "dismissNudgesForSubmission failed on reupload");

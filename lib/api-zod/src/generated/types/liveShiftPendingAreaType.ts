@@ -10,4 +10,6 @@ export interface LiveShiftPendingAreaType {
   areaId: number;
   areaName: string;
   lastNudgeAt?: Date | null;
+  /** When the operator most recently dismissed a nudge for this area in the current shift without submitting fresh evidence. Null if no such dismissal occurred. */
+  lastOperatorDismissedNudgeAt?: Date | null;
 }
