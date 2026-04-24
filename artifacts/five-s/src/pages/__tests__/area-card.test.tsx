@@ -33,7 +33,9 @@ vi.mock("@workspace/api-client-react", async () => {
     useCreateSubmission: idle,
     useReuploadSubmission: idle,
     // AreaCard now also calls useIdentifySubmissionArea() and useDismissNudge()
-    // — provide both so the component can render in isolation here.
+    // — provide both so the component can render in isolation here. The
+    // identify mock returns a real-shape payload (added in task #83) since
+    // the capture sheet awaits it before showing candidates.
     useIdentifySubmissionArea: () => ({
       mutate: vi.fn(),
       mutateAsync: vi.fn(async () => ({

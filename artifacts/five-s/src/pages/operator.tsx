@@ -1338,10 +1338,17 @@ export function AreaCard({
       // chosenAreaId is the AI-detected area when detection succeeded and
       // the operator didn't override it; otherwise it's the originally tapped
       // area. Either way it's the source of truth for which area gets the row.
+      // We also send the originally tapped area (so the server can persist
+      // intent vs. chosen and surface drift to managers) and the AI's top
+      // suggestion, if any, so the server can log explicit overrides for
+      // future profile-prompt tuning.
+      const aiTopSuggestion = identification?.candidates[0]?.areaId;
       createSubmission.mutate(
         {
           data: {
             areaId: chosenAreaId,
+            tappedAreaId: status.areaId,
+            aiSuggestedAreaId: aiTopSuggestion,
             media: media as Blob,
             shift: selectedShift,
             machineTag: tag,

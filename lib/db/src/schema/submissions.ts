@@ -7,6 +7,12 @@ import { usersTable } from "./users";
 export const submissionsTable = pgTable("submissions", {
   id: serial("id").primaryKey(),
   areaId: integer("area_id").notNull().references(() => areasTable.id),
+  // The area the operator originally tapped before auto-detect (or a manual
+  // override) may have switched the chosen area. Persisted so we can measure
+  // detection drift per area / per operator and feed corrections back into
+  // the area-identification prompt. Nullable because legacy rows from before
+  // this column existed don't carry an originally-tapped area.
+  tappedAreaId: integer("tapped_area_id").references(() => areasTable.id),
   userId: integer("user_id").notNull().references(() => usersTable.id),
   shift: text("shift").notNull(),
   scoreTotal: integer("score_total").notNull(),

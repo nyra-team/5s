@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, gte, lt, sql, count, avg, desc, max, isNotNull } from "drizzle-orm";
+import { eq, and, gte, lt, sql, count, avg, desc, max, isNotNull, inArray } from "drizzle-orm";
 import {
   db,
   submissionsTable,
@@ -483,6 +483,142 @@ router.get(
         dismissedAt: r.dismissedAt ?? new Date(0),
       })),
     );
+  },
+);
+
+// Auto-detect agreement: how often the area the operator originally tapped
+// matched the area their submission was actually saved against. Excludes
+// rows with no recorded `tappedAreaId` (legacy rows from before drift
+// instrumentation existed) so the rate isn't artificially inflated by
+// pre-instrumentation history.
+router.get(
+  "/dashboard/area-detection-agreement",
+  authMiddleware,
+  requireRole("MANAGER"),
+  async (req, res): Promise<void> => {
+    const rawDays = parseInt(String(req.query.days ?? ""), 10);
+    const days =
+      Number.isFinite(rawDays) && rawDays >= 1 && rawDays <= 90 ? rawDays : 30;
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const rows = await db
+      .select({
+        areaId: submissionsTable.areaId,
+        tappedAreaId: submissionsTable.tappedAreaId,
+        userId: submissionsTable.userId,
+      })
+      .from(submissionsTable)
+      .where(
+        and(
+          isNotNull(submissionsTable.tappedAreaId),
+          gte(submissionsTable.createdAt, since),
+        ),
+      );
+
+    const agreementPercent = (agreed: number, total: number): number | null =>
+      total === 0 ? null : Math.round((agreed / total) * 100);
+
+    const overallTotal = rows.length;
+    const overallAgreed = rows.reduce(
+      (acc, r) => acc + (r.tappedAreaId === r.areaId ? 1 : 0),
+      0,
+    );
+
+    // Per-area: bucket each row under BOTH the tapped area and the chosen
+    // area when they differ, so drift surfaces against whichever area the
+    // manager is currently looking at. A row that agrees only contributes
+    // to a single area (tapped == chosen).
+    type AreaAgg = { total: number; agreed: number };
+    const perAreaMap = new Map<number, AreaAgg>();
+    const bumpArea = (areaId: number, agreed: boolean) => {
+      const cur = perAreaMap.get(areaId) ?? { total: 0, agreed: 0 };
+      cur.total += 1;
+      if (agreed) cur.agreed += 1;
+      perAreaMap.set(areaId, cur);
+    };
+    for (const r of rows) {
+      const agreed = r.tappedAreaId === r.areaId;
+      if (r.tappedAreaId != null) bumpArea(r.tappedAreaId, agreed);
+      if (!agreed) bumpArea(r.areaId, false);
+    }
+
+    type OperatorAgg = { total: number; agreed: number };
+    const perOperatorMap = new Map<number, OperatorAgg>();
+    for (const r of rows) {
+      const cur = perOperatorMap.get(r.userId) ?? { total: 0, agreed: 0 };
+      cur.total += 1;
+      if (r.tappedAreaId === r.areaId) cur.agreed += 1;
+      perOperatorMap.set(r.userId, cur);
+    }
+
+    const areaIds = Array.from(perAreaMap.keys());
+    const userIds = Array.from(perOperatorMap.keys());
+    const [areaRows, userRows] = await Promise.all([
+      areaIds.length
+        ? db
+            .select({ id: areasTable.id, name: areasTable.name })
+            .from(areasTable)
+            .where(inArray(areasTable.id, areaIds))
+        : Promise.resolve([] as { id: number; name: string }[]),
+      userIds.length
+        ? db
+            .select({ id: usersTable.id, email: usersTable.email })
+            .from(usersTable)
+            .where(inArray(usersTable.id, userIds))
+        : Promise.resolve([] as { id: number; email: string }[]),
+    ]);
+    const areaNameById = new Map(areaRows.map((a) => [a.id, a.name]));
+    const userEmailById = new Map(userRows.map((u) => [u.id, u.email]));
+
+    const perArea = areaIds
+      .map((areaId) => {
+        const agg = perAreaMap.get(areaId)!;
+        return {
+          areaId,
+          areaName: areaNameById.get(areaId) ?? `Area #${areaId}`,
+          total: agg.total,
+          agreed: agg.agreed,
+          agreementPercent: agreementPercent(agg.agreed, agg.total),
+        };
+      })
+      // Sort lowest agreement first so attention lands on the worst offenders.
+      // Within ties, larger sample size first so the row is the most
+      // statistically meaningful one to act on.
+      .sort((a, b) => {
+        const ap = a.agreementPercent ?? 100;
+        const bp = b.agreementPercent ?? 100;
+        if (ap !== bp) return ap - bp;
+        return b.total - a.total;
+      });
+
+    const perOperator = userIds
+      .map((userId) => {
+        const agg = perOperatorMap.get(userId)!;
+        return {
+          userId,
+          userEmail: userEmailById.get(userId) ?? `user#${userId}`,
+          total: agg.total,
+          agreed: agg.agreed,
+          agreementPercent: agreementPercent(agg.agreed, agg.total),
+        };
+      })
+      .sort((a, b) => {
+        const ap = a.agreementPercent ?? 100;
+        const bp = b.agreementPercent ?? 100;
+        if (ap !== bp) return ap - bp;
+        return b.total - a.total;
+      });
+
+    res.json({
+      windowDays: days,
+      overall: {
+        total: overallTotal,
+        agreed: overallAgreed,
+        agreementPercent: agreementPercent(overallAgreed, overallTotal),
+      },
+      perArea,
+      perOperator,
+    });
   },
 );
 

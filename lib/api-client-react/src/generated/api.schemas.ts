@@ -559,6 +559,8 @@ export interface AIIssue {
 export interface Submission {
   id: number;
   areaId: number;
+  /** The area the operator originally tapped on the home screen before auto-detect (or a manual override) selected the final `areaId`. Null for submissions created before drift instrumentation existed. */
+  tappedAreaId?: number | null;
   areaName: string;
   userId: number;
   userEmail?: string;
@@ -680,6 +682,44 @@ export interface AreaTrend {
   status: AreaTrendStatus;
   trainedOnDate?: string | null;
   points: AreaTrendPoint[];
+}
+
+export interface AreaDetectionAgreementBucket {
+  /** Submissions in the window that recorded a `tappedAreaId`. */
+  total: number;
+  /** Submissions where `tappedAreaId === areaId`. */
+  agreed: number;
+  agreementPercent: number | null;
+}
+
+/**
+ * One row per area the operator either tapped or which was finally chosen, so drift in either direction is visible.
+ */
+export interface AreaDetectionAgreementAreaRow {
+  areaId: number;
+  areaName: string;
+  total: number;
+  agreed: number;
+  agreementPercent: number | null;
+}
+
+export interface AreaDetectionAgreementOperatorRow {
+  userId: number;
+  userEmail: string;
+  total: number;
+  agreed: number;
+  agreementPercent: number | null;
+}
+
+/**
+ * Auto-detect agreement metrics. `agreementPercent` is `agreed / total * 100` rounded to the nearest integer; null when there are no qualifying submissions.
+ */
+export interface AreaDetectionAgreement {
+  /** The size of the analysis window in days (echoed back from the request). */
+  windowDays: number;
+  overall: AreaDetectionAgreementBucket;
+  perArea: AreaDetectionAgreementAreaRow[];
+  perOperator: AreaDetectionAgreementOperatorRow[];
 }
 
 export interface DashboardSummary {
@@ -1050,7 +1090,12 @@ export const CreateSubmissionBodyShift = {
 } as const;
 
 export type CreateSubmissionBody = {
+  /** The area the submission is being saved against (auto-detected, manually overridden, or simply the tapped area). */
   areaId: number;
+  /** The area the operator originally tapped on the home screen, before auto-detect or a manual override. Recorded so we can analyze drift when it differs from `areaId`. */
+  tappedAreaId?: number;
+  /** Top auto-detect candidate at submission time, when one was available. Used to log corrections (operator overrode the AI's suggestion) for future profile-prompt tuning. */
+  aiSuggestedAreaId?: number;
   /** Video (preferred) or image file. Use this OR `photo`. */
   media?: Blob;
   /** Legacy image-only field (still accepted). */
@@ -1142,6 +1187,14 @@ export type GetDashboardOperatorDismissesParams = {
 
 export type GetDashboardOperatorDismissesDetailParams = {
   operatorId: number;
+  /**
+   * @minimum 1
+   * @maximum 90
+   */
+  days?: number;
+};
+
+export type GetAreaDetectionAgreementParams = {
   /**
    * @minimum 1
    * @maximum 90

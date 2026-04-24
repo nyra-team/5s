@@ -19,6 +19,7 @@ import type {
 import type {
   Area,
   AreaAssignmentList,
+  AreaDetectionAgreement,
   AreaIdentificationResult,
   AreaOperatorThresholds,
   AreaProfile,
@@ -37,6 +38,7 @@ import type {
   EscalationCount,
   FacilitySettings,
   GetActiveNudgesByAreaParams,
+  GetAreaDetectionAgreementParams,
   GetDashboardComplianceParams,
   GetDashboardOperatorDismissesDetailParams,
   GetDashboardOperatorDismissesParams,
@@ -1244,6 +1246,18 @@ export const createSubmission = async (
 ): Promise<Submission> => {
   const formData = new FormData();
   formData.append(`areaId`, createSubmissionBody.areaId.toString());
+  if (createSubmissionBody.tappedAreaId !== undefined) {
+    formData.append(
+      `tappedAreaId`,
+      createSubmissionBody.tappedAreaId.toString(),
+    );
+  }
+  if (createSubmissionBody.aiSuggestedAreaId !== undefined) {
+    formData.append(
+      `aiSuggestedAreaId`,
+      createSubmissionBody.aiSuggestedAreaId.toString(),
+    );
+  }
   if (createSubmissionBody.media !== undefined) {
     formData.append(`media`, createSubmissionBody.media);
   }
@@ -2269,6 +2283,116 @@ export function useGetDashboardOperatorDismissesDetail<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetDashboardOperatorDismissesDetailQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Aggregates agreement between `tappedAreaId` (intent) and `areaId` (chosen) over the requested window. Submissions with no recorded `tappedAreaId` (legacy rows) are excluded from the totals so the rate isn't diluted.
+ * @summary How often the auto-detected area matched the area the operator originally tapped
+ */
+export const getGetAreaDetectionAgreementUrl = (
+  params?: GetAreaDetectionAgreementParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/dashboard/area-detection-agreement?${stringifiedParams}`
+    : `/api/dashboard/area-detection-agreement`;
+};
+
+export const getAreaDetectionAgreement = async (
+  params?: GetAreaDetectionAgreementParams,
+  options?: RequestInit,
+): Promise<AreaDetectionAgreement> => {
+  return customFetch<AreaDetectionAgreement>(
+    getGetAreaDetectionAgreementUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAreaDetectionAgreementQueryKey = (
+  params?: GetAreaDetectionAgreementParams,
+) => {
+  return [
+    `/api/dashboard/area-detection-agreement`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAreaDetectionAgreementQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAreaDetectionAgreement>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetAreaDetectionAgreementParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAreaDetectionAgreement>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAreaDetectionAgreementQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAreaDetectionAgreement>>
+  > = ({ signal }) =>
+    getAreaDetectionAgreement(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAreaDetectionAgreement>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAreaDetectionAgreementQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAreaDetectionAgreement>>
+>;
+export type GetAreaDetectionAgreementQueryError = ErrorType<unknown>;
+
+/**
+ * @summary How often the auto-detected area matched the area the operator originally tapped
+ */
+
+export function useGetAreaDetectionAgreement<
+  TData = Awaited<ReturnType<typeof getAreaDetectionAgreement>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetAreaDetectionAgreementParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAreaDetectionAgreement>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAreaDetectionAgreementQueryOptions(
     params,
     options,
   );

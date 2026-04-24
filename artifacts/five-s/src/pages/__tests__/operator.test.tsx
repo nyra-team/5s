@@ -111,10 +111,11 @@ vi.mock("@workspace/api-client-react", () => {
       mutate: vi.fn(),
       isPending: false,
     }),
-    // Auto-detect area runs when the operator picks media in the capture sheet.
-    // The tests don't exercise the real network call, so a no-op mutation is
-    // enough — but the hook must exist on the mock or AreaCard crashes during
-    // render with "useIdentifySubmissionArea is not defined".
+    // Auto-detect area runs when the operator picks media in the capture sheet
+    // (added in task #83). The tests don't exercise the real network call, so
+    // a real-shape resolved value is enough — but the hook must exist on the
+    // mock or AreaCard crashes during render with "useIdentifySubmissionArea
+    // is not defined".
     useIdentifySubmissionArea: () => ({
       mutate: vi.fn(),
       mutateAsync: vi.fn(async () => ({

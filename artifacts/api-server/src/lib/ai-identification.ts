@@ -30,6 +30,13 @@ export interface IdentificationResult {
   rationale: string | null;
 }
 
+// Future profile rebuilds should mine the structured `area-detection-drift`
+// and `area-detection-correction` log entries (emitted from
+// routes/submissions.ts when an operator's tapped area or the AI's top
+// suggestion disagrees with the chosen area) plus the `tapped_area_id`
+// column on the submissions table. Treat operator overrides of the AI's
+// suggestion as the strongest signal that this prompt or the per-area
+// profile needs more discriminating examples for the contested areas.
 const IDENTIFICATION_PROMPT = `
 You are a vision assistant that decides which of several known factory areas a submitted photo or video most likely shows.
 

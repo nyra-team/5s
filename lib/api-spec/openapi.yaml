@@ -334,6 +334,13 @@ paths:
               properties:
                 areaId:
                   type: integer
+                  description: The area the submission is being saved against (auto-detected, manually overridden, or simply the tapped area).
+                tappedAreaId:
+                  type: integer
+                  description: The area the operator originally tapped on the home screen, before auto-detect or a manual override. Recorded so we can analyze drift when it differs from `areaId`.
+                aiSuggestedAreaId:
+                  type: integer
+                  description: Top auto-detect candidate at submission time, when one was available. Used to log corrections (operator overrode the AI's suggestion) for future profile-prompt tuning.
                 media:
                   type: string
                   format: binary
@@ -602,6 +609,28 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/OperatorDismissedNudge"
+
+  /dashboard/area-detection-agreement:
+    get:
+      operationId: getAreaDetectionAgreement
+      tags: [dashboard]
+      summary: How often the auto-detected area matched the area the operator originally tapped
+      description: Aggregates agreement between `tappedAreaId` (intent) and `areaId` (chosen) over the requested window. Submissions with no recorded `tappedAreaId` (legacy rows) are excluded from the totals so the rate isn't diluted.
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 30
+      responses:
+        "200":
+          description: Agreement metrics overall, per area, and per operator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaDetectionAgreement"
 
   /shift/current:
     get:
@@ -1798,6 +1827,10 @@ components:
           type: integer
         areaId:
           type: integer
+        tappedAreaId:
+          type: integer
+          nullable: true
+          description: The area the operator originally tapped on the home screen before auto-detect (or a manual override) selected the final `areaId`. Null for submissions created before drift instrumentation existed.
         areaName:
           type: string
         userId:
@@ -2081,6 +2114,72 @@ components:
           items:
             $ref: "#/components/schemas/AreaTrendPoint"
       required: [areaId, areaName, environmentType, status, points]
+
+    AreaDetectionAgreement:
+      type: object
+      description: Auto-detect agreement metrics. `agreementPercent` is `agreed / total * 100` rounded to the nearest integer; null when there are no qualifying submissions.
+      properties:
+        windowDays:
+          type: integer
+          description: The size of the analysis window in days (echoed back from the request).
+        overall:
+          $ref: "#/components/schemas/AreaDetectionAgreementBucket"
+        perArea:
+          type: array
+          items:
+            $ref: "#/components/schemas/AreaDetectionAgreementAreaRow"
+        perOperator:
+          type: array
+          items:
+            $ref: "#/components/schemas/AreaDetectionAgreementOperatorRow"
+      required: [windowDays, overall, perArea, perOperator]
+
+    AreaDetectionAgreementBucket:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Submissions in the window that recorded a `tappedAreaId`.
+        agreed:
+          type: integer
+          description: Submissions where `tappedAreaId === areaId`.
+        agreementPercent:
+          type: integer
+          nullable: true
+      required: [total, agreed, agreementPercent]
+
+    AreaDetectionAgreementAreaRow:
+      type: object
+      description: One row per area the operator either tapped or which was finally chosen, so drift in either direction is visible.
+      properties:
+        areaId:
+          type: integer
+        areaName:
+          type: string
+        total:
+          type: integer
+        agreed:
+          type: integer
+        agreementPercent:
+          type: integer
+          nullable: true
+      required: [areaId, areaName, total, agreed, agreementPercent]
+
+    AreaDetectionAgreementOperatorRow:
+      type: object
+      properties:
+        userId:
+          type: integer
+        userEmail:
+          type: string
+        total:
+          type: integer
+        agreed:
+          type: integer
+        agreementPercent:
+          type: integer
+          nullable: true
+      required: [userId, userEmail, total, agreed, agreementPercent]
 
     DashboardSummary:
       type: object

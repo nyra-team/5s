@@ -26,6 +26,7 @@ import "./sweep.test.js";
 import "./recover-pending-notifications.test.js";
 import "./preferences.test.js";
 import "./ai-reliability.test.js";
+import "./dashboard-area-detection-agreement.test.js";
 
 after(async () => {
   await closeServer();

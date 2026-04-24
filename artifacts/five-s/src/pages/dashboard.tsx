@@ -1,6 +1,21 @@
-import { useGetDashboardCompliance, useGetDashboardScores, useGetDashboardSummary, useListAreas, useGetAreaProfile, useGetDashboardTrends, useGetDashboardOperatorDismisses, useGetDashboardOperatorDismissesDetail, getGetDashboardOperatorDismissesDetailQueryKey, useGetDashboardAiReliability, type AreaTrend, type GetDashboardTrendsShift, type OperatorDismissSummary } from "@workspace/api-client-react";
+import {
+  useGetDashboardCompliance,
+  useGetDashboardScores,
+  useGetDashboardSummary,
+  useListAreas,
+  useGetAreaProfile,
+  useGetDashboardTrends,
+  useGetDashboardOperatorDismisses,
+  useGetDashboardOperatorDismissesDetail,
+  getGetDashboardOperatorDismissesDetailQueryKey,
+  useGetDashboardAiReliability,
+  useGetAreaDetectionAgreement,
+  type AreaTrend,
+  type GetDashboardTrendsShift,
+  type OperatorDismissSummary,
+} from "@workspace/api-client-react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from "recharts";
-import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle, Repeat } from "lucide-react";
+import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen, TrendingUp, ChevronRight, ChevronDown, XCircle, Repeat, Search } from "lucide-react";
 import { format, parseISO, formatDistanceToNow } from "date-fns";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
@@ -133,6 +148,8 @@ export default function Dashboard() {
       <OperatorDismissPanel />
 
       <LearningTrendPanel />
+
+      <DetectionAgreementPanel />
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-card rounded-2xl shadow-soft p-6">
@@ -791,6 +808,152 @@ function OperatorDismissPanel() {
   );
 }
 
+// Drift between intent (the area the operator tapped) and the area their
+// submission actually landed on. Surfaces an overall agreement rate plus
+// the worst-offender areas and operators so we can spot when auto-detect
+// is silently routing submissions to the wrong place.
+const AGREEMENT_WINDOW_DAYS = 30;
+const AGREEMENT_DRIFT_THRESHOLD = 90;
+
+function agreementTone(percent: number | null) {
+  if (percent === null) {
+    return {
+      text: "text-muted-foreground",
+      bg: "bg-secondary/60",
+      label: "No data",
+    };
+  }
+  if (percent >= 90)
+    return {
+      text: "text-emerald-700 dark:text-emerald-300",
+      bg: "bg-emerald-50 dark:bg-emerald-500/15",
+      label: `${percent}%`,
+    };
+  if (percent >= 70)
+    return {
+      text: "text-amber-700 dark:text-amber-300",
+      bg: "bg-amber-50 dark:bg-amber-500/15",
+      label: `${percent}%`,
+    };
+  return {
+    text: "text-rose-700 dark:text-rose-300",
+    bg: "bg-rose-50 dark:bg-rose-500/15",
+    label: `${percent}%`,
+  };
+}
+
+function DetectionAgreementPanel() {
+  const { data, isLoading } = useGetAreaDetectionAgreement({
+    days: AGREEMENT_WINDOW_DAYS,
+  });
+
+  if (isLoading) {
+    return (
+      <section className="bg-card rounded-2xl shadow-soft p-6">
+        <div className="h-20 bg-secondary rounded-xl animate-pulse" />
+      </section>
+    );
+  }
+  if (!data) return null;
+
+  const overall = data.overall;
+  const overallTone = agreementTone(overall.agreementPercent);
+
+  // Surface only rows with at least one disagreement so the panel is
+  // actionable. Cap the visible list so the dashboard doesn't grow without
+  // bound for facilities with a lot of areas/operators; the full breakdown
+  // can move into a dedicated page later if needed.
+  const driftAreas = data.perArea
+    .filter((row) => row.total - row.agreed > 0)
+    .slice(0, 6);
+  const driftOperators = data.perOperator
+    .filter((row) => row.total - row.agreed > 0)
+    .slice(0, 6);
+
+  const hasAnyData = overall.total > 0;
+
+  return (
+    <section
+      className="bg-card rounded-2xl shadow-soft p-6"
+      data-testid="detection-agreement-panel"
+    >
+      <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
+        <div>
+          <p className="eyebrow">Auto-detect quality</p>
+          <h2 className="text-lg font-semibold tracking-tight mt-1 flex items-center gap-2">
+            <Search className="w-4 h-4 text-primary" />
+            Area auto-detect agreement
+          </h2>
+          <p className="text-[12.5px] text-muted-foreground mt-1">
+            Last {data.windowDays} days · how often the chosen area matched the
+            area the operator originally tapped.
+          </p>
+        </div>
+        <div
+          className={`px-4 py-2 rounded-2xl ${overallTone.bg} ${overallTone.text} flex flex-col items-end`}
+          data-testid="detection-agreement-overall"
+        >
+          <span className="text-[11px] font-medium uppercase tracking-wide opacity-80">
+            Overall
+          </span>
+          <span className="text-[24px] font-semibold leading-none tabular-nums">
+            {overallTone.label}
+          </span>
+          {hasAnyData && (
+            <span className="text-[11px] opacity-80 mt-0.5">
+              {overall.agreed} of {overall.total} matched
+            </span>
+          )}
+        </div>
+      </div>
+
+      {!hasAnyData ? (
+        <p className="text-[13px] text-muted-foreground bg-secondary/40 rounded-xl px-4 py-3">
+          No submissions in this window have recorded an originally-tapped area
+          yet — once new submissions come in, drift will show up here.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <AgreementBreakdownTable
+            title="Areas with the most drift"
+            emptyMessage="Every area is at full agreement in this window."
+            rows={driftAreas.map((row) => ({
+              key: `area-${row.areaId}`,
+              label: row.areaName,
+              total: row.total,
+              agreed: row.agreed,
+              agreementPercent: row.agreementPercent,
+              testId: `detection-agreement-area-${row.areaId}`,
+            }))}
+          />
+          <AgreementBreakdownTable
+            title="Operators with the most drift"
+            emptyMessage="Every operator is at full agreement in this window."
+            rows={driftOperators.map((row) => ({
+              key: `op-${row.userId}`,
+              label: row.userEmail,
+              total: row.total,
+              agreed: row.agreed,
+              agreementPercent: row.agreementPercent,
+              testId: `detection-agreement-operator-${row.userId}`,
+            }))}
+          />
+        </div>
+      )}
+
+      {hasAnyData &&
+        overall.agreementPercent !== null &&
+        overall.agreementPercent < AGREEMENT_DRIFT_THRESHOLD && (
+          <p className="mt-4 text-[12px] text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-500/10 border border-amber-100 dark:border-amber-500/20 rounded-xl px-3 py-2">
+            Agreement is below {AGREEMENT_DRIFT_THRESHOLD}% — consider rebuilding
+            the per-area profiles for the areas above so auto-detect has a
+            better signal to discriminate against.
+          </p>
+        )}
+    </section>
+  );
+}
+
 function OperatorDismissRow({
   row,
   days,
@@ -891,5 +1054,61 @@ function OperatorDismissRow({
         </div>
       )}
     </li>
+  );
+}
+
+function AgreementBreakdownTable({
+  title,
+  emptyMessage,
+  rows,
+}: {
+  title: string;
+  emptyMessage: string;
+  rows: Array<{
+    key: string;
+    label: string;
+    total: number;
+    agreed: number;
+    agreementPercent: number | null;
+    testId: string;
+  }>;
+}) {
+  return (
+    <div className="rounded-xl bg-secondary/30 p-4">
+      <p className="eyebrow mb-3">{title}</p>
+      {rows.length === 0 ? (
+        <p className="text-[12.5px] text-muted-foreground italic">
+          {emptyMessage}
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {rows.map((row) => {
+            const tone = agreementTone(row.agreementPercent);
+            const disagreed = row.total - row.agreed;
+            return (
+              <li
+                key={row.key}
+                className="flex items-center justify-between gap-3 text-[13px]"
+                data-testid={row.testId}
+              >
+                <span className="truncate min-w-0" title={row.label}>
+                  {row.label}
+                </span>
+                <span className="flex items-center gap-2 shrink-0">
+                  <span className="text-[11.5px] text-muted-foreground tabular-nums">
+                    {disagreed} of {row.total} drifted
+                  </span>
+                  <span
+                    className={`text-[11.5px] font-semibold px-2 py-0.5 rounded-full tabular-nums ${tone.bg} ${tone.text}`}
+                  >
+                    {tone.label}
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }

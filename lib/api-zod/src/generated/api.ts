@@ -237,6 +237,12 @@ export const ListSubmissionsQueryParams = zod.object({
 export const ListSubmissionsResponseItem = zod.object({
   id: zod.number(),
   areaId: zod.number(),
+  tappedAreaId: zod
+    .number()
+    .nullish()
+    .describe(
+      "The area the operator originally tapped on the home screen before auto-detect (or a manual override) selected the final `areaId`. Null for submissions created before drift instrumentation existed.",
+    ),
   areaName: zod.string(),
   userId: zod.number(),
   userEmail: zod.string().optional(),
@@ -317,7 +323,23 @@ export const ListSubmissionsResponse = zod.array(ListSubmissionsResponseItem);
  * @summary Submit a 5S video walk-through (preferred) or photo for scoring
  */
 export const CreateSubmissionBody = zod.object({
-  areaId: zod.number(),
+  areaId: zod
+    .number()
+    .describe(
+      "The area the submission is being saved against (auto-detected, manually overridden, or simply the tapped area).",
+    ),
+  tappedAreaId: zod
+    .number()
+    .optional()
+    .describe(
+      "The area the operator originally tapped on the home screen, before auto-detect or a manual override. Recorded so we can analyze drift when it differs from `areaId`.",
+    ),
+  aiSuggestedAreaId: zod
+    .number()
+    .optional()
+    .describe(
+      "Top auto-detect candidate at submission time, when one was available. Used to log corrections (operator overrode the AI's suggestion) for future profile-prompt tuning.",
+    ),
   media: zod
     .instanceof(File)
     .optional()
@@ -385,6 +407,12 @@ export const GetSubmissionParams = zod.object({
 export const GetSubmissionResponse = zod.object({
   id: zod.number(),
   areaId: zod.number(),
+  tappedAreaId: zod
+    .number()
+    .nullish()
+    .describe(
+      "The area the operator originally tapped on the home screen before auto-detect (or a manual override) selected the final `areaId`. Null for submissions created before drift instrumentation existed.",
+    ),
   areaName: zod.string(),
   userId: zod.number(),
   userEmail: zod.string().optional(),
@@ -477,6 +505,12 @@ export const ReuploadSubmissionBody = zod.object({
 export const ReuploadSubmissionResponse = zod.object({
   id: zod.number(),
   areaId: zod.number(),
+  tappedAreaId: zod
+    .number()
+    .nullish()
+    .describe(
+      "The area the operator originally tapped on the home screen before auto-detect (or a manual override) selected the final `areaId`. Null for submissions created before drift instrumentation existed.",
+    ),
   areaName: zod.string(),
   userId: zod.number(),
   userEmail: zod.string().optional(),
@@ -756,6 +790,64 @@ export const GetDashboardOperatorDismissesDetailResponse = zod.array(
 );
 
 /**
+ * Aggregates agreement between `tappedAreaId` (intent) and `areaId` (chosen) over the requested window. Submissions with no recorded `tappedAreaId` (legacy rows) are excluded from the totals so the rate isn't diluted.
+ * @summary How often the auto-detected area matched the area the operator originally tapped
+ */
+export const getAreaDetectionAgreementQueryDaysDefault = 30;
+export const getAreaDetectionAgreementQueryDaysMax = 90;
+
+export const GetAreaDetectionAgreementQueryParams = zod.object({
+  days: zod.coerce
+    .number()
+    .min(1)
+    .max(getAreaDetectionAgreementQueryDaysMax)
+    .default(getAreaDetectionAgreementQueryDaysDefault),
+});
+
+export const GetAreaDetectionAgreementResponse = zod
+  .object({
+    windowDays: zod
+      .number()
+      .describe(
+        "The size of the analysis window in days (echoed back from the request).",
+      ),
+    overall: zod.object({
+      total: zod
+        .number()
+        .describe("Submissions in the window that recorded a `tappedAreaId`."),
+      agreed: zod
+        .number()
+        .describe("Submissions where `tappedAreaId === areaId`."),
+      agreementPercent: zod.number().nullable(),
+    }),
+    perArea: zod.array(
+      zod
+        .object({
+          areaId: zod.number(),
+          areaName: zod.string(),
+          total: zod.number(),
+          agreed: zod.number(),
+          agreementPercent: zod.number().nullable(),
+        })
+        .describe(
+          "One row per area the operator either tapped or which was finally chosen, so drift in either direction is visible.",
+        ),
+    ),
+    perOperator: zod.array(
+      zod.object({
+        userId: zod.number(),
+        userEmail: zod.string(),
+        total: zod.number(),
+        agreed: zod.number(),
+        agreementPercent: zod.number().nullable(),
+      }),
+    ),
+  })
+  .describe(
+    "Auto-detect agreement metrics. `agreementPercent` is `agreed \/ total \* 100` rounded to the nearest integer; null when there are no qualifying submissions.",
+  );
+
+/**
  * @summary Get the current shift based on server time
  */
 export const GetCurrentShiftResponse = zod.object({
@@ -824,6 +916,12 @@ export const GetOperatorStatusResponseItem = zod.object({
     .object({
       id: zod.number(),
       areaId: zod.number(),
+      tappedAreaId: zod
+        .number()
+        .nullish()
+        .describe(
+          "The area the operator originally tapped on the home screen before auto-detect (or a manual override) selected the final `areaId`. Null for submissions created before drift instrumentation existed.",
+        ),
       areaName: zod.string(),
       userId: zod.number(),
       userEmail: zod.string().optional(),

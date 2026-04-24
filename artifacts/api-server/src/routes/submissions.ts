@@ -47,6 +47,7 @@ const router: IRouter = Router();
 const submissionSelect = {
   id: submissionsTable.id,
   areaId: submissionsTable.areaId,
+  tappedAreaId: submissionsTable.tappedAreaId,
   areaName: areasTable.name,
   userId: submissionsTable.userId,
   userEmail: usersTable.email,
@@ -369,6 +370,21 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
   const areaId = parseInt(req.body.areaId, 10);
   if (isNaN(areaId)) { res.status(400).json({ error: "areaId is required", code: "AREA_REQUIRED" }); return; }
 
+  // Operator's *intent*: which area they tapped before any auto-detect/override.
+  // Stays NULL when the client doesn't send it (legacy builds) so unknown
+  // intent is excluded from the agreement metrics in
+  // /dashboard/area-detection-agreement. We deliberately do NOT default to
+  // areaId — silently coercing would inflate the agreement rate by treating
+  // "we don't know what they tapped" as a match.
+  const tappedAreaIdRaw = parseInt(req.body.tappedAreaId, 10);
+  const tappedAreaId = Number.isFinite(tappedAreaIdRaw) ? tappedAreaIdRaw : null;
+
+  // Optional: the AI's top auto-detect candidate at the moment of submission.
+  // Only used to log corrections for future profile-prompt tuning; not
+  // persisted on the submission row.
+  const aiSuggestedAreaIdRaw = parseInt(req.body.aiSuggestedAreaId, 10);
+  const aiSuggestedAreaId = Number.isFinite(aiSuggestedAreaIdRaw) ? aiSuggestedAreaIdRaw : null;
+
   const file = extractFile(req);
   if (!file) {
     res.status(400).json({
@@ -427,6 +443,7 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
     .insert(submissionsTable)
     .values({
       areaId,
+      tappedAreaId,
       userId,
       shift,
       scoreTotal: finalScoreTotal,
@@ -453,6 +470,42 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
     await ingestProfileExtract(areaId, scoring.profile);
   } catch (err) {
     logger.error({ err }, "Failed to ingest profile extract");
+  }
+
+  // Drift signals for the area-identification prompt. Two cases worth a
+  // structured log so a future profile rebuild (see lib/ai-identification.ts)
+  // can mine corrections without scanning every submission row:
+  //   - tappedAreaId !== areaId: the chosen area drifted from the operator's
+  //     intent (either AI auto-switch or explicit manual change). When the AI
+  //     suggested the chosen area, that's an AI-driven override of intent.
+  //   - aiSuggestedAreaId is provided AND chosen area !== AI suggestion: the
+  //     operator explicitly overrode the AI's top suggestion — the highest
+  //     signal correction we can capture.
+  if (tappedAreaId !== areaId) {
+    logger.info(
+      {
+        submissionId: submission.id,
+        userId,
+        tappedAreaId,
+        chosenAreaId: areaId,
+        aiSuggestedAreaId,
+        kind: "area-detection-drift",
+      },
+      "Submission's chosen area differed from the originally tapped area",
+    );
+  }
+  if (aiSuggestedAreaId != null && aiSuggestedAreaId !== areaId) {
+    logger.info(
+      {
+        submissionId: submission.id,
+        userId,
+        tappedAreaId,
+        chosenAreaId: areaId,
+        aiSuggestedAreaId,
+        kind: "area-detection-correction",
+      },
+      "Operator overrode the AI's auto-detected area",
+    );
   }
 
   // Update schedule cadence and last-check time (area baseline + per-machine if tagged)

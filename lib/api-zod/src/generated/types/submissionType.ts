@@ -16,6 +16,8 @@ import type { SubmissionTypeShift } from "./submissionTypeShift";
 export interface SubmissionType {
   id: number;
   areaId: number;
+  /** The area the operator originally tapped on the home screen before auto-detect (or a manual override) selected the final `areaId`. Null for submissions created before drift instrumentation existed. */
+  tappedAreaId?: number | null;
   areaName: string;
   userId: number;
   userEmail?: string;

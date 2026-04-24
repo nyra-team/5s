@@ -8,7 +8,12 @@
 import type { CreateSubmissionTypeShift } from "./createSubmissionTypeShift";
 
 export type CreateSubmissionType = {
+  /** The area the submission is being saved against (auto-detected, manually overridden, or simply the tapped area). */
   areaId: number;
+  /** The area the operator originally tapped on the home screen, before auto-detect or a manual override. Recorded so we can analyze drift when it differs from `areaId`. */
+  tappedAreaId?: number;
+  /** Top auto-detect candidate at submission time, when one was available. Used to log corrections (operator overrode the AI's suggestion) for future profile-prompt tuning. */
+  aiSuggestedAreaId?: number;
   /** Video (preferred) or image file. Use this OR `photo`. */
   media?: Blob;
   /** Legacy image-only field (still accepted). */

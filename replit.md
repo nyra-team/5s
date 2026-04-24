@@ -5,7 +5,7 @@ A full-stack web application designed for manufacturing environments to enforce 
 
 ## User Preferences
 
-- **Communication Style**: I prefer clear and direct communication.
+- **Communication Style**: I prefer clear and direct communication, and simple language.
 - **Interaction**: Ask before making major architectural changes or introducing new external dependencies.
 - **Code Style**: Prioritize readability and maintainability.
 - **Workflow**: Emphasize iterative development with clear, small steps.
@@ -47,11 +47,12 @@ A full-stack web application designed for manufacturing environments to enforce 
 ### Feature Specifications
 - **Roles**: OPERATOR and MANAGER, with distinct access levels.
 - **Shifts**: Supports A, B, and C shifts with configurable start times.
-- **Data Models**: Comprehensive data models for users, areas, submissions, labels, escalations, nudges, area profiles, area schedules, operator settings (global + per-area), facility settings, and AI scoring metrics to support all application functionalities.
+- **Data Models**: Comprehensive data models for users, areas, submissions (with both `tappedAreaId` and `areaId` for auto-detect agreement tracking), labels, escalations, nudges, area profiles, area schedules, operator settings (global + per-area), facility settings, and AI scoring metrics to support all application functionalities.
 - **Manager Triage Flow**: A dedicated `/live` page for managers to triage pending areas, overdue checks, low-scoring submissions, and open escalations. Includes inline quick-labeling, searchable submission lists, and keyboard shortcuts for efficient workflow.
 - **Notification Grouping**: Batches multiple escalations within a configurable window into a single digest message to reduce notification fatigue.
 - **Escalation Re-pings**: A background scheduler re-notifies managers about unaddressed open escalations, with configurable thresholds and maximum re-ping counts.
 - **AI Reliability Monitoring**: A dedicated dashboard panel (`AiReliabilityPanel`) and manager-only endpoint (`GET /api/dashboard/ai-reliability`) surface VLM first-try retry rates over the last 24h and 7d windows to help identify misbehaving models or elevated API costs.
+- **Area Auto-Detect Agreement (Task #83):** Submissions persist both `tappedAreaId` (operator intent) and `areaId` (chosen area). Manager dashboard surfaces overall + per-area + per-operator agreement so drift between auto-detect suggestions and operator corrections is visible. Disagreements are structure-logged for future profile-prompt tuning.
 
 ### System Design Choices
 - **OpenAPI Specification**: A single source of truth for API definitions, driving code generation for client-side hooks and validation schemas.
@@ -59,6 +60,24 @@ A full-stack web application designed for manufacturing environments to enforce 
 - **Dedicated ML Service**: A separate Python FastAPI service handles AI/ML computations (CLIP embeddings, similarity, Ridge regression).
 - **VLM Integration**: Utilizes an OpenAI-compatible API for advanced VLM capabilities, integrated via Replit AI Integrations.
 - **Robust Error Handling**: Notifications for escalations are fire-and-forget, ensuring they do not block the main request path. AI scoring gracefully falls back to conservative defaults if the AI pipeline is unavailable.
+
+## External Dependencies
+
+- **Database**: PostgreSQL (Primary database).
+- **AI/ML Service**: Python FastAPI service running CLIP ViT-B/32 (open_clip_torch) and scikit-learn for embeddings, similarity, and model training.
+- **VLM Service**: OpenAI-compatible API via Replit AI Integrations (gpt-5-mini) for visual language model capabilities.
+- **Email Service**: Resend for sending email notifications.
+- **Messaging Service**: Slack for sending notification webhooks.
+- **Package Manager**: pnpm
+- **Frontend Framework**: React
+- **Build Tool**: Vite
+- **Styling**: Tailwind CSS
+- **ORM**: Drizzle ORM
+- **Authentication Libraries**: bcryptjs, jsonwebtoken (for JWT)
+- **Validation Library**: Zod
+- **API Codegen**: Orval
+- **File Upload Middleware**: Multer
+- **Testing Frameworks**: Vitest, Supertest, @testing-library/react
 
 ## Manager workflow notes
 
