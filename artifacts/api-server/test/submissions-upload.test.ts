@@ -2,12 +2,18 @@ import { describe, test, beforeEach, afterEach, before, after } from "node:test"
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { db, escalationsTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import { TestWorld, api, getBaseUrl, type TestUser } from "./helpers.js";
 import {
   __setScoreSubmissionForTest,
   type ScoringInput,
   type ScoringOutput,
 } from "../src/lib/ai-scoring.js";
+import {
+  __setNotifyEscalationCreatedForTest,
+  type EscalationNotification,
+} from "../src/lib/notifications.js";
 
 const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
 
@@ -256,6 +262,130 @@ describe("POST /api/submissions clears the manager's nudge (real upload route)",
     assert.equal(aRows.length, 0, "shift A nudge must clear");
     assert.equal(bRows.length, 1, "shift B nudge must NOT clear");
     assert.equal(bRows[0].id, b.body.id);
+  });
+});
+
+// Companion to the passing-score suite above: the upload route also has to
+// behave correctly when scoring lands BELOW the escalation threshold (60%).
+// In that branch the handler must (a) still insert the submission, (b)
+// auto-create an escalations row with the failing pillars/recommendation
+// snapshot from scoring, (c) fire `notifyEscalationCreated` so managers get
+// alerted, AND (d) still clear the operator's manager nudge — a low score
+// shouldn't keep the badge alive just because it triggered an escalation.
+// The notify side-effect is captured at the module boundary so the test
+// stays fully offline (no Slack/email provider involved).
+describe("POST /api/submissions failing-score branch (real upload route)", () => {
+  let world: TestWorld;
+  let notifyCalls: EscalationNotification[];
+
+  // Deterministic low-score stub: 10/25 → 40% (well under the 60% threshold)
+  // with two failing pillars and a single recommended action so the test can
+  // assert the escalation row preserves that snapshot exactly.
+  const FAILING_PILLARS = ["sort", "shine"];
+  const REC_ACTION = "Wipe down spilled coolant near press 3";
+  function failingScoringStub(): ScoringOutput {
+    return {
+      embeddingHash: "test-fail-hash",
+      aiTotalScore: 10,
+      aiPillarsJson: { sort: 1, set: 3, shine: 1, standardize: 3, sustain: 2 },
+      aiReasoningJson: null,
+      aiRecommendationsJson: [
+        { action: REC_ACTION, why: "stub", location: "press-3" },
+      ],
+      aiIssuesJson: [],
+      failingPillars: FAILING_PILLARS,
+      modelVersion: "test-stub-v1",
+      scoringMode: "TEST_STUB",
+      profile: { items: [], machines: [], layout: [], observedIssues: [], summary: "" },
+      keyframeUrls: [],
+    };
+  }
+
+  before(() => {
+    __setScoreSubmissionForTest(async (_input: ScoringInput) => failingScoringStub());
+    notifyCalls = [];
+    __setNotifyEscalationCreatedForTest(async (payload) => {
+      notifyCalls.push(payload);
+    });
+  });
+  after(() => {
+    __setScoreSubmissionForTest(null);
+    __setNotifyEscalationCreatedForTest(null);
+    sweepWrittenUploads();
+  });
+
+  beforeEach(() => {
+    world = new TestWorld();
+    notifyCalls.length = 0;
+  });
+  afterEach(async () => {
+    await world.cleanup();
+    sweepWrittenUploads();
+  });
+
+  test("low score still inserts the submission, clears the nudge, and opens an escalation", async () => {
+    const manager = await world.createUser("MANAGER");
+    const operator = await world.createUser("OPERATOR");
+    const area = await world.createArea();
+
+    // A live nudge so we can prove failure mode doesn't keep the badge alive.
+    const created = await api<NudgeShape>(manager.token, "POST", "/api/nudges", {
+      areaId: area.id, shift: "A",
+    });
+    assert.equal(created.status, 201);
+    const before = await activeForArea(operator, area.id, "A");
+    assert.equal(before.length, 1, "nudge must be visible before the upload");
+
+    const r = await uploadSubmission(operator.token, { areaId: area.id, shift: "A" });
+    assert.equal(r.status, 201, "upload should succeed even on a failing score");
+    assert.equal(r.body.areaId, area.id);
+    assert.equal(r.body.shift, "A");
+    assert.equal(r.body.scoreTotal, 10, "submission row must persist the AI's low score");
+
+    // (a) submission is inserted (already implied by a 201 with an id) — sanity check.
+    assert.ok(typeof r.body.id === "number" && r.body.id > 0);
+
+    // (b) escalation row is created with status OPEN and the right snapshot.
+    const escRows = await db
+      .select()
+      .from(escalationsTable)
+      .where(eq(escalationsTable.submissionId, r.body.id));
+    assert.equal(escRows.length, 1, "exactly one escalation should be auto-created");
+    const esc = escRows[0];
+    assert.equal(esc.status, "OPEN");
+    assert.equal(esc.areaId, area.id);
+    assert.equal(esc.operatorId, operator.id);
+    assert.equal(esc.scoreTotal, 10);
+    assert.equal(esc.scorePercent, 40, "scorePercent should be round(scoreTotal * 4)");
+    assert.deepEqual(
+      esc.failingPillarsJson,
+      FAILING_PILLARS,
+      "failing pillars from scoring must be snapshotted onto the escalation",
+    );
+    assert.deepEqual(
+      esc.recommendedActionsJson,
+      [REC_ACTION],
+      "recommended action from scoring must be snapshotted onto the escalation",
+    );
+
+    // (c) notifyEscalationCreated fired exactly once with the matching payload.
+    assert.equal(notifyCalls.length, 1, "notifyEscalationCreated must fire on the failing branch");
+    const payload = notifyCalls[0];
+    assert.equal(payload.escalationId, esc.id);
+    assert.equal(payload.submissionId, r.body.id);
+    assert.equal(payload.areaId, area.id);
+    assert.equal(payload.areaName, area.name);
+    assert.equal(payload.scorePercent, 40);
+    assert.deepEqual(payload.failingPillars, FAILING_PILLARS);
+    assert.deepEqual(payload.recommendedActions, [REC_ACTION]);
+    assert.equal(payload.operatorEmail, operator.email);
+
+    // (d) the manager nudge for this area+shift was still cleared.
+    const after = await activeForArea(operator, area.id, "A");
+    assert.equal(
+      after.length, 0,
+      "failing-score upload must still clear the area-level nudge",
+    );
   });
 });
 

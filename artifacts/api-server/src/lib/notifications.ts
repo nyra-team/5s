@@ -243,7 +243,7 @@ interface PendingBucket {
 
 const pendingByArea = new Map<number, PendingBucket>();
 
-export async function notifyEscalationCreated(payload: EscalationNotification): Promise<void> {
+async function notifyEscalationCreatedDefault(payload: EscalationNotification): Promise<void> {
   const windowMs = groupingWindowMs();
   if (windowMs <= 0) {
     // Grouping disabled — send immediately as a single-event message.
@@ -294,6 +294,26 @@ export async function notifyEscalationCreated(payload: EscalationNotification): 
     { areaId: payload.areaId, escalationId: payload.escalationId, windowMs },
     "notify: opened new pending bucket for area",
   );
+}
+
+// `notifyEscalationCreated` is exported as a `let`-bound live binding so the
+// integration suite can swap it for a recorder via
+// `__setNotifyEscalationCreatedForTest`. ESM keeps importers in sync with
+// the reassignment, so the real `/api/submissions` route handler can be
+// exercised end-to-end without a live email/Slack provider while the test
+// still asserts the side-effect was triggered with the expected payload.
+export let notifyEscalationCreated: (payload: EscalationNotification) => Promise<void> =
+  notifyEscalationCreatedDefault;
+
+/**
+ * Test-only seam. Lets the integration suite stub the notify side-effect so
+ * the real escalation branch of POST /api/submissions can be asserted
+ * offline. Pass `null` to restore the real impl.
+ */
+export function __setNotifyEscalationCreatedForTest(
+  fn: ((payload: EscalationNotification) => Promise<void>) | null,
+): void {
+  notifyEscalationCreated = fn ?? notifyEscalationCreatedDefault;
 }
 
 /**
