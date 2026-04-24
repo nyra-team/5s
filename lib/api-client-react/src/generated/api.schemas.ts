@@ -70,6 +70,33 @@ export interface LoginResponse {
   user: User;
 }
 
+/**
+ * Generic per-field audit entry written by any settings endpoint
+that uses the shared `settings_audit` table. The `oldValue` /
+`newValue` fields are typed as `oneOf` because different settings
+store different primitives (booleans for notification toggles,
+integers for weekday masks, strings for HH:MM windows). They are
+nullable to model "no value" / "field cleared".
+
+ */
+export interface SettingsAuditEntry {
+  id: number;
+  changedAt: string;
+  /** Manager who made the change. Goes null if that user is later
+deleted (the FK uses ON DELETE SET NULL so the rest of the
+audit row — what moved, when, from/to — is preserved).
+ */
+  changedByUserId: number | null;
+  /** Resolved at read time; null if the user was deleted. */
+  changedByUserEmail: string | null;
+  /** The setting key that moved (camelCase, matching the wire format of the corresponding GET payload). */
+  field: string;
+  /** Previous value (decoded from JSON storage). Null when the field had no prior value. */
+  oldValue: string | number | boolean | null;
+  /** New value (decoded from JSON storage). Null when the field was cleared. */
+  newValue: string | number | boolean | null;
+}
+
 export interface NotificationPreferences {
   notifyEmailEnabled: boolean;
   notifySlackEnabled: boolean;
@@ -103,6 +130,22 @@ export interface NotificationPreferences {
   quietHoursActiveUntil: string | null;
   /** When `quietHoursActive` is false, the absolute moment the next quiet-hours window begins. Null when quiet hours are off or the weekday mask is empty. */
   quietHoursNextStart: string | null;
+  /** Timestamp of the most recent change to this user's preferences. Null when the user has never edited them. */
+  lastChangedAt: string | null;
+  /** Manager who made the most recent change. Almost always equals
+the calling user's id (managers edit their own preferences),
+but exposed separately so a future admin-edits-other-manager
+flow can attribute correctly. Null when the row has never
+been audited or the actor was deleted.
+ */
+  lastChangedByUserId: number | null;
+  /** Email of the manager who made the most recent change. Resolved server-side; null if the user has been deleted. */
+  lastChangedByUserEmail: string | null;
+  /** Most recent per-field changes to this user's preferences
+(newest first), capped at 5. One entry per field that
+actually moved on a single PUT.
+ */
+  auditHistory: SettingsAuditEntry[];
 }
 
 export interface UpdateNotificationPreferencesBody {

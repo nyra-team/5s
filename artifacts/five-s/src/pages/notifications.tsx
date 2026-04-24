@@ -2,11 +2,13 @@ import {
   useGetMyNotificationPreferences,
   useUpdateMyNotificationPreferences,
   getGetMyNotificationPreferencesQueryKey,
+  NotificationPreferences,
+  SettingsAuditEntry,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Mail, MessageSquare, AlertCircle, CheckCircle2, MoonStar } from "lucide-react";
+import { Bell, Mail, MessageSquare, AlertCircle, CheckCircle2, MoonStar, History, User } from "lucide-react";
 import { QuietHoursStatusBadge } from "@/components/quiet-hours-status-badge";
 import { useShiftConfig } from "@/lib/shift-config";
 
@@ -273,6 +275,155 @@ export default function NotificationsPage() {
         Each notification includes the area, score percentage, failing pillars, and a
         link to the escalations inbox.
       </p>
+
+      <PreferencesAuditFootNote data={data} />
+    </div>
+  );
+}
+
+// Friendly labels for the audit timeline. Keys MUST match the wire-format
+// field names emitted by the audit endpoint (and used as `field` on the
+// row). Fields not in this map fall back to the raw key — callers who add
+// new audited fields should extend this table to keep the timeline readable.
+const FIELD_LABEL: Record<string, string> = {
+  notifyEmailEnabled: "Email notifications",
+  notifySlackEnabled: "Slack notifications",
+  quietHoursEnabled: "Quiet hours",
+  quietHoursStart: "Quiet hours start",
+  quietHoursEnd: "Quiet hours end",
+  quietHoursWeekdayMask: "Quiet hours days",
+};
+
+function formatWeekdayMask(mask: number): string {
+  // Display order Mon..Sun, mirroring the toggle row above; bit indices
+  // remain JS Date#getDay (0 = Sun … 6 = Sat) to match the server.
+  const order: Array<{ label: string; bit: number }> = [
+    { label: "Mon", bit: 1 },
+    { label: "Tue", bit: 2 },
+    { label: "Wed", bit: 3 },
+    { label: "Thu", bit: 4 },
+    { label: "Fri", bit: 5 },
+    { label: "Sat", bit: 6 },
+    { label: "Sun", bit: 0 },
+  ];
+  if (mask === 127) return "every day";
+  if (mask === 0) return "no days";
+  return order.filter((d) => mask & (1 << d.bit)).map((d) => d.label).join(", ");
+}
+
+function formatAuditValue(field: string, v: string | number | boolean | null): string {
+  if (v === null) return "—";
+  if (typeof v === "boolean") return v ? "on" : "off";
+  if (field === "quietHoursWeekdayMask" && typeof v === "number") {
+    return formatWeekdayMask(v);
+  }
+  return String(v);
+}
+
+function PreferencesAuditFootNote({ data }: { data: NotificationPreferences }) {
+  return (
+    <div className="space-y-3" data-testid="preferences-footnote">
+      <PreferencesLastChangeLine data={data} />
+      <PreferencesAuditHistory entries={data.auditHistory} />
+    </div>
+  );
+}
+
+function PreferencesLastChangeLine({ data }: { data: NotificationPreferences }) {
+  if (!data.lastChangedAt) {
+    return (
+      <p
+        className="text-[12px] text-muted-foreground"
+        data-testid="preferences-last-change"
+      >
+        You haven't changed your notification preferences yet.
+      </p>
+    );
+  }
+  const when = new Date(data.lastChangedAt).toLocaleString();
+  // Prefer the resolved email; fall back to a numeric id only if the user
+  // record is gone (matches the operator-thresholds page's degradation).
+  const who =
+    data.lastChangedByUserEmail ??
+    (data.lastChangedByUserId != null ? `user #${data.lastChangedByUserId}` : null);
+  return (
+    <p
+      className="text-[12.5px] text-muted-foreground inline-flex items-center gap-1.5 flex-wrap"
+      data-testid="preferences-last-change"
+    >
+      <User className="w-3.5 h-3.5" />
+      Last changed by{" "}
+      <span
+        className="font-medium text-foreground"
+        data-testid="preferences-last-change-who"
+      >
+        {who ?? "an unknown user"}
+      </span>{" "}
+      on{" "}
+      <span
+        className="font-medium text-foreground"
+        data-testid="preferences-last-change-when"
+      >
+        {when}
+      </span>
+      .
+    </p>
+  );
+}
+
+function PreferencesAuditHistory({ entries }: { entries: SettingsAuditEntry[] }) {
+  if (entries.length === 0) return null;
+  return (
+    <div
+      className="bg-card rounded-2xl shadow-soft hairline px-5 py-4"
+      data-testid="preferences-audit-history"
+    >
+      <p className="eyebrow inline-flex items-center gap-1.5">
+        <History className="w-3 h-3" /> Recent changes
+      </p>
+      <ul className="mt-3 divide-y divide-border">
+        {entries.map((entry) => {
+          const label = FIELD_LABEL[entry.field] ?? entry.field;
+          const oldText = formatAuditValue(entry.field, entry.oldValue);
+          const newText = formatAuditValue(entry.field, entry.newValue);
+          const who =
+            entry.changedByUserEmail ??
+            (entry.changedByUserId != null
+              ? `user #${entry.changedByUserId}`
+              : "an unknown user");
+          const when = new Date(entry.changedAt).toLocaleString();
+          return (
+            <li
+              key={entry.id}
+              className="py-2 text-[12.5px] text-muted-foreground flex flex-wrap items-baseline gap-x-2"
+              data-testid={`preferences-audit-entry-${entry.id}`}
+            >
+              <span className="font-medium text-foreground">{label}</span>
+              <span className="tabular-nums">
+                <span data-testid={`preferences-audit-entry-${entry.id}-old`}>
+                  {oldText}
+                </span>
+                {" → "}
+                <span
+                  className="font-medium text-foreground"
+                  data-testid={`preferences-audit-entry-${entry.id}-new`}
+                >
+                  {newText}
+                </span>
+              </span>
+              <span className="ml-auto text-[11.5px]">
+                <span data-testid={`preferences-audit-entry-${entry.id}-who`}>
+                  {who}
+                </span>
+                {" · "}
+                <span data-testid={`preferences-audit-entry-${entry.id}-when`}>
+                  {when}
+                </span>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

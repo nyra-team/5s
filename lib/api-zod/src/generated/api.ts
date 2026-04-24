@@ -2040,6 +2040,65 @@ export const GetMyNotificationPreferencesResponse = zod.object({
     .describe(
       "When `quietHoursActive` is false, the absolute moment the next quiet-hours window begins. Null when quiet hours are off or the weekday mask is empty.",
     ),
+  lastChangedAt: zod.coerce
+    .date()
+    .nullable()
+    .describe(
+      "Timestamp of the most recent change to this user's preferences. Null when the user has never edited them.",
+    ),
+  lastChangedByUserId: zod
+    .number()
+    .nullable()
+    .describe(
+      "Manager who made the most recent change. Almost always equals\nthe calling user's id (managers edit their own preferences),\nbut exposed separately so a future admin-edits-other-manager\nflow can attribute correctly. Null when the row has never\nbeen audited or the actor was deleted.\n",
+    ),
+  lastChangedByUserEmail: zod
+    .string()
+    .nullable()
+    .describe(
+      "Email of the manager who made the most recent change. Resolved server-side; null if the user has been deleted.",
+    ),
+  auditHistory: zod
+    .array(
+      zod
+        .object({
+          id: zod.number(),
+          changedAt: zod.coerce.date(),
+          changedByUserId: zod
+            .number()
+            .nullable()
+            .describe(
+              "Manager who made the change. Goes null if that user is later\ndeleted (the FK uses ON DELETE SET NULL so the rest of the\naudit row — what moved, when, from\/to — is preserved).\n",
+            ),
+          changedByUserEmail: zod
+            .string()
+            .nullable()
+            .describe("Resolved at read time; null if the user was deleted."),
+          field: zod
+            .string()
+            .describe(
+              "The setting key that moved (camelCase, matching the wire format of the corresponding GET payload).",
+            ),
+          oldValue: zod
+            .union([zod.string(), zod.number(), zod.boolean()])
+            .nullable()
+            .describe(
+              "Previous value (decoded from JSON storage). Null when the field had no prior value.",
+            ),
+          newValue: zod
+            .union([zod.string(), zod.number(), zod.boolean()])
+            .nullable()
+            .describe(
+              "New value (decoded from JSON storage). Null when the field was cleared.",
+            ),
+        })
+        .describe(
+          'Generic per-field audit entry written by any settings endpoint\nthat uses the shared `settings_audit` table. The `oldValue` \/\n`newValue` fields are typed as `oneOf` because different settings\nstore different primitives (booleans for notification toggles,\nintegers for weekday masks, strings for HH:MM windows). They are\nnullable to model \"no value\" \/ \"field cleared\".\n',
+        ),
+    )
+    .describe(
+      "Most recent per-field changes to this user's preferences\n(newest first), capped at 5. One entry per field that\nactually moved on a single PUT.\n",
+    ),
 });
 
 /**
@@ -2132,6 +2191,65 @@ export const UpdateMyNotificationPreferencesResponse = zod.object({
     .nullable()
     .describe(
       "When `quietHoursActive` is false, the absolute moment the next quiet-hours window begins. Null when quiet hours are off or the weekday mask is empty.",
+    ),
+  lastChangedAt: zod.coerce
+    .date()
+    .nullable()
+    .describe(
+      "Timestamp of the most recent change to this user's preferences. Null when the user has never edited them.",
+    ),
+  lastChangedByUserId: zod
+    .number()
+    .nullable()
+    .describe(
+      "Manager who made the most recent change. Almost always equals\nthe calling user's id (managers edit their own preferences),\nbut exposed separately so a future admin-edits-other-manager\nflow can attribute correctly. Null when the row has never\nbeen audited or the actor was deleted.\n",
+    ),
+  lastChangedByUserEmail: zod
+    .string()
+    .nullable()
+    .describe(
+      "Email of the manager who made the most recent change. Resolved server-side; null if the user has been deleted.",
+    ),
+  auditHistory: zod
+    .array(
+      zod
+        .object({
+          id: zod.number(),
+          changedAt: zod.coerce.date(),
+          changedByUserId: zod
+            .number()
+            .nullable()
+            .describe(
+              "Manager who made the change. Goes null if that user is later\ndeleted (the FK uses ON DELETE SET NULL so the rest of the\naudit row — what moved, when, from\/to — is preserved).\n",
+            ),
+          changedByUserEmail: zod
+            .string()
+            .nullable()
+            .describe("Resolved at read time; null if the user was deleted."),
+          field: zod
+            .string()
+            .describe(
+              "The setting key that moved (camelCase, matching the wire format of the corresponding GET payload).",
+            ),
+          oldValue: zod
+            .union([zod.string(), zod.number(), zod.boolean()])
+            .nullable()
+            .describe(
+              "Previous value (decoded from JSON storage). Null when the field had no prior value.",
+            ),
+          newValue: zod
+            .union([zod.string(), zod.number(), zod.boolean()])
+            .nullable()
+            .describe(
+              "New value (decoded from JSON storage). Null when the field was cleared.",
+            ),
+        })
+        .describe(
+          'Generic per-field audit entry written by any settings endpoint\nthat uses the shared `settings_audit` table. The `oldValue` \/\n`newValue` fields are typed as `oneOf` because different settings\nstore different primitives (booleans for notification toggles,\nintegers for weekday masks, strings for HH:MM windows). They are\nnullable to model \"no value\" \/ \"field cleared\".\n',
+        ),
+    )
+    .describe(
+      "Most recent per-field changes to this user's preferences\n(newest first), capped at 5. One entry per field that\nactually moved on a single PUT.\n",
     ),
 });
 

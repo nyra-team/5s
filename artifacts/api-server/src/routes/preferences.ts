@@ -3,8 +3,37 @@ import { eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
 import { authMiddleware, requireRole } from "../lib/auth";
 import { notificationProviderStatus, quietHoursStatus } from "../lib/notifications.js";
+import {
+  diffFields,
+  loadLastSettingsChange,
+  loadSettingsAuditHistory,
+  recordSettingsChanges,
+  type AuditValue,
+  type SettingsAuditEntry,
+} from "../lib/settings-audit.js";
 
 const router: IRouter = Router();
+
+/**
+ * Audit scope for this settings page. Stable string — used as the
+ * `scope` column in `settings_audit`. Don't rename without a migration.
+ */
+const AUDIT_SCOPE = "notification_preferences";
+
+/**
+ * Fields we audit. Keep in sync with the patch shape below; anything not
+ * listed here will save without leaving an audit trail. The order is also
+ * the order the diff helper iterates, but rendering order is up to the UI.
+ */
+const AUDITED_FIELDS = [
+  "notifyEmailEnabled",
+  "notifySlackEnabled",
+  "quietHoursEnabled",
+  "quietHoursStart",
+  "quietHoursEnd",
+  "quietHoursWeekdayMask",
+] as const;
+type AuditedField = (typeof AUDITED_FIELDS)[number];
 
 interface PreferencesShape {
   notifyEmailEnabled: boolean;
@@ -19,6 +48,20 @@ interface PreferencesShape {
   quietHoursActive: boolean;
   quietHoursActiveUntil: string | null;
   quietHoursNextStart: string | null;
+  /**
+   * Resolved attribution for the most recent change to this user's
+   * preferences. All three are null when the user has never changed
+   * their preferences (i.e. they're still on the schema defaults).
+   */
+  lastChangedAt: string | null;
+  lastChangedByUserId: number | null;
+  lastChangedByUserEmail: string | null;
+  /**
+   * Recent per-field changes (newest first), capped server-side.
+   * Mirrors the shape used by the operator-thresholds endpoint so the
+   * UI can render both pages from a shared component.
+   */
+  auditHistory: SettingsAuditEntry[];
 }
 
 // Canonical wire/storage shape is 24h "HH:MM" — the column is `text`
@@ -40,6 +83,29 @@ function normalizeTimeOfDay(input: unknown): string | null {
   return `${m[1]}:${m[2]}`;
 }
 
+/**
+ * Pull just the audited fields off the row in the same order the helper
+ * expects. Centralizing it avoids accidentally diffing different shapes
+ * before vs after a write.
+ */
+function snapshot(row: {
+  notifyEmailEnabled: boolean;
+  notifySlackEnabled: boolean;
+  quietHoursEnabled: boolean;
+  quietHoursStart: string;
+  quietHoursEnd: string;
+  quietHoursWeekdayMask: number;
+}): Record<AuditedField, AuditValue> {
+  return {
+    notifyEmailEnabled: row.notifyEmailEnabled,
+    notifySlackEnabled: row.notifySlackEnabled,
+    quietHoursEnabled: row.quietHoursEnabled,
+    quietHoursStart: row.quietHoursStart,
+    quietHoursEnd: row.quietHoursEnd,
+    quietHoursWeekdayMask: row.quietHoursWeekdayMask,
+  };
+}
+
 async function loadPreferences(userId: number): Promise<PreferencesShape | null> {
   const [user] = await db
     .select({
@@ -56,6 +122,13 @@ async function loadPreferences(userId: number): Promise<PreferencesShape | null>
   if (!user) return null;
   const status = notificationProviderStatus();
   const live = quietHoursStatus(user);
+  // Audit attribution + history are scoped to THIS user (subjectId = userId).
+  // They're cheap parallel reads against an indexed lookup — see the index
+  // on (scope, subject_id, changed_at, id) in `settings_audit`.
+  const [lastChange, auditHistory] = await Promise.all([
+    loadLastSettingsChange({ scope: AUDIT_SCOPE, subjectId: userId }),
+    loadSettingsAuditHistory({ scope: AUDIT_SCOPE, subjectId: userId }),
+  ]);
   return {
     email: user.email,
     notifyEmailEnabled: user.notifyEmailEnabled,
@@ -69,6 +142,10 @@ async function loadPreferences(userId: number): Promise<PreferencesShape | null>
     quietHoursNextStart: live.nextStart,
     emailConfigured: status.emailConfigured,
     slackConfigured: status.slackConfigured,
+    lastChangedAt: lastChange?.changedAt ?? null,
+    lastChangedByUserId: lastChange?.changedByUserId ?? null,
+    lastChangedByUserEmail: lastChange?.changedByUserEmail ?? null,
+    auditHistory,
   };
 }
 
@@ -116,7 +193,55 @@ router.put("/me/notification-preferences", authMiddleware, requireRole("MANAGER"
   }
 
   if (Object.keys(patch).length > 0) {
-    await db.update(usersTable).set(patch).where(eq(usersTable.id, userId));
+    // Wrap read-snapshot + update + audit insert in a single transaction so
+    // an audit failure rolls the settings write back too. Without this we
+    // could leave an unattributed change in the wild if the audit insert
+    // throws after the user row has already been mutated.
+    await db.transaction(async (tx) => {
+      // Snapshot the audited fields BEFORE the write so the diff describes
+      // what actually moved (a no-op set of the same value won't pollute
+      // the history). One round-trip; cheap.
+      const [previous] = await tx
+        .select({
+          notifyEmailEnabled: usersTable.notifyEmailEnabled,
+          notifySlackEnabled: usersTable.notifySlackEnabled,
+          quietHoursEnabled: usersTable.quietHoursEnabled,
+          quietHoursStart: usersTable.quietHoursStart,
+          quietHoursEnd: usersTable.quietHoursEnd,
+          quietHoursWeekdayMask: usersTable.quietHoursWeekdayMask,
+        })
+        .from(usersTable)
+        .where(eq(usersTable.id, userId));
+
+      await tx.update(usersTable).set(patch).where(eq(usersTable.id, userId));
+
+      if (previous) {
+        // Build a "before/after" snapshot using normalized HH:MM values so a
+        // legacy DB value with seconds doesn't show up as a phantom change
+        // (loadPreferences normalizes on read, so an unchanged DB write would
+        // otherwise look like "22:00:00 → 22:00").
+        const before = snapshot({
+          ...previous,
+          quietHoursStart: normalizeTimeOfDay(previous.quietHoursStart) ?? previous.quietHoursStart,
+          quietHoursEnd: normalizeTimeOfDay(previous.quietHoursEnd) ?? previous.quietHoursEnd,
+        });
+        const after: Record<AuditedField, AuditValue> = { ...before };
+        for (const f of AUDITED_FIELDS) {
+          if (f in patch) {
+            const v = (patch as Record<string, AuditValue>)[f];
+            if (v !== undefined) after[f] = v;
+          }
+        }
+        const changes = diffFields(before, after, AUDITED_FIELDS);
+        await recordSettingsChanges({
+          scope: AUDIT_SCOPE,
+          subjectId: userId,
+          changedByUserId: userId,
+          changes,
+          executor: tx,
+        });
+      }
+    });
   }
 
   const prefs = await loadPreferences(userId);

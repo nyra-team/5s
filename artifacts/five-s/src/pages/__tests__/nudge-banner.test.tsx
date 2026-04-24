@@ -82,8 +82,9 @@ vi.mock("@workspace/api-client-react", () => {
     useGetSubmission: stub("submission"),
     useGetOperatorThresholds: () => ({ data: undefined, isLoading: false }),
     getGetOperatorThresholdsQueryKey: () => ["operator-thresholds"],
-    // OperatorHome calls useFacilitySettingsChangeListener which polls
-    // useGetFacilitySettings; stub it so the operator page mounts.
+    // The operator page subscribes to facility settings to react to
+    // server-side changes; the dismiss/undo flow under test doesn't care
+    // about its contents, so a no-op stub keeps the render tree alive.
     useGetFacilitySettings: () => ({ data: undefined, isLoading: false }),
     getGetFacilitySettingsQueryKey: () => ["facility-settings"],
     useGetShiftConfig: () => ({

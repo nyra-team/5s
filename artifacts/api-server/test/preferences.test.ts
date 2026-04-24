@@ -14,6 +14,16 @@ import {
   type EscalationNotification,
 } from "../src/lib/notifications.js";
 
+interface AuditEntry {
+  id: number;
+  changedAt: string;
+  changedByUserId: number | null;
+  changedByUserEmail: string | null;
+  field: string;
+  oldValue: string | number | boolean | null;
+  newValue: string | number | boolean | null;
+}
+
 interface PreferencesShape {
   notifyEmailEnabled: boolean;
   notifySlackEnabled: boolean;
@@ -27,6 +37,10 @@ interface PreferencesShape {
   quietHoursActive: boolean;
   quietHoursActiveUntil: string | null;
   quietHoursNextStart: string | null;
+  lastChangedAt: string | null;
+  lastChangedByUserId: number | null;
+  lastChangedByUserEmail: string | null;
+  auditHistory: AuditEntry[];
 }
 
 async function setPrefs(
@@ -163,6 +177,214 @@ describe("PUT /api/me/notification-preferences", () => {
       notifyEmailEnabled: false,
     });
     assert.equal(r.status, 403);
+  });
+});
+
+describe("notification-preferences audit trail", () => {
+  let world: TestWorld;
+  beforeEach(() => {
+    world = new TestWorld();
+  });
+  afterEach(async () => {
+    await world.cleanup();
+  });
+
+  test("returns an empty audit history and null lastChange for a brand-new manager", async () => {
+    const manager = await world.createUser("MANAGER", "audit-empty");
+    const r = await api<PreferencesShape>(
+      manager.token,
+      "GET",
+      "/api/me/notification-preferences",
+    );
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.auditHistory, []);
+    assert.equal(r.body.lastChangedAt, null);
+    assert.equal(r.body.lastChangedByUserId, null);
+    assert.equal(r.body.lastChangedByUserEmail, null);
+  });
+
+  test("emits one audit row per field that actually moved on a single PUT", async () => {
+    const manager = await world.createUser("MANAGER", "audit-multi");
+    // Defaults: email on, slack off → flipping both produces two entries.
+    const r = await api<PreferencesShape>(
+      manager.token,
+      "PUT",
+      "/api/me/notification-preferences",
+      { notifyEmailEnabled: false, notifySlackEnabled: true },
+    );
+    assert.equal(r.status, 200);
+    assert.equal(r.body.auditHistory.length, 2);
+    const fields = r.body.auditHistory.map((e) => e.field).sort();
+    assert.deepEqual(fields, ["notifyEmailEnabled", "notifySlackEnabled"]);
+    for (const entry of r.body.auditHistory) {
+      assert.equal(entry.changedByUserId, manager.id);
+      assert.equal(entry.changedByUserEmail, manager.email);
+      if (entry.field === "notifyEmailEnabled") {
+        assert.equal(entry.oldValue, true);
+        assert.equal(entry.newValue, false);
+      } else {
+        assert.equal(entry.oldValue, false);
+        assert.equal(entry.newValue, true);
+      }
+    }
+    // Last-change attribution lines up with the most recent row.
+    assert.equal(r.body.lastChangedByUserId, manager.id);
+    assert.equal(r.body.lastChangedByUserEmail, manager.email);
+    assert.ok(r.body.lastChangedAt);
+  });
+
+  test("does not emit audit rows when a no-op patch is sent", async () => {
+    const manager = await world.createUser("MANAGER", "audit-noop");
+    // Set a value once...
+    await api<PreferencesShape>(
+      manager.token,
+      "PUT",
+      "/api/me/notification-preferences",
+      { notifySlackEnabled: true },
+    );
+    // ...then "save" the exact same value: history must stay at length 1.
+    const noop = await api<PreferencesShape>(
+      manager.token,
+      "PUT",
+      "/api/me/notification-preferences",
+      { notifySlackEnabled: true },
+    );
+    assert.equal(noop.body.auditHistory.length, 1);
+  });
+
+  test("orders history newest-first and caps it at 5 entries", async () => {
+    const manager = await world.createUser("MANAGER", "audit-cap");
+    // Six distinct mask values produces six audit rows; we expect the GET
+    // payload to surface only the most recent five, newest first.
+    const masks = [1, 3, 7, 15, 31, 63];
+    for (const m of masks) {
+      await api<PreferencesShape>(
+        manager.token,
+        "PUT",
+        "/api/me/notification-preferences",
+        { quietHoursWeekdayMask: m },
+      );
+    }
+    const r = await api<PreferencesShape>(
+      manager.token,
+      "GET",
+      "/api/me/notification-preferences",
+    );
+    assert.equal(r.body.auditHistory.length, 5);
+    const newValues = r.body.auditHistory.map((e) => e.newValue);
+    // Newest-first: dropping the very first mask (1) we wrote.
+    assert.deepEqual(newValues, [63, 31, 15, 7, 3]);
+  });
+
+  test("ignores invalid values without leaving an audit trail for them", async () => {
+    const manager = await world.createUser("MANAGER", "audit-invalid");
+    // Wrong primitive type → should be silently dropped per the route's
+    // permissive contract; mixed with one valid sibling.
+    const r = await api<PreferencesShape>(
+      manager.token,
+      "PUT",
+      "/api/me/notification-preferences",
+      { notifySlackEnabled: "yes", quietHoursWeekdayMask: 31 },
+    );
+    assert.equal(r.status, 200);
+    assert.equal(r.body.auditHistory.length, 1);
+    assert.equal(r.body.auditHistory[0].field, "quietHoursWeekdayMask");
+    assert.equal(r.body.auditHistory[0].newValue, 31);
+  });
+
+  test("captures string and boolean transitions side-by-side", async () => {
+    const manager = await world.createUser("MANAGER", "audit-strings");
+    const r = await api<PreferencesShape>(
+      manager.token,
+      "PUT",
+      "/api/me/notification-preferences",
+      { quietHoursEnabled: true, quietHoursStart: "23:30", quietHoursEnd: "06:15" },
+    );
+    assert.equal(r.status, 200);
+    // Exactly the three audited fields produced rows.
+    const byField = new Map(r.body.auditHistory.map((e) => [e.field, e]));
+    assert.equal(byField.size, 3);
+    assert.deepEqual(
+      [
+        byField.get("quietHoursEnabled")?.newValue,
+        byField.get("quietHoursStart")?.newValue,
+        byField.get("quietHoursEnd")?.newValue,
+      ],
+      [true, "23:30", "06:15"],
+    );
+    // Defaults pre-write: enabled=false, start="22:00", end="07:00".
+    assert.deepEqual(
+      [
+        byField.get("quietHoursEnabled")?.oldValue,
+        byField.get("quietHoursStart")?.oldValue,
+        byField.get("quietHoursEnd")?.oldValue,
+      ],
+      [false, "22:00", "07:00"],
+    );
+  });
+
+  test("isolates each manager's history (subjectId scoping)", async () => {
+    // Two managers writing simultaneously: each only sees their own audit
+    // entries, proving the (scope, subjectId) filter is honoured.
+    const a = await world.createUser("MANAGER", "audit-iso-a");
+    const b = await world.createUser("MANAGER", "audit-iso-b");
+    await api<PreferencesShape>(a.token, "PUT", "/api/me/notification-preferences", {
+      notifySlackEnabled: true,
+    });
+    await api<PreferencesShape>(b.token, "PUT", "/api/me/notification-preferences", {
+      quietHoursWeekdayMask: 63,
+    });
+
+    const aGet = await api<PreferencesShape>(
+      a.token,
+      "GET",
+      "/api/me/notification-preferences",
+    );
+    const bGet = await api<PreferencesShape>(
+      b.token,
+      "GET",
+      "/api/me/notification-preferences",
+    );
+    assert.equal(aGet.body.auditHistory.length, 1);
+    assert.equal(aGet.body.auditHistory[0].field, "notifySlackEnabled");
+    assert.equal(aGet.body.auditHistory[0].changedByUserId, a.id);
+    assert.equal(bGet.body.auditHistory.length, 1);
+    assert.equal(bGet.body.auditHistory[0].field, "quietHoursWeekdayMask");
+    assert.equal(bGet.body.auditHistory[0].changedByUserId, b.id);
+  });
+
+  test("preserves the history row but nulls the actor when the user is deleted", async () => {
+    // Mimic a deactivated manager: write a change, then delete the user
+    // row. The audit entry must survive (with null actor + null email)
+    // because the FK uses ON DELETE SET NULL.
+    const manager = await world.createUser("MANAGER", "audit-delete");
+    await api<PreferencesShape>(
+      manager.token,
+      "PUT",
+      "/api/me/notification-preferences",
+      { notifySlackEnabled: true },
+    );
+
+    // Make a second manager who will read back the same subjectId's history
+    // via a direct DB-backed query (we can't GET another user's prefs over
+    // the API). For that we use the helper's underlying table contents
+    // instead — see the assertion below.
+    const { settingsAuditTable } = await import("@workspace/db");
+    await db.delete(usersTable).where(eq(usersTable.id, manager.id));
+    // Drop from the world tracker so cleanup() doesn't double-delete.
+    world.userIds = world.userIds.filter((id) => id !== manager.id);
+
+    const rows = await db
+      .select()
+      .from(settingsAuditTable)
+      .where(eq(settingsAuditTable.subjectId, manager.id));
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].changedByUserId, null, "actor should be nulled out");
+    assert.equal(rows[0].field, "notifySlackEnabled");
+    assert.equal(rows[0].newValue, JSON.stringify(true));
+
+    // Tidy: drop the orphan audit row so the next run starts clean.
+    await db.delete(settingsAuditTable).where(eq(settingsAuditTable.subjectId, manager.id));
   });
 });
 

@@ -1542,6 +1542,32 @@ components:
           format: date-time
           nullable: true
           description: When `quietHoursActive` is false, the absolute moment the next quiet-hours window begins. Null when quiet hours are off or the weekday mask is empty.
+        lastChangedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of the most recent change to this user's preferences. Null when the user has never edited them.
+        lastChangedByUserId:
+          type: integer
+          nullable: true
+          description: |
+            Manager who made the most recent change. Almost always equals
+            the calling user's id (managers edit their own preferences),
+            but exposed separately so a future admin-edits-other-manager
+            flow can attribute correctly. Null when the row has never
+            been audited or the actor was deleted.
+        lastChangedByUserEmail:
+          type: string
+          nullable: true
+          description: Email of the manager who made the most recent change. Resolved server-side; null if the user has been deleted.
+        auditHistory:
+          type: array
+          description: |
+            Most recent per-field changes to this user's preferences
+            (newest first), capped at 5. One entry per field that
+            actually moved on a single PUT.
+          items:
+            $ref: "#/components/schemas/SettingsAuditEntry"
       required:
         - notifyEmailEnabled
         - notifySlackEnabled
@@ -1555,6 +1581,10 @@ components:
         - quietHoursActive
         - quietHoursActiveUntil
         - quietHoursNextStart
+        - lastChangedAt
+        - lastChangedByUserId
+        - lastChangedByUserEmail
+        - auditHistory
 
     UpdateNotificationPreferencesBody:
       type: object
@@ -1785,6 +1815,58 @@ components:
         - dbOverrides
         - auditHistory
         - areaOverrides
+
+    SettingsAuditEntry:
+      type: object
+      description: |
+        Generic per-field audit entry written by any settings endpoint
+        that uses the shared `settings_audit` table. The `oldValue` /
+        `newValue` fields are typed as `oneOf` because different settings
+        store different primitives (booleans for notification toggles,
+        integers for weekday masks, strings for HH:MM windows). They are
+        nullable to model "no value" / "field cleared".
+      properties:
+        id:
+          type: integer
+        changedAt:
+          type: string
+          format: date-time
+        changedByUserId:
+          type: integer
+          nullable: true
+          description: |
+            Manager who made the change. Goes null if that user is later
+            deleted (the FK uses ON DELETE SET NULL so the rest of the
+            audit row — what moved, when, from/to — is preserved).
+        changedByUserEmail:
+          type: string
+          nullable: true
+          description: Resolved at read time; null if the user was deleted.
+        field:
+          type: string
+          description: The setting key that moved (camelCase, matching the wire format of the corresponding GET payload).
+        oldValue:
+          nullable: true
+          description: Previous value (decoded from JSON storage). Null when the field had no prior value.
+          oneOf:
+            - type: string
+            - type: number
+            - type: boolean
+        newValue:
+          nullable: true
+          description: New value (decoded from JSON storage). Null when the field was cleared.
+          oneOf:
+            - type: string
+            - type: number
+            - type: boolean
+      required:
+        - id
+        - changedAt
+        - changedByUserId
+        - changedByUserEmail
+        - field
+        - oldValue
+        - newValue
 
     OperatorThresholdAuditEntry:
       type: object

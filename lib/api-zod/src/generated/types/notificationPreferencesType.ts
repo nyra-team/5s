@@ -5,6 +5,7 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { SettingsAuditEntryType } from "./settingsAuditEntryType";
 
 export interface NotificationPreferencesType {
   notifyEmailEnabled: boolean;
@@ -39,4 +40,20 @@ export interface NotificationPreferencesType {
   quietHoursActiveUntil: Date | null;
   /** When `quietHoursActive` is false, the absolute moment the next quiet-hours window begins. Null when quiet hours are off or the weekday mask is empty. */
   quietHoursNextStart: Date | null;
+  /** Timestamp of the most recent change to this user's preferences. Null when the user has never edited them. */
+  lastChangedAt: Date | null;
+  /** Manager who made the most recent change. Almost always equals
+the calling user's id (managers edit their own preferences),
+but exposed separately so a future admin-edits-other-manager
+flow can attribute correctly. Null when the row has never
+been audited or the actor was deleted.
+ */
+  lastChangedByUserId: number | null;
+  /** Email of the manager who made the most recent change. Resolved server-side; null if the user has been deleted. */
+  lastChangedByUserEmail: string | null;
+  /** Most recent per-field changes to this user's preferences
+(newest first), capped at 5. One entry per field that
+actually moved on a single PUT.
+ */
+  auditHistory: SettingsAuditEntryType[];
 }

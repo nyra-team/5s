@@ -116,6 +116,7 @@ export * from "./reuploadSubmissionTypeShift";
 export * from "./scoreSummaryType";
 export * from "./sendOperatorCoachingNudgeBodyType";
 export * from "./setAreaAssignmentsBodyType";
+export * from "./settingsAuditEntryType";
 export * from "./setUserAreaAssignmentsBodyType";
 export * from "./shiftConfigType";
 export * from "./shiftConfigTypeStartHours";

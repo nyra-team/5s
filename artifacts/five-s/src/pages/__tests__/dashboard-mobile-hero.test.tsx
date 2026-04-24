@@ -79,6 +79,7 @@ vi.mock("@workspace/api-client-react", () => {
       last24h: { totalCalls: 0, retriedCalls: 0, retryRate: 0 },
       last7d: { totalCalls: 0, retriedCalls: 0, retryRate: 0 },
     }),
+    useGetDashboardAiCost: noopQuery(undefined),
     useGetAreaDetectionAgreement: noopQuery(undefined),
     getGetDashboardOperatorDismissesDetailQueryKey: () => ["dismisses-detail"],
     getGetAreaProfileQueryKey: () => ["area-profile"],
