@@ -212,12 +212,23 @@ export async function compressForVLM(
  * call awaits ffmpeg synchronously). On timeout we SIGKILL and let the caller
  * fall back to interval sampling or to a single-frame error result.
  *
- * Override via FFMPEG_TIMEOUT_MS (e.g. 30000) for slow CI hosts.
+ * Override via FFMPEG_TIMEOUT_MS (e.g. 30000) for slow CI hosts. Resolved per
+ * call so tests (and operators) can tweak the env var without restarting.
  */
-const FFMPEG_TIMEOUT_MS = (() => {
+function getFfmpegTimeoutMs(): number {
   const raw = Number(process.env.FFMPEG_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : 60_000;
-})();
+}
+
+/**
+ * Resolve the ffmpeg binary to spawn. Defaults to `ffmpeg` on PATH; tests
+ * point this at a fake hanging binary to exercise the timeout path without
+ * requiring a real malformed video.
+ */
+function getFfmpegBin(): string {
+  const bin = process.env.FFMPEG_BIN;
+  return bin && bin.length > 0 ? bin : "ffmpeg";
+}
 
 /**
  * Run ffmpeg with the given filter graph. Returns the list of frame files
@@ -226,6 +237,7 @@ const FFMPEG_TIMEOUT_MS = (() => {
  */
 async function runFfmpeg(videoAbsPath: string, vfilter: string, maxCandidates: number, idPrefix: string): Promise<string[]> {
   const pattern = path.join(UPLOAD_DIR, `${idPrefix}_%03d.jpg`);
+  const timeoutMs = getFfmpegTimeoutMs();
   await new Promise<void>((resolve, reject) => {
     const args = [
       "-y",
@@ -238,7 +250,7 @@ async function runFfmpeg(videoAbsPath: string, vfilter: string, maxCandidates: n
       "-q:v", "3",
       pattern,
     ];
-    const proc = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
+    const proc = spawn(getFfmpegBin(), args, { stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
     let settled = false;
     proc.stderr.on("data", (b) => { stderr += b.toString(); });
@@ -247,12 +259,12 @@ async function runFfmpeg(videoAbsPath: string, vfilter: string, maxCandidates: n
       if (settled) return;
       settled = true;
       logger.warn(
-        { videoAbsPath, vfilter, timeoutMs: FFMPEG_TIMEOUT_MS },
+        { videoAbsPath, vfilter, timeoutMs },
         "ffmpeg invocation exceeded timeout; killing",
       );
       try { proc.kill("SIGKILL"); } catch { /* best-effort */ }
-      reject(new Error(`ffmpeg timed out after ${FFMPEG_TIMEOUT_MS}ms`));
-    }, FFMPEG_TIMEOUT_MS);
+      reject(new Error(`ffmpeg timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
     timer.unref?.();
 
     proc.on("error", (err) => {

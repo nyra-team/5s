@@ -3,7 +3,13 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import sharp from "sharp";
-import { __test__, compressForVLM, resolveCandidateCap, pickUniqueByHash } from "../keyframes.js";
+import {
+  __test__,
+  compressForVLM,
+  extractKeyframes,
+  pickUniqueByHash,
+  resolveCandidateCap,
+} from "../keyframes.js";
 
 const { computeDHash, hammingDistance } = __test__;
 
@@ -274,5 +280,51 @@ describe("compressForVLM", () => {
     expect(dMeta.format).toBe("jpeg");
     expect(dMeta.width!).toBeLessThanOrEqual(1024);
     expect(dMeta.height!).toBeLessThanOrEqual(1024);
+  });
+});
+
+describe("extractKeyframes ffmpeg timeout", () => {
+  const ORIGINAL_BIN = process.env.FFMPEG_BIN;
+  const ORIGINAL_TIMEOUT = process.env.FFMPEG_TIMEOUT_MS;
+
+  afterEach(() => {
+    if (ORIGINAL_BIN === undefined) delete process.env.FFMPEG_BIN;
+    else process.env.FFMPEG_BIN = ORIGINAL_BIN;
+    if (ORIGINAL_TIMEOUT === undefined) delete process.env.FFMPEG_TIMEOUT_MS;
+    else process.env.FFMPEG_TIMEOUT_MS = ORIGINAL_TIMEOUT;
+  });
+
+  it("kills a hanging ffmpeg and returns the empty-result path within the timeout budget", async () => {
+    // A real malformed video would just stall ffmpeg's demuxer; we get the
+    // same observable behavior — a child process that never exits — by
+    // pointing the helper at a node script that hangs forever. This avoids
+    // depending on a real ffmpeg build (or a fragile broken-video fixture)
+    // while still exercising the timeout/SIGKILL path end-to-end.
+    const fakeBin = path.join(tmpDir, "fake-ffmpeg.mjs");
+    fs.writeFileSync(
+      fakeBin,
+      "#!/usr/bin/env node\n// Ignore all args; never exit so the wall-clock timeout has to fire.\nsetInterval(() => {}, 60_000);\n",
+    );
+    fs.chmodSync(fakeBin, 0o755);
+
+    process.env.FFMPEG_BIN = fakeBin;
+    // Two ffmpeg passes (scene + fallback) each get this budget, so total
+    // wall time is ~2x. Keep small enough to stay well under the 20s suite
+    // timeout but large enough to dwarf process-spawn jitter.
+    process.env.FFMPEG_TIMEOUT_MS = "300";
+
+    const start = Date.now();
+    const result = await extractKeyframes("/tmp/does-not-matter.mp4", { maxFrames: 3 });
+    const elapsed = Date.now() - start;
+
+    // Both ffmpeg passes should have timed out and the function should have
+    // fallen through to the documented empty-result path — no throw, no
+    // forever-hang waiting on the child.
+    expect(result.frameUrls).toEqual([]);
+    expect(result.frameAbsPaths).toEqual([]);
+    // Generous upper bound: 2 timeouts (~600ms) + spawn/teardown overhead.
+    // If the SIGKILL path regresses, this would balloon to the full suite
+    // timeout instead.
+    expect(elapsed).toBeLessThan(5_000);
   });
 });
