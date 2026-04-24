@@ -12,16 +12,93 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 const STORAGE_KEY = "five-s-theme";
 
+const DEFAULT_NIGHT_START_HOUR = 22;
+const DEFAULT_NIGHT_END_HOUR = 6;
+const DEFAULT_NIGHT_TZ = "Asia/Kolkata";
+
+export interface NightShiftWindow {
+  startHour: number;
+  endHour: number;
+  timeZone: string;
+}
+
+function parseHour(raw: string | undefined, fallback: number): number {
+  if (raw == null || raw === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  const h = Math.trunc(n);
+  if (h < 0 || h > 23) return fallback;
+  return h;
+}
+
+function isValidTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read the night-shift window from build-time config so each facility can
+ * deploy with its own hours / timezone without code changes. Falls back to the
+ * legacy 22:00–06:00 IST window when nothing is configured.
+ *
+ * Recognised env vars (Vite, prefixed with VITE_):
+ *   VITE_NIGHT_SHIFT_START_HOUR   integer 0–23, default 22
+ *   VITE_NIGHT_SHIFT_END_HOUR     integer 0–23, default 6
+ *   VITE_NIGHT_SHIFT_TZ           IANA timezone, default Asia/Kolkata
+ */
+export function getNightShiftWindow(): NightShiftWindow {
+  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
+  const startHour = parseHour(env.VITE_NIGHT_SHIFT_START_HOUR, DEFAULT_NIGHT_START_HOUR);
+  const endHour = parseHour(env.VITE_NIGHT_SHIFT_END_HOUR, DEFAULT_NIGHT_END_HOUR);
+  const rawTz = env.VITE_NIGHT_SHIFT_TZ;
+  const timeZone = rawTz && isValidTimeZone(rawTz) ? rawTz : DEFAULT_NIGHT_TZ;
+  return { startHour, endHour, timeZone };
+}
+
+function getHourInTimeZone(now: Date, timeZone: string): number {
+  try {
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "numeric",
+      hour12: false,
+    });
+    const parts = fmt.formatToParts(now);
+    const raw = parts.find((p) => p.type === "hour")?.value ?? "0";
+    const h = parseInt(raw, 10);
+    // Some locales report "24" for midnight under hour12:false; normalise.
+    return Number.isFinite(h) ? h % 24 : now.getUTCHours();
+  } catch {
+    return now.getUTCHours();
+  }
+}
+
+/**
+ * True when "now" falls inside [startHour, endHour) in the given timezone.
+ * Handles wrap-around windows like 22 → 6.
+ */
+export function isWithinNightWindow(now: Date, window: NightShiftWindow): boolean {
+  const { startHour, endHour, timeZone } = window;
+  if (startHour === endHour) return false; // empty window → never night
+  const hour = getHourInTimeZone(now, timeZone);
+  if (startHour < endHour) {
+    // Same-day window, e.g. 0 → 6.
+    return hour >= startHour && hour < endHour;
+  }
+  // Wrap-around window, e.g. 22 → 6.
+  return hour >= startHour || hour < endHour;
+}
+
 function getSystemPref(): "light" | "dark" {
   if (typeof window === "undefined") return "light";
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 function getShiftPref(): "light" | "dark" {
-  const nowUtcMs = Date.now();
-  const istMs = nowUtcMs + 5.5 * 60 * 60 * 1000;
-  const istHour = new Date(istMs).getUTCHours();
-  return istHour >= 22 || istHour < 6 ? "dark" : "light";
+  return isWithinNightWindow(new Date(), getNightShiftWindow()) ? "dark" : "light";
 }
 
 function resolveMode(mode: ThemeMode): "light" | "dark" {

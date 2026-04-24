@@ -98,3 +98,9 @@ Full-stack 5S Compliance web app for manufacturing. Operators photograph worksta
 - **Frontend**: Vite dev server (dynamic port), proxied to /
 - **ML Service**: Python FastAPI on port 8100, internal only
 - **Mockup Sandbox**: Vite on port 8081, for component previews
+
+## Frontend Config (Vite env)
+
+- `VITE_NIGHT_SHIFT_START_HOUR` — hour (0-23) the "Auto" theme should switch to dark. Default `22`.
+- `VITE_NIGHT_SHIFT_END_HOUR` — hour (0-23) the "Auto" theme should switch back to light. Default `6`. May be less than the start hour to wrap across midnight.
+- `VITE_NIGHT_SHIFT_TZ` — IANA timezone the night-shift window is evaluated in. Default `Asia/Kolkata`.
