@@ -61,6 +61,13 @@ import {
 } from "@/components/ui/sheet";
 import { format, formatDistanceToNowStrict } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
+import { useAuth } from "@/lib/auth";
+import {
+  loadCaptureDraft,
+  saveCaptureDraft,
+  deleteCaptureDraft,
+  purgeStaleCaptureDrafts,
+} from "@/lib/capture-drafts";
 
 const SHIFT_OPTIONS = [
   { value: "A" as const, label: "Shift A", time: "6 AM – 2 PM" },
@@ -149,6 +156,12 @@ export default function OperatorHome() {
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 30_000);
     return () => clearInterval(id);
+  }, []);
+
+  // Purge any draft captures older than 24h on each operator-page mount, so
+  // stale media doesn't accumulate in IndexedDB across shifts.
+  useEffect(() => {
+    void purgeStaleCaptureDrafts();
   }, []);
 
   useEffect(() => {
@@ -561,6 +574,10 @@ function AreaCard({
   const [media, setMedia] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [machineTag, setMachineTag] = useState("");
+  // Per (operator, area) resumable draft. Hydrated from IndexedDB on mount so
+  // operators don't lose media/tag if they switch apps or get interrupted.
+  const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
+  const draftHydratedRef = useRef(false);
 
   const recordVideoInputRef = useRef<HTMLInputElement>(null);
   const pickVideoInputRef = useRef<HTMLInputElement>(null);
@@ -570,6 +587,8 @@ function AreaCard({
   const reuploadSubmission = useReuploadSubmission();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
+  const operatorId = user?.id ?? null;
 
   // Lazily fetch the learned profile only when the capture sheet is open, so
   // the operator sees "what good looks like" without paying the cost up-front.
@@ -582,11 +601,72 @@ function AreaCard({
 
   const isVideo = (f: File | null) => !!f && f.type.startsWith("video/");
 
+  // Hydrate any saved draft for this (operator, area) once on mount. We only
+  // resume drafts in the "create" flow — once submitted, the operator uses
+  // the re-capture flow which doesn't rely on local drafts.
+  useEffect(() => {
+    if (draftHydratedRef.current) return;
+    if (operatorId == null) return;
+    if (status.submitted) return;
+    draftHydratedRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      const draft = await loadCaptureDraft(operatorId, status.areaId);
+      if (cancelled || !draft) return;
+      const file = new File([draft.media], draft.mediaName || "capture", {
+        type: draft.mediaType || draft.media.type || "application/octet-stream",
+      });
+      setMedia(file);
+      setMachineTag(draft.machineTag || "");
+      setPreviewUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return URL.createObjectURL(draft.media);
+      });
+      setDraftSavedAt(draft.savedAt);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [operatorId, status.areaId, status.submitted]);
+
+  // Persist the in-progress capture (debounced) so a swipe-away or signal drop
+  // doesn't lose what the operator just selected.
+  useEffect(() => {
+    if (operatorId == null) return;
+    if (status.submitted) return;
+    if (isReuploadMode) return; // re-capture is a separate, non-draftable flow
+    if (!media) return;
+    const handle = setTimeout(() => {
+      const savedAt = Date.now();
+      void saveCaptureDraft({
+        operatorId,
+        areaId: status.areaId,
+        media,
+        mediaName: media.name || "capture",
+        mediaType: media.type || "application/octet-stream",
+        machineTag,
+        savedAt,
+      }).then(() => setDraftSavedAt(savedAt));
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [operatorId, status.areaId, status.submitted, isReuploadMode, media, machineTag]);
+
+  const clearLocalCaptureState = () => {
+    setMedia(null);
+    setMachineTag("");
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    setDraftSavedAt(null);
+  };
+
   const handleFileSelect = (mode: "create" | "reupload") => (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setMedia(file);
-      setPreviewUrl(URL.createObjectURL(file));
+      setPreviewUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return URL.createObjectURL(file);
+      });
       setIsReuploadMode(mode === "reupload");
       setIsCaptureOpen(true);
     }
@@ -596,10 +676,13 @@ function AreaCard({
 
   const openCaptureSheet = () => {
     setIsReuploadMode(false);
-    setMedia(null);
-    setMachineTag("");
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(null);
+    // If we hydrated a draft (media present from a prior session), keep it so
+    // the operator can resume; otherwise start clean.
+    if (!media) {
+      setMachineTag("");
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
     setIsCaptureOpen(true);
   };
 
@@ -609,16 +692,26 @@ function AreaCard({
     setMachineTag(status.submission?.machineTag ?? "");
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
+    setDraftSavedAt(null);
     setIsCaptureOpen(true);
   };
 
   const closeCapture = () => {
     setIsCaptureOpen(false);
-    setIsReuploadMode(false);
-    setMedia(null);
-    setMachineTag("");
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(null);
+    if (isReuploadMode) {
+      // Re-capture state is ephemeral — don't carry it over to the next open.
+      setIsReuploadMode(false);
+      clearLocalCaptureState();
+    }
+    // For the create flow we intentionally keep media + tag so that reopening
+    // "Add evidence" resumes the in-progress draft.
+  };
+
+  const discardDraft = async () => {
+    if (operatorId != null) {
+      await deleteCaptureDraft(operatorId, status.areaId);
+    }
+    clearLocalCaptureState();
   };
 
   const onSuccess = (msg: string) => {
@@ -629,7 +722,12 @@ function AreaCard({
     queryClient.invalidateQueries({ queryKey: getGetOperatorStatusQueryKey() });
     queryClient.invalidateQueries({ queryKey: getGetNextChecksQueryKey() });
     queryClient.invalidateQueries({ queryKey: getGetOperatorRecentQueryKey({ limit: 12 }) });
-    closeCapture();
+    if (operatorId != null && !isReuploadMode) {
+      void deleteCaptureDraft(operatorId, status.areaId);
+    }
+    setIsCaptureOpen(false);
+    setIsReuploadMode(false);
+    clearLocalCaptureState();
   };
 
   const handleSubmit = () => {
@@ -813,6 +911,8 @@ function AreaCard({
           machineTag={machineTag}
           setMachineTag={setMachineTag}
           isMutating={isMutating}
+          draftSavedAt={null}
+          onDiscardDraft={null}
           onClose={closeCapture}
           onSubmit={handleSubmit}
           onTriggerRecord={triggerRecord}
@@ -917,6 +1017,8 @@ function AreaCard({
         machineTag={machineTag}
         setMachineTag={setMachineTag}
         isMutating={isMutating}
+        draftSavedAt={isReuploadMode ? null : draftSavedAt}
+        onDiscardDraft={isReuploadMode ? null : discardDraft}
         onClose={closeCapture}
         onSubmit={handleSubmit}
         onTriggerRecord={triggerRecord}
@@ -962,6 +1064,8 @@ function CaptureSheet({
   machineTag,
   setMachineTag,
   isMutating,
+  draftSavedAt,
+  onDiscardDraft,
   onClose,
   onSubmit,
   onTriggerRecord,
@@ -978,6 +1082,8 @@ function CaptureSheet({
   machineTag: string;
   setMachineTag: (v: string) => void;
   isMutating: boolean;
+  draftSavedAt: number | null;
+  onDiscardDraft: (() => void) | null;
   onClose: () => void;
   onSubmit: () => void;
   onTriggerRecord: () => void;
@@ -1004,6 +1110,29 @@ function CaptureSheet({
         </SheetHeader>
 
         <div className="space-y-4 my-2">
+          {mode === "create" && draftSavedAt != null && media && (
+            <div
+              className="flex items-center gap-2 rounded-xl border border-dashed border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-[12.5px] text-amber-800 dark:text-amber-200"
+              data-testid="banner-resume-draft"
+            >
+              <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+              <span className="leading-snug flex-1">
+                Resume draft — saved{" "}
+                {formatDistanceToNowStrict(new Date(draftSavedAt), { addSuffix: true })}.
+              </span>
+              {onDiscardDraft && (
+                <button
+                  type="button"
+                  onClick={onDiscardDraft}
+                  className="text-[12px] font-semibold underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-100 min-h-[28px] px-1"
+                  data-testid="button-discard-draft"
+                >
+                  Discard
+                </button>
+              )}
+            </div>
+          )}
+
           <ProfileHint profile={profile} lastGood={lastGood} />
 
           {previewUrl ? (
