@@ -438,7 +438,7 @@ function LearningTrendPanel() {
   );
 }
 
-function AreaTrendCard({ trend }: { trend: AreaTrend }) {
+export function AreaTrendCard({ trend }: { trend: AreaTrend }) {
   const totalPoints = trend.points.reduce((acc, p) => acc + p.count, 0);
   const isTrained = trend.status === "TRAINED";
 
@@ -447,6 +447,15 @@ function AreaTrendCard({ trend }: { trend: AreaTrend }) {
   const trainedPoint = trend.trainedOnDate
     ? trend.points.find((p) => p.date === trend.trainedOnDate && p.avgScore !== null)
     : undefined;
+
+  // The points are already keyed by IST day, so the first and last entries
+  // describe the visible window's start and end dates.
+  const firstPoint = trend.points[0];
+  const lastPoint = trend.points[trend.points.length - 1];
+  const windowLabel =
+    firstPoint && lastPoint
+      ? `${format(parseISO(firstPoint.date), "MMM d")} → ${format(parseISO(lastPoint.date), "MMM d")}`
+      : null;
 
   // Average across days that actually have submissions, so empty days don't drag the headline.
   const daysWithData = trend.points.filter(
@@ -531,6 +540,14 @@ function AreaTrendCard({ trend }: { trend: AreaTrend }) {
           </ResponsiveContainer>
         )}
       </div>
+      {windowLabel && (
+        <p
+          className="text-[10.5px] text-muted-foreground tabular-nums tracking-tight -mt-1"
+          data-testid={`dashboard-trend-range-${trend.areaId}`}
+        >
+          {windowLabel}
+        </p>
+      )}
       {trend.trainedOnDate && (
         <p className="text-[11px] text-muted-foreground">
           Trained on {format(parseISO(trend.trainedOnDate), "MMM d")}
