@@ -257,6 +257,171 @@ describe("POST /submissions/identify-area (assignment scoping)", () => {
   });
 });
 
+describe("GET /users/:userId/assignments", () => {
+  it("requires a manager token", async () => {
+    const noAuth = await request(app).get(`/api/users/${operatorAId}/assignments`);
+    expect(noAuth.status).toBe(401);
+
+    const asOperator = await request(app)
+      .get(`/api/users/${operatorAId}/assignments`)
+      .set("Authorization", `Bearer ${opAToken}`);
+    expect(asOperator.status).toBe(403);
+  });
+
+  it("404s on unknown user ids and on manager ids (operators only)", async () => {
+    const unknown = await request(app)
+      .get(`/api/users/9999999/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(unknown.status).toBe(404);
+
+    const isMgr = await request(app)
+      .get(`/api/users/${managerId}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(isMgr.status).toBe(404);
+  });
+
+  it("returns the operator's assigned areas (empty list when none)", async () => {
+    let res = await request(app)
+      .get(`/api/users/${operatorAId}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ userId: operatorAId, areaIds: [] });
+
+    // Seed one assignment via the per-area endpoint and confirm the
+    // by-operator GET reflects it — the two views read the same table.
+    await request(app)
+      .put(`/api/areas/${areaB.id}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ operatorIds: [operatorAId] })
+      .expect(200);
+
+    res = await request(app)
+      .get(`/api/users/${operatorAId}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.userId).toBe(operatorAId);
+    expect(res.body.areaIds).toEqual([areaB.id]);
+  });
+});
+
+describe("PUT /users/:userId/assignments", () => {
+  it("requires a manager token", async () => {
+    const res = await request(app)
+      .put(`/api/users/${operatorAId}/assignments`)
+      .set("Authorization", `Bearer ${opAToken}`)
+      .send({ areaIds: [areaA.id] });
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects unknown area ids and managers as targets", async () => {
+    const unknown = await request(app)
+      .put(`/api/users/${operatorAId}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ areaIds: [areaA.id, 9_999_999] });
+    expect(unknown.status).toBe(400);
+
+    const isMgr = await request(app)
+      .put(`/api/users/${managerId}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ areaIds: [areaA.id] });
+    expect(isMgr.status).toBe(404);
+
+    // Make sure neither attempt left rows behind.
+    const rows = await db
+      .select()
+      .from(areaAssignmentsTable)
+      .where(eq(areaAssignmentsTable.userId, operatorAId));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("replaces the operator's full assignment set on each call and dedupes ids", async () => {
+    // First write: A and C.
+    let res = await request(app)
+      .put(`/api/users/${operatorAId}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ areaIds: [areaA.id, areaC.id, areaA.id] });
+    expect(res.status).toBe(200);
+    expect(new Set(res.body.areaIds)).toEqual(new Set([areaA.id, areaC.id]));
+
+    // Replace with just B.
+    res = await request(app)
+      .put(`/api/users/${operatorAId}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ areaIds: [areaB.id] });
+    expect(res.status).toBe(200);
+    expect(res.body.areaIds).toEqual([areaB.id]);
+
+    const get = await request(app)
+      .get(`/api/users/${operatorAId}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(get.status).toBe(200);
+    expect(get.body.areaIds).toEqual([areaB.id]);
+  });
+
+  it("clearing the list reverts the operator to the 'sees everything' default", async () => {
+    // Seed an assignment so the operator is narrowed.
+    await request(app)
+      .put(`/api/users/${operatorAId}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ areaIds: [areaA.id] })
+      .expect(200);
+
+    let scoped = await request(app)
+      .get("/api/operator/status")
+      .set("Authorization", `Bearer ${opAToken}`);
+    expect(scoped.status).toBe(200);
+    let scopedIds = (scoped.body as Array<{ areaId: number }>).map((s) => s.areaId);
+    expect(scopedIds).toEqual([areaA.id]);
+
+    // Clear it via the by-operator endpoint.
+    const clear = await request(app)
+      .put(`/api/users/${operatorAId}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ areaIds: [] });
+    expect(clear.status).toBe(200);
+    expect(clear.body.areaIds).toEqual([]);
+
+    // Backward-compat: with zero rows, the operator should see every area
+    // again (same rule the per-area endpoint relies on).
+    scoped = await request(app)
+      .get("/api/operator/status")
+      .set("Authorization", `Bearer ${opAToken}`);
+    expect(scoped.status).toBe(200);
+    scopedIds = (scoped.body as Array<{ areaId: number }>).map((s) => s.areaId);
+    expect(scopedIds).toEqual(expect.arrayContaining([areaA.id, areaB.id, areaC.id]));
+  });
+
+  it("is consistent with the per-area endpoint — writes from one show up in the other", async () => {
+    // Write via by-operator: assign opA to A and B.
+    await request(app)
+      .put(`/api/users/${operatorAId}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ areaIds: [areaA.id, areaB.id] })
+      .expect(200);
+
+    // Read via per-area: A should list opA.
+    const areaA_res = await request(app)
+      .get(`/api/areas/${areaA.id}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(areaA_res.status).toBe(200);
+    expect(areaA_res.body.operatorIds).toContain(operatorAId);
+
+    // Now use the per-area endpoint to add opB to area A.
+    await request(app)
+      .put(`/api/areas/${areaA.id}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ operatorIds: [operatorAId, operatorBId] })
+      .expect(200);
+
+    // Verify the by-operator GET reflects the change for opB.
+    const opB_res = await request(app)
+      .get(`/api/users/${operatorBId}/assignments`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(opB_res.status).toBe(200);
+    expect(opB_res.body.areaIds).toEqual([areaA.id]);
+  });
+});
+
 describe("POST /submissions (assignment enforcement)", () => {
   // We only assert the 403 path here — the success path runs the AI scoring
   // pipeline and creates downstream rows (submissions, escalations, area

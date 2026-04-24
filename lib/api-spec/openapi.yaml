@@ -214,6 +214,48 @@ paths:
                 items:
                   $ref: "#/components/schemas/OperatorUser"
 
+  /users/{userId}/assignments:
+    get:
+      operationId: getUserAreaAssignments
+      tags: [assignments]
+      summary: List area IDs an operator is assigned to (manager-only). Used by the by-operator bulk picker.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Areas assigned to the operator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserAreaAssignmentList"
+    put:
+      operationId: setUserAreaAssignments
+      tags: [assignments]
+      summary: Replace the set of areas an operator is assigned to (manager-only). Empty list clears all assignments and reverts the operator to the "sees everything" backward-compat default.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetUserAreaAssignmentsBody"
+      responses:
+        "200":
+          description: Assignments updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserAreaAssignmentList"
+
   /areas/{id}/profile:
     get:
       operationId: getAreaProfile
@@ -1966,6 +2008,27 @@ components:
             type: integer
             minimum: 1
       required: [operatorIds]
+
+    UserAreaAssignmentList:
+      type: object
+      properties:
+        userId:
+          type: integer
+        areaIds:
+          type: array
+          items:
+            type: integer
+      required: [userId, areaIds]
+
+    SetUserAreaAssignmentsBody:
+      type: object
+      properties:
+        areaIds:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+      required: [areaIds]
 
     AreaIdentificationCandidate:
       type: object

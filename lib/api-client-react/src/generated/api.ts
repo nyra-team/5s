@@ -71,6 +71,7 @@ import type {
   ScoreSummary,
   SendOperatorCoachingNudgeBody,
   SetAreaAssignmentsBody,
+  SetUserAreaAssignmentsBody,
   ShiftConfig,
   Submission,
   UpdateAreaBody,
@@ -79,6 +80,7 @@ import type {
   UpdateNotificationPreferencesBody,
   UpdateOperatorThresholdsBody,
   User,
+  UserAreaAssignmentList,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -884,6 +886,189 @@ export function useListOperators<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary List area IDs an operator is assigned to (manager-only). Used by the by-operator bulk picker.
+ */
+export const getGetUserAreaAssignmentsUrl = (userId: number) => {
+  return `/api/users/${userId}/assignments`;
+};
+
+export const getUserAreaAssignments = async (
+  userId: number,
+  options?: RequestInit,
+): Promise<UserAreaAssignmentList> => {
+  return customFetch<UserAreaAssignmentList>(
+    getGetUserAreaAssignmentsUrl(userId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetUserAreaAssignmentsQueryKey = (userId: number) => {
+  return [`/api/users/${userId}/assignments`] as const;
+};
+
+export const getGetUserAreaAssignmentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getUserAreaAssignments>>,
+  TError = ErrorType<unknown>,
+>(
+  userId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getUserAreaAssignments>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetUserAreaAssignmentsQueryKey(userId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getUserAreaAssignments>>
+  > = ({ signal }) =>
+    getUserAreaAssignments(userId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!userId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getUserAreaAssignments>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetUserAreaAssignmentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getUserAreaAssignments>>
+>;
+export type GetUserAreaAssignmentsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List area IDs an operator is assigned to (manager-only). Used by the by-operator bulk picker.
+ */
+
+export function useGetUserAreaAssignments<
+  TData = Awaited<ReturnType<typeof getUserAreaAssignments>>,
+  TError = ErrorType<unknown>,
+>(
+  userId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getUserAreaAssignments>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetUserAreaAssignmentsQueryOptions(userId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Replace the set of areas an operator is assigned to (manager-only). Empty list clears all assignments and reverts the operator to the "sees everything" backward-compat default.
+ */
+export const getSetUserAreaAssignmentsUrl = (userId: number) => {
+  return `/api/users/${userId}/assignments`;
+};
+
+export const setUserAreaAssignments = async (
+  userId: number,
+  setUserAreaAssignmentsBody: SetUserAreaAssignmentsBody,
+  options?: RequestInit,
+): Promise<UserAreaAssignmentList> => {
+  return customFetch<UserAreaAssignmentList>(
+    getSetUserAreaAssignmentsUrl(userId),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(setUserAreaAssignmentsBody),
+    },
+  );
+};
+
+export const getSetUserAreaAssignmentsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setUserAreaAssignments>>,
+    TError,
+    { userId: number; data: BodyType<SetUserAreaAssignmentsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof setUserAreaAssignments>>,
+  TError,
+  { userId: number; data: BodyType<SetUserAreaAssignmentsBody> },
+  TContext
+> => {
+  const mutationKey = ["setUserAreaAssignments"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof setUserAreaAssignments>>,
+    { userId: number; data: BodyType<SetUserAreaAssignmentsBody> }
+  > = (props) => {
+    const { userId, data } = props ?? {};
+
+    return setUserAreaAssignments(userId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SetUserAreaAssignmentsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof setUserAreaAssignments>>
+>;
+export type SetUserAreaAssignmentsMutationBody =
+  BodyType<SetUserAreaAssignmentsBody>;
+export type SetUserAreaAssignmentsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Replace the set of areas an operator is assigned to (manager-only). Empty list clears all assignments and reverts the operator to the "sees everything" backward-compat default.
+ */
+export const useSetUserAreaAssignments = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setUserAreaAssignments>>,
+    TError,
+    { userId: number; data: BodyType<SetUserAreaAssignmentsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof setUserAreaAssignments>>,
+  TError,
+  { userId: number; data: BodyType<SetUserAreaAssignmentsBody> },
+  TContext
+> => {
+  return useMutation(getSetUserAreaAssignmentsMutationOptions(options));
+};
 
 /**
  * @summary Get the learned profile for an area

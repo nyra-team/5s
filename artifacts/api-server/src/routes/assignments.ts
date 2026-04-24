@@ -10,6 +10,9 @@ import {
   GetAreaAssignmentsParams,
   SetAreaAssignmentsParams,
   SetAreaAssignmentsBody,
+  GetUserAreaAssignmentsParams,
+  SetUserAreaAssignmentsParams,
+  SetUserAreaAssignmentsBody,
 } from "@workspace/api-zod";
 import { authMiddleware, requireRole } from "../lib/auth";
 
@@ -99,6 +102,90 @@ router.put("/areas/:id/assignments", authMiddleware, requireRole("MANAGER"), asy
   }
 
   res.json({ areaId, operatorIds });
+});
+
+// "By operator" view — counterpart of the per-area picker. Lets the manager
+// pick one operator and toggle the full set of areas they're assigned to in a
+// single screen instead of clicking through every area card. The data model
+// is symmetric (a row in `area_assignments` is just a user/area pair) so both
+// views read and write the same table; the only difference is which axis the
+// caller pins. Both endpoints below preserve the "no rows for this user → see
+// every area" backward-compat rule because clearing an operator's full list
+// just deletes their rows.
+router.get("/users/:userId/assignments", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
+  const params = GetUserAreaAssignmentsParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const userId = params.data.userId;
+
+  const [user] = await db
+    .select({ id: usersTable.id, role: usersTable.role })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+  if (!user || user.role !== "OPERATOR") {
+    res.status(404).json({ error: "Operator not found" });
+    return;
+  }
+
+  const rows = await db
+    .select({ areaId: areaAssignmentsTable.areaId })
+    .from(areaAssignmentsTable)
+    .where(eq(areaAssignmentsTable.userId, userId));
+
+  res.json({ userId, areaIds: rows.map((r) => r.areaId) });
+});
+
+router.put("/users/:userId/assignments", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
+  const params = SetUserAreaAssignmentsParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const body = SetUserAreaAssignmentsBody.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: body.error.message });
+    return;
+  }
+  const userId = params.data.userId;
+  // Mirror the per-area handler: dedupe so a sloppy client doesn't trip the
+  // (user_id, area_id) PK on insert.
+  const areaIds = Array.from(new Set(body.data.areaIds));
+
+  const [user] = await db
+    .select({ id: usersTable.id, role: usersTable.role })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+  if (!user || user.role !== "OPERATOR") {
+    res.status(404).json({ error: "Operator not found" });
+    return;
+  }
+
+  // Validate every area id exists before touching anything. Same rationale as
+  // the per-area validator: partial application would silently drop areas
+  // from the manager's intended list.
+  if (areaIds.length > 0) {
+    const validAreas = await db
+      .select({ id: areasTable.id })
+      .from(areasTable)
+      .where(inArray(areasTable.id, areaIds));
+    if (validAreas.length !== areaIds.length) {
+      res.status(400).json({ error: "One or more area ids are invalid" });
+      return;
+    }
+  }
+
+  // Replace-style update, scoped to this user. Mirrors the per-area PUT —
+  // two statements are fine because assignments aren't on a hot path.
+  await db.delete(areaAssignmentsTable).where(eq(areaAssignmentsTable.userId, userId));
+  if (areaIds.length > 0) {
+    await db.insert(areaAssignmentsTable).values(
+      areaIds.map((areaId) => ({ userId, areaId })),
+    );
+  }
+
+  res.json({ userId, areaIds });
 });
 
 export default router;

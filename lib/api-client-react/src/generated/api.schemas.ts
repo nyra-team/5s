@@ -489,6 +489,15 @@ export interface SetAreaAssignmentsBody {
   operatorIds: number[];
 }
 
+export interface UserAreaAssignmentList {
+  userId: number;
+  areaIds: number[];
+}
+
+export interface SetUserAreaAssignmentsBody {
+  areaIds: number[];
+}
+
 export interface AreaIdentificationCandidate {
   areaId: number;
   areaName: string;

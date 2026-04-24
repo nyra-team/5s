@@ -52,6 +52,7 @@ A full-stack web application for manufacturing environments to enforce 5S compli
 - **AI Metrics Retention**: A daily background sweep (`startMetricsRetentionScheduler` in `artifacts/api-server/src/lib/metrics-retention.ts`) deletes `ai_scoring_metrics` rows older than 30 days. The dashboard only reads the last 7 days from this table; the 30-day buffer keeps room for ad-hoc investigations while preventing unbounded growth. Tune the window by editing the `AI_SCORING_METRICS_RETENTION_DAYS` constant.
 - **AI Reliability Monitoring**: Dashboard panel and endpoint to surface VLM first-try retry rates.
 - **Area Auto-Detect Agreement**: Tracks agreement between operator-selected area and auto-detected area.
+- **Operator-Area Assignments**: Symmetric editing on the same `area_assignments` table — managers can pick an area and toggle operators ("By area" tab on `/areas`) or pick an operator and toggle every area at once ("By operator" tab) for fast onboarding. Backed by `GET/PUT /areas/:id/assignments` and `GET/PUT /users/:userId/assignments`. Clearing an operator's full list reverts them to the "sees every area" backward-compat default.
 
 ### System Design Choices
 - **OpenAPI Specification**: Single source of truth for API definitions.

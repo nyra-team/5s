@@ -134,6 +134,34 @@ export const ListOperatorsResponseItem = zod.object({
 export const ListOperatorsResponse = zod.array(ListOperatorsResponseItem);
 
 /**
+ * @summary List area IDs an operator is assigned to (manager-only). Used by the by-operator bulk picker.
+ */
+export const GetUserAreaAssignmentsParams = zod.object({
+  userId: zod.coerce.number(),
+});
+
+export const GetUserAreaAssignmentsResponse = zod.object({
+  userId: zod.number(),
+  areaIds: zod.array(zod.number()),
+});
+
+/**
+ * @summary Replace the set of areas an operator is assigned to (manager-only). Empty list clears all assignments and reverts the operator to the "sees everything" backward-compat default.
+ */
+export const SetUserAreaAssignmentsParams = zod.object({
+  userId: zod.coerce.number(),
+});
+
+export const SetUserAreaAssignmentsBody = zod.object({
+  areaIds: zod.array(zod.number().min(1)),
+});
+
+export const SetUserAreaAssignmentsResponse = zod.object({
+  userId: zod.number(),
+  areaIds: zod.array(zod.number()),
+});
+
+/**
  * @summary Get the learned profile for an area
  */
 export const GetAreaProfileParams = zod.object({

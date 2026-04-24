@@ -9,10 +9,13 @@ import {
   useListOperators,
   useGetAreaAssignments,
   useSetAreaAssignments,
+  useGetUserAreaAssignments,
+  useSetUserAreaAssignments,
   Area,
   getListAreasQueryKey,
   getGetAreaProfileQueryKey,
   getGetAreaAssignmentsQueryKey,
+  getGetUserAreaAssignmentsQueryKey,
 } from "@workspace/api-client-react";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -22,7 +25,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Plus, Pencil, Trash2, Check, X, BookOpen, RefreshCw, Sparkles, Wrench, Workflow, AlertCircle, Save, Edit3, Users,
+  Tabs, TabsList, TabsTrigger, TabsContent,
+} from "@/components/ui/tabs";
+import {
+  Plus, Pencil, Trash2, Check, X, BookOpen, RefreshCw, Sparkles, Wrench, Workflow, AlertCircle, Save, Edit3, Users, LayoutGrid, UserCog,
 } from "lucide-react";
 import { EnvironmentBadge, ENVIRONMENT_LABELS, type EnvironmentType } from "@/lib/environment";
 import { useQueryClient } from "@tanstack/react-query";
@@ -41,6 +47,11 @@ export default function Areas() {
   const [newAreaName, setNewAreaName] = useState("");
   const [newEnvType, setNewEnvType] = useState<EnvironmentType>("factory");
   const [showAddForm, setShowAddForm] = useState(false);
+  // Two views over the same `area_assignments` table: pin one area and pick
+  // operators (the per-area cards), or pin one operator and pick areas (the
+  // by-operator picker). The by-operator view is the bulk-onboarding tool —
+  // dozens of areas times dozens of operators is a lot of clicks otherwise.
+  const [view, setView] = useState<"areas" | "operators">("areas");
 
   const handleCreate = () => {
     if (!newAreaName.trim()) return;
@@ -75,67 +86,92 @@ export default function Areas() {
           <h1 className="text-[34px] font-semibold tracking-tight leading-tight" data-testid="text-page-title">
             Area management
           </h1>
-          <p className="text-muted-foreground text-[15px]">Manage factory areas and view what the AI has learned about each one.</p>
+          <p className="text-muted-foreground text-[15px]">Manage factory areas, see what the AI has learned, and assign operators by area or by person.</p>
         </div>
-        {!showAddForm && (
+        {view === "areas" && !showAddForm && (
           <Button onClick={() => setShowAddForm(true)} className="rounded-full h-11 px-5" data-testid="button-add-area">
             <Plus className="w-4 h-4 mr-1.5" /> Add area
           </Button>
         )}
       </header>
 
-      {showAddForm && (
-        <div className="bg-card rounded-2xl shadow-elevated p-5 sm:p-6">
-          <div className="flex gap-3 items-end flex-wrap">
-            <div className="flex-1 min-w-[200px]">
-              <label className="eyebrow mb-1.5 block">New area name</label>
-              <Input
-                placeholder="e.g. Welding Bay 2"
-                value={newAreaName}
-                onChange={(e) => setNewAreaName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-                autoFocus
-                className="h-11 rounded-xl bg-secondary/60 border-transparent focus-visible:bg-card focus-visible:border-ring"
-                data-testid="input-new-area-name"
-              />
+      <Tabs value={view} onValueChange={(v) => setView(v as "areas" | "operators")} className="space-y-6">
+        <TabsList className="rounded-full bg-secondary/60 p-1 h-10" data-testid="tabs-area-view">
+          <TabsTrigger
+            value="areas"
+            className="rounded-full px-4 h-8 text-[13px] data-[state=active]:bg-card data-[state=active]:shadow-soft"
+            data-testid="tab-by-area"
+          >
+            <LayoutGrid className="w-3.5 h-3.5 mr-1.5" /> By area
+          </TabsTrigger>
+          <TabsTrigger
+            value="operators"
+            className="rounded-full px-4 h-8 text-[13px] data-[state=active]:bg-card data-[state=active]:shadow-soft"
+            data-testid="tab-by-operator"
+          >
+            <UserCog className="w-3.5 h-3.5 mr-1.5" /> By operator
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="areas" className="space-y-6 mt-0">
+          {showAddForm && (
+            <div className="bg-card rounded-2xl shadow-elevated p-5 sm:p-6">
+              <div className="flex gap-3 items-end flex-wrap">
+                <div className="flex-1 min-w-[200px]">
+                  <label className="eyebrow mb-1.5 block">New area name</label>
+                  <Input
+                    placeholder="e.g. Welding Bay 2"
+                    value={newAreaName}
+                    onChange={(e) => setNewAreaName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+                    autoFocus
+                    className="h-11 rounded-xl bg-secondary/60 border-transparent focus-visible:bg-card focus-visible:border-ring"
+                    data-testid="input-new-area-name"
+                  />
+                </div>
+                <div className="w-full sm:w-44">
+                  <label className="eyebrow mb-1.5 block">Environment</label>
+                  <Select value={newEnvType} onValueChange={(v) => setNewEnvType(v as EnvironmentType)}>
+                    <SelectTrigger
+                      className="h-11 rounded-xl bg-secondary/60 border-transparent focus-visible:bg-card focus-visible:border-ring"
+                      data-testid="select-new-area-environment"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="factory" data-testid="option-environment-factory">{ENVIRONMENT_LABELS.factory}</SelectItem>
+                      <SelectItem value="warehouse" data-testid="option-environment-warehouse">{ENVIRONMENT_LABELS.warehouse}</SelectItem>
+                      <SelectItem value="home" data-testid="option-environment-home">{ENVIRONMENT_LABELS.home}</SelectItem>
+                      <SelectItem value="corporate_office" data-testid="option-environment-corporate_office">{ENVIRONMENT_LABELS.corporate_office}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button onClick={handleCreate} disabled={createArea.isPending || !newAreaName.trim()} className="rounded-full h-11 px-5" data-testid="button-save-area">
+                  <Check className="w-4 h-4 mr-1" /> {createArea.isPending ? "Saving…" : "Save"}
+                </Button>
+                <Button variant="outline" onClick={() => { setShowAddForm(false); setNewAreaName(""); setNewEnvType("factory"); }} className="rounded-full h-11 w-11 p-0" data-testid="button-cancel-add">
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
             </div>
-            <div className="w-full sm:w-44">
-              <label className="eyebrow mb-1.5 block">Environment</label>
-              <Select value={newEnvType} onValueChange={(v) => setNewEnvType(v as EnvironmentType)}>
-                <SelectTrigger
-                  className="h-11 rounded-xl bg-secondary/60 border-transparent focus-visible:bg-card focus-visible:border-ring"
-                  data-testid="select-new-area-environment"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="factory" data-testid="option-environment-factory">{ENVIRONMENT_LABELS.factory}</SelectItem>
-                  <SelectItem value="warehouse" data-testid="option-environment-warehouse">{ENVIRONMENT_LABELS.warehouse}</SelectItem>
-                  <SelectItem value="home" data-testid="option-environment-home">{ENVIRONMENT_LABELS.home}</SelectItem>
-                  <SelectItem value="corporate_office" data-testid="option-environment-corporate_office">{ENVIRONMENT_LABELS.corporate_office}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button onClick={handleCreate} disabled={createArea.isPending || !newAreaName.trim()} className="rounded-full h-11 px-5" data-testid="button-save-area">
-              <Check className="w-4 h-4 mr-1" /> {createArea.isPending ? "Saving…" : "Save"}
-            </Button>
-            <Button variant="outline" onClick={() => { setShowAddForm(false); setNewAreaName(""); setNewEnvType("factory"); }} className="rounded-full h-11 w-11 p-0" data-testid="button-cancel-add">
-              <X className="w-4 h-4" />
-            </Button>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {areas?.map((area) => <AreaConfigCard key={area.id} area={area} />)}
           </div>
-        </div>
-      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {areas?.map((area) => <AreaConfigCard key={area.id} area={area} />)}
-      </div>
+          {areas?.length === 0 && (
+            <div className="text-center py-16 text-muted-foreground">
+              <p className="text-[15px] font-medium">No areas configured</p>
+              <p className="text-[13px] mt-1 opacity-80">Click "Add area" to create your first manufacturing area.</p>
+            </div>
+          )}
+        </TabsContent>
 
-      {areas?.length === 0 && (
-        <div className="text-center py-16 text-muted-foreground">
-          <p className="text-[15px] font-medium">No areas configured</p>
-          <p className="text-[13px] mt-1 opacity-80">Click "Add area" to create your first manufacturing area.</p>
-        </div>
-      )}
+        <TabsContent value="operators" className="mt-0">
+          <ByOperatorAssignments areas={areas ?? []} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -664,6 +700,254 @@ function AreaAssignmentsSection({ areaId, areaName }: { areaId: number; areaName
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Bulk-assignment view: pick one operator and toggle every area on/off in
+// one screen. Sites with dozens of areas × dozens of operators would
+// otherwise need a click per pair when onboarding a new hire. Reads/writes
+// the same `area_assignments` table as the per-area picker via a per-user
+// endpoint, so there is exactly one source of truth and the "no rows = sees
+// everything" backward-compat rule still kicks in when the manager clears
+// every box for an operator.
+function ByOperatorAssignments({ areas }: { areas: Area[] }) {
+  const { data: operators, isLoading: operatorsLoading } = useListOperators();
+  const [selectedOperatorId, setSelectedOperatorId] = useState<number | null>(null);
+
+  // Auto-select the first operator once the directory loads so the picker is
+  // useful out of the box without an extra click.
+  useEffect(() => {
+    if (selectedOperatorId == null && operators && operators.length > 0) {
+      setSelectedOperatorId(operators[0].id);
+    }
+  }, [operators, selectedOperatorId]);
+
+  if (operatorsLoading) {
+    return (
+      <div className="bg-card rounded-2xl shadow-soft p-6">
+        <div className="h-10 bg-secondary/40 rounded-lg animate-pulse"></div>
+      </div>
+    );
+  }
+
+  if (!operators || operators.length === 0) {
+    return (
+      <div className="bg-card rounded-2xl shadow-soft p-8 text-center text-muted-foreground" data-testid="empty-no-operators">
+        <p className="text-[15px] font-medium">No operator accounts exist yet</p>
+        <p className="text-[13px] mt-1 opacity-80">Create an operator user before assigning areas.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-card rounded-2xl shadow-soft p-5 sm:p-6">
+        <label className="eyebrow mb-2 block">Operator</label>
+        <Select
+          value={selectedOperatorId != null ? String(selectedOperatorId) : ""}
+          onValueChange={(v) => setSelectedOperatorId(Number(v))}
+        >
+          <SelectTrigger
+            className="h-11 rounded-xl bg-secondary/60 border-transparent focus-visible:bg-card focus-visible:border-ring max-w-md"
+            data-testid="select-by-operator-user"
+          >
+            <SelectValue placeholder="Choose an operator" />
+          </SelectTrigger>
+          <SelectContent>
+            {operators.map((op) => (
+              <SelectItem
+                key={op.id}
+                value={String(op.id)}
+                data-testid={`option-by-operator-user-${op.id}`}
+              >
+                {op.email}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-[12.5px] text-muted-foreground mt-2">
+          Pick an operator, then check every area they should be able to submit for. Clearing every box reverts them to seeing all areas (the default for unassigned operators).
+        </p>
+      </div>
+
+      {selectedOperatorId != null && (
+        <OperatorAreasPicker
+          key={selectedOperatorId}
+          operatorId={selectedOperatorId}
+          operatorEmail={operators.find((o) => o.id === selectedOperatorId)?.email ?? ""}
+          areas={areas}
+        />
+      )}
+    </div>
+  );
+}
+
+function OperatorAreasPicker({
+  operatorId,
+  operatorEmail,
+  areas,
+}: {
+  operatorId: number;
+  operatorEmail: string;
+  areas: Area[];
+}) {
+  const { data: assignments, isLoading } = useGetUserAreaAssignments(operatorId, {
+    query: { queryKey: getGetUserAreaAssignmentsQueryKey(operatorId) },
+  });
+  const setUserAssignments = useSetUserAreaAssignments();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    if (assignments?.areaIds) setSelected(new Set(assignments.areaIds));
+  }, [assignments?.areaIds]);
+
+  const serverSet = new Set(assignments?.areaIds ?? []);
+  const dirty =
+    selected.size !== serverSet.size ||
+    Array.from(selected).some((id) => !serverSet.has(id));
+
+  const toggle = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelected(new Set(areas.map((a) => a.id)));
+  const clearAll = () => setSelected(new Set());
+
+  const handleSave = () => {
+    const areaIds = Array.from(selected);
+    setUserAssignments.mutate(
+      { userId: operatorId, data: { areaIds } },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Assignments saved",
+            description:
+              areaIds.length === 0
+                ? `${operatorEmail} can now see every area (no personal list configured).`
+                : `${operatorEmail} is assigned to ${areaIds.length} area${areaIds.length === 1 ? "" : "s"}.`,
+          });
+          // Invalidate both the per-user view and every per-area view so the
+          // "By area" tab reflects the change immediately if the manager
+          // switches over.
+          queryClient.invalidateQueries({ queryKey: getGetUserAreaAssignmentsQueryKey(operatorId) });
+          for (const a of areas) {
+            queryClient.invalidateQueries({ queryKey: getGetAreaAssignmentsQueryKey(a.id) });
+          }
+        },
+        onError: () =>
+          toast({ variant: "destructive", title: "Save failed", description: "Could not update assignments." }),
+      },
+    );
+  };
+
+  const handleReset = () => {
+    setSelected(new Set(assignments?.areaIds ?? []));
+  };
+
+  if (isLoading) {
+    return (
+      <div className="bg-card rounded-2xl shadow-soft p-6">
+        <div className="h-32 bg-secondary/40 rounded-lg animate-pulse"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-card rounded-2xl shadow-soft p-5 sm:p-6 space-y-4" data-testid={`picker-by-operator-${operatorId}`}>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <p className="eyebrow flex items-center gap-1.5"><Users className="w-3 h-3" /> Areas for {operatorEmail}</p>
+          <p className="text-[12.5px] text-muted-foreground mt-1" data-testid={`text-by-operator-summary-${operatorId}`}>
+            {selected.size} of {areas.length} selected
+            {selected.size === 0 && " — currently sees every area"}
+          </p>
+        </div>
+        <div className="flex gap-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            className="rounded-full h-9 px-3 text-[12.5px]"
+            onClick={selectAll}
+            disabled={areas.length === 0 || selected.size === areas.length}
+            data-testid={`button-by-operator-select-all-${operatorId}`}
+          >
+            Select all
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="rounded-full h-9 px-3 text-[12.5px]"
+            onClick={clearAll}
+            disabled={selected.size === 0}
+            data-testid={`button-by-operator-clear-${operatorId}`}
+          >
+            Clear
+          </Button>
+        </div>
+      </div>
+
+      {areas.length === 0 ? (
+        <p className="text-[13px] text-muted-foreground italic">
+          No areas have been created yet — add one in the "By area" tab first.
+        </p>
+      ) : (
+        <div
+          className="rounded-xl bg-secondary/40 p-2 max-h-[420px] overflow-y-auto"
+          data-testid={`list-by-operator-areas-${operatorId}`}
+        >
+          {areas.map((area) => {
+            const checked = selected.has(area.id);
+            const envType = (area.environmentType as EnvironmentType) ?? "factory";
+            return (
+              <label
+                key={area.id}
+                className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-card cursor-pointer text-[13.5px]"
+                data-testid={`row-by-operator-area-${operatorId}-${area.id}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(area.id)}
+                  className="w-4 h-4 rounded border-border accent-primary"
+                  data-testid={`checkbox-by-operator-area-${operatorId}-${area.id}`}
+                />
+                <span className="flex-1 truncate">{area.name}</span>
+                <EnvironmentBadge type={envType} testId={`badge-by-operator-area-env-${operatorId}-${area.id}`} />
+              </label>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <Button
+          className="flex-1 h-10 rounded-xl"
+          onClick={handleSave}
+          disabled={!dirty || setUserAssignments.isPending}
+          data-testid={`button-by-operator-save-${operatorId}`}
+        >
+          <Save className="w-4 h-4 mr-1.5" />
+          {setUserAssignments.isPending ? "Saving…" : "Save"}
+        </Button>
+        <Button
+          variant="outline"
+          className="h-10 rounded-xl"
+          onClick={handleReset}
+          disabled={!dirty || setUserAssignments.isPending}
+          data-testid={`button-by-operator-reset-${operatorId}`}
+        >
+          Reset
+        </Button>
+      </div>
     </div>
   );
 }
