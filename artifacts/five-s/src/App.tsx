@@ -15,6 +15,7 @@ import OperatorHome from "@/pages/operator";
 import Dashboard from "@/pages/dashboard";
 import Submissions from "@/pages/submissions";
 import Areas from "@/pages/areas";
+import Escalations from "@/pages/escalations";
 
 const queryClient = new QueryClient();
 
@@ -51,6 +52,14 @@ function Router() {
         <ProtectedRoute allowedRoles={["MANAGER"]}>
           <Layout>
             <Areas />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+
+      <Route path="/escalations">
+        <ProtectedRoute allowedRoles={["MANAGER"]}>
+          <Layout>
+            <Escalations />
           </Layout>
         </ProtectedRoute>
       </Route>

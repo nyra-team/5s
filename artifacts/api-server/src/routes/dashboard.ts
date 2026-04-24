@@ -1,14 +1,20 @@
 import { Router, type IRouter } from "express";
 import { eq, and, gte, lt, sql, count, avg } from "drizzle-orm";
-import { db, submissionsTable, areasTable } from "@workspace/db";
+import { db, submissionsTable, areasTable, escalationsTable } from "@workspace/db";
 import { GetDashboardComplianceQueryParams, GetDashboardScoresQueryParams } from "@workspace/api-zod";
 import { authMiddleware, requireRole } from "../lib/auth";
 import { getCurrentShift, getTodayDateString } from "../lib/scoring";
 
 const router: IRouter = Router();
 
-function getDayRange(dateStr?: string) {
-  const date = dateStr ? new Date(dateStr + "T00:00:00") : new Date();
+function toDate(input: string | Date | undefined): Date {
+  if (!input) return new Date();
+  if (input instanceof Date) return input;
+  return new Date(input + "T00:00:00");
+}
+
+function getDayRange(dateStr?: string | Date) {
+  const date = toDate(dateStr);
   const y = date.getFullYear();
   const m = date.getMonth();
   const d = date.getDate();
@@ -18,8 +24,8 @@ function getDayRange(dateStr?: string) {
   };
 }
 
-function getShiftRange(dateStr: string | undefined, shift: string) {
-  const date = dateStr ? new Date(dateStr + "T00:00:00") : new Date();
+function getShiftRange(dateStr: string | Date | undefined, shift: string) {
+  const date = toDate(dateStr);
   const y = date.getFullYear();
   const m = date.getMonth();
   const d = date.getDate();
@@ -180,11 +186,17 @@ router.get("/dashboard/summary", authMiddleware, requireRole("MANAGER"), async (
     ? Math.round((todayDistinct.length / totalAreas) * 100)
     : 0;
 
+  const [openEsc] = await db
+    .select({ count: count() })
+    .from(escalationsTable)
+    .where(eq(escalationsTable.status, "OPEN"));
+
   res.json({
     todaySubmissions: todayStats?.count ?? 0,
     todayAvgScore: Number(todayStats?.avgScore) || 0,
     todayCompliance: compliance,
     totalSubmissions: totalStats?.count ?? 0,
+    openEscalations: openEsc?.count ?? 0,
   });
 });
 

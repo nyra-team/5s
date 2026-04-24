@@ -18,6 +18,7 @@ import type {
 
 import type {
   Area,
+  AreaProfile,
   AreaStatus,
   ComplianceData,
   CreateAreaBody,
@@ -25,23 +26,24 @@ import type {
   CreateSubmissionBody,
   CurrentShift,
   DashboardSummary,
-  ErrorResponse,
+  Escalation,
+  EscalationCount,
   GetDashboardComplianceParams,
   GetDashboardScoresParams,
   GetOperatorStatusParams,
   HealthStatus,
-  IdealPhoto,
   Label,
+  ListEscalationsParams,
   ListSubmissionsParams,
   LoginBody,
   LoginResponse,
   ModelStatus,
+  NextCheck,
   ReuploadSubmissionBody,
   ScoreSummary,
   Submission,
-  TrainResult,
   UpdateAreaBody,
-  UploadIdealPhotoBody,
+  UpdateAreaProfileBody,
   User,
 } from "./api.schemas";
 
@@ -149,7 +151,7 @@ export const login = async (
 };
 
 export const getLoginMutationOptions = <
-  TError = ErrorType<ErrorResponse>,
+  TError = ErrorType<unknown>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -190,13 +192,13 @@ export type LoginMutationResult = NonNullable<
   Awaited<ReturnType<typeof login>>
 >;
 export type LoginMutationBody = BodyType<LoginBody>;
-export type LoginMutationError = ErrorType<ErrorResponse>;
+export type LoginMutationError = ErrorType<unknown>;
 
 /**
  * @summary Login with email and password
  */
 export const useLogin = <
-  TError = ErrorType<ErrorResponse>,
+  TError = ErrorType<unknown>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -235,7 +237,7 @@ export const getGetMeQueryKey = () => {
 
 export const getGetMeQueryOptions = <
   TData = Awaited<ReturnType<typeof getMe>>,
-  TError = ErrorType<ErrorResponse>,
+  TError = ErrorType<unknown>,
 >(options?: {
   query?: UseQueryOptions<Awaited<ReturnType<typeof getMe>>, TError, TData>;
   request?: SecondParameter<typeof customFetch>;
@@ -256,7 +258,7 @@ export const getGetMeQueryOptions = <
 };
 
 export type GetMeQueryResult = NonNullable<Awaited<ReturnType<typeof getMe>>>;
-export type GetMeQueryError = ErrorType<ErrorResponse>;
+export type GetMeQueryError = ErrorType<unknown>;
 
 /**
  * @summary Get current user
@@ -264,7 +266,7 @@ export type GetMeQueryError = ErrorType<ErrorResponse>;
 
 export function useGetMe<
   TData = Awaited<ReturnType<typeof getMe>>,
-  TError = ErrorType<ErrorResponse>,
+  TError = ErrorType<unknown>,
 >(options?: {
   query?: UseQueryOptions<Awaited<ReturnType<typeof getMe>>, TError, TData>;
   request?: SecondParameter<typeof customFetch>;
@@ -450,7 +452,7 @@ export const updateArea = async (
 };
 
 export const getUpdateAreaMutationOptions = <
-  TError = ErrorType<ErrorResponse>,
+  TError = ErrorType<unknown>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -491,13 +493,13 @@ export type UpdateAreaMutationResult = NonNullable<
   Awaited<ReturnType<typeof updateArea>>
 >;
 export type UpdateAreaMutationBody = BodyType<UpdateAreaBody>;
-export type UpdateAreaMutationError = ErrorType<ErrorResponse>;
+export type UpdateAreaMutationError = ErrorType<unknown>;
 
 /**
  * @summary Update an area name
  */
 export const useUpdateArea = <
-  TError = ErrorType<ErrorResponse>,
+  TError = ErrorType<unknown>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -534,7 +536,7 @@ export const deleteArea = async (
 };
 
 export const getDeleteAreaMutationOptions = <
-  TError = ErrorType<ErrorResponse>,
+  TError = ErrorType<unknown>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -575,13 +577,13 @@ export type DeleteAreaMutationResult = NonNullable<
   Awaited<ReturnType<typeof deleteArea>>
 >;
 
-export type DeleteAreaMutationError = ErrorType<ErrorResponse>;
+export type DeleteAreaMutationError = ErrorType<unknown>;
 
 /**
  * @summary Delete an area
  */
 export const useDeleteArea = <
-  TError = ErrorType<ErrorResponse>,
+  TError = ErrorType<unknown>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -601,45 +603,130 @@ export const useDeleteArea = <
 };
 
 /**
- * @summary Upload ideal/reference photo for an area
+ * @summary Get the learned profile for an area
  */
-export const getUploadIdealPhotoUrl = (id: number) => {
-  return `/api/areas/${id}/ideal-photo`;
+export const getGetAreaProfileUrl = (id: number) => {
+  return `/api/areas/${id}/profile`;
 };
 
-export const uploadIdealPhoto = async (
+export const getAreaProfile = async (
   id: number,
-  uploadIdealPhotoBody: UploadIdealPhotoBody,
   options?: RequestInit,
-): Promise<IdealPhoto> => {
-  const formData = new FormData();
-  formData.append(`photo`, uploadIdealPhotoBody.photo);
-
-  return customFetch<IdealPhoto>(getUploadIdealPhotoUrl(id), {
+): Promise<AreaProfile> => {
+  return customFetch<AreaProfile>(getGetAreaProfileUrl(id), {
     ...options,
-    method: "POST",
-    body: formData,
+    method: "GET",
   });
 };
 
-export const getUploadIdealPhotoMutationOptions = <
+export const getGetAreaProfileQueryKey = (id: number) => {
+  return [`/api/areas/${id}/profile`] as const;
+};
+
+export const getGetAreaProfileQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAreaProfile>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAreaProfile>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetAreaProfileQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getAreaProfile>>> = ({
+    signal,
+  }) => getAreaProfile(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAreaProfile>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAreaProfileQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAreaProfile>>
+>;
+export type GetAreaProfileQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the learned profile for an area
+ */
+
+export function useGetAreaProfile<
+  TData = Awaited<ReturnType<typeof getAreaProfile>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAreaProfile>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAreaProfileQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update the learned profile for an area (manager edit)
+ */
+export const getUpdateAreaProfileUrl = (id: number) => {
+  return `/api/areas/${id}/profile`;
+};
+
+export const updateAreaProfile = async (
+  id: number,
+  updateAreaProfileBody: UpdateAreaProfileBody,
+  options?: RequestInit,
+): Promise<AreaProfile> => {
+  return customFetch<AreaProfile>(getUpdateAreaProfileUrl(id), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateAreaProfileBody),
+  });
+};
+
+export const getUpdateAreaProfileMutationOptions = <
   TError = ErrorType<unknown>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof uploadIdealPhoto>>,
+    Awaited<ReturnType<typeof updateAreaProfile>>,
     TError,
-    { id: number; data: BodyType<UploadIdealPhotoBody> },
+    { id: number; data: BodyType<UpdateAreaProfileBody> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
-  Awaited<ReturnType<typeof uploadIdealPhoto>>,
+  Awaited<ReturnType<typeof updateAreaProfile>>,
   TError,
-  { id: number; data: BodyType<UploadIdealPhotoBody> },
+  { id: number; data: BodyType<UpdateAreaProfileBody> },
   TContext
 > => {
-  const mutationKey = ["uploadIdealPhoto"];
+  const mutationKey = ["updateAreaProfile"];
   const { mutation: mutationOptions, request: requestOptions } = options
     ? options.mutation &&
       "mutationKey" in options.mutation &&
@@ -649,132 +736,129 @@ export const getUploadIdealPhotoMutationOptions = <
     : { mutation: { mutationKey }, request: undefined };
 
   const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof uploadIdealPhoto>>,
-    { id: number; data: BodyType<UploadIdealPhotoBody> }
+    Awaited<ReturnType<typeof updateAreaProfile>>,
+    { id: number; data: BodyType<UpdateAreaProfileBody> }
   > = (props) => {
     const { id, data } = props ?? {};
 
-    return uploadIdealPhoto(id, data, requestOptions);
+    return updateAreaProfile(id, data, requestOptions);
   };
 
   return { mutationFn, ...mutationOptions };
 };
 
-export type UploadIdealPhotoMutationResult = NonNullable<
-  Awaited<ReturnType<typeof uploadIdealPhoto>>
+export type UpdateAreaProfileMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateAreaProfile>>
 >;
-export type UploadIdealPhotoMutationBody = BodyType<UploadIdealPhotoBody>;
-export type UploadIdealPhotoMutationError = ErrorType<unknown>;
+export type UpdateAreaProfileMutationBody = BodyType<UpdateAreaProfileBody>;
+export type UpdateAreaProfileMutationError = ErrorType<unknown>;
 
 /**
- * @summary Upload ideal/reference photo for an area
+ * @summary Update the learned profile for an area (manager edit)
  */
-export const useUploadIdealPhoto = <
+export const useUpdateAreaProfile = <
   TError = ErrorType<unknown>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof uploadIdealPhoto>>,
+    Awaited<ReturnType<typeof updateAreaProfile>>,
     TError,
-    { id: number; data: BodyType<UploadIdealPhotoBody> },
+    { id: number; data: BodyType<UpdateAreaProfileBody> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
-  Awaited<ReturnType<typeof uploadIdealPhoto>>,
+  Awaited<ReturnType<typeof updateAreaProfile>>,
   TError,
-  { id: number; data: BodyType<UploadIdealPhotoBody> },
+  { id: number; data: BodyType<UpdateAreaProfileBody> },
   TContext
 > => {
-  return useMutation(getUploadIdealPhotoMutationOptions(options));
+  return useMutation(getUpdateAreaProfileMutationOptions(options));
 };
 
 /**
- * @summary Get ideal photos for an area
+ * @summary Reset the learned profile for an area
  */
-export const getGetIdealPhotosUrl = (id: number) => {
-  return `/api/areas/${id}/ideal-photos`;
+export const getResetAreaProfileUrl = (id: number) => {
+  return `/api/areas/${id}/profile`;
 };
 
-export const getIdealPhotos = async (
+export const resetAreaProfile = async (
   id: number,
   options?: RequestInit,
-): Promise<IdealPhoto[]> => {
-  return customFetch<IdealPhoto[]>(getGetIdealPhotosUrl(id), {
+): Promise<AreaProfile> => {
+  return customFetch<AreaProfile>(getResetAreaProfileUrl(id), {
     ...options,
-    method: "GET",
+    method: "DELETE",
   });
 };
 
-export const getGetIdealPhotosQueryKey = (id: number) => {
-  return [`/api/areas/${id}/ideal-photos`] as const;
-};
-
-export const getGetIdealPhotosQueryOptions = <
-  TData = Awaited<ReturnType<typeof getIdealPhotos>>,
+export const getResetAreaProfileMutationOptions = <
   TError = ErrorType<unknown>,
->(
-  id: number,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getIdealPhotos>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey = queryOptions?.queryKey ?? getGetIdealPhotosQueryKey(id);
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getIdealPhotos>>> = ({
-    signal,
-  }) => getIdealPhotos(id, { signal, ...requestOptions });
-
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!id,
-    ...queryOptions,
-  } as UseQueryOptions<
-    Awaited<ReturnType<typeof getIdealPhotos>>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof resetAreaProfile>>,
     TError,
-    TData
-  > & { queryKey: QueryKey };
-};
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof resetAreaProfile>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["resetAreaProfile"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
 
-export type GetIdealPhotosQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getIdealPhotos>>
->;
-export type GetIdealPhotosQueryError = ErrorType<unknown>;
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof resetAreaProfile>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
 
-/**
- * @summary Get ideal photos for an area
- */
-
-export function useGetIdealPhotos<
-  TData = Awaited<ReturnType<typeof getIdealPhotos>>,
-  TError = ErrorType<unknown>,
->(
-  id: number,
-  options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getIdealPhotos>>,
-      TError,
-      TData
-    >;
-    request?: SecondParameter<typeof customFetch>;
-  },
-): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetIdealPhotosQueryOptions(id, options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
+    return resetAreaProfile(id, requestOptions);
   };
 
-  return { ...query, queryKey: queryOptions.queryKey };
-}
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ResetAreaProfileMutationResult = NonNullable<
+  Awaited<ReturnType<typeof resetAreaProfile>>
+>;
+
+export type ResetAreaProfileMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Reset the learned profile for an area
+ */
+export const useResetAreaProfile = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof resetAreaProfile>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof resetAreaProfile>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getResetAreaProfileMutationOptions(options));
+};
 
 /**
  * @summary List submissions with optional filters
@@ -871,7 +955,7 @@ export function useListSubmissions<
 }
 
 /**
- * @summary Submit a 5S photo for scoring
+ * @summary Submit a 5S video walk-through (preferred) or photo for scoring
  */
 export const getCreateSubmissionUrl = () => {
   return `/api/submissions`;
@@ -883,9 +967,17 @@ export const createSubmission = async (
 ): Promise<Submission> => {
   const formData = new FormData();
   formData.append(`areaId`, createSubmissionBody.areaId.toString());
-  formData.append(`photo`, createSubmissionBody.photo);
+  if (createSubmissionBody.media !== undefined) {
+    formData.append(`media`, createSubmissionBody.media);
+  }
+  if (createSubmissionBody.photo !== undefined) {
+    formData.append(`photo`, createSubmissionBody.photo);
+  }
   if (createSubmissionBody.shift !== undefined) {
     formData.append(`shift`, createSubmissionBody.shift);
+  }
+  if (createSubmissionBody.machineTag !== undefined) {
+    formData.append(`machineTag`, createSubmissionBody.machineTag);
   }
 
   return customFetch<Submission>(getCreateSubmissionUrl(), {
@@ -940,7 +1032,7 @@ export type CreateSubmissionMutationBody = BodyType<CreateSubmissionBody>;
 export type CreateSubmissionMutationError = ErrorType<unknown>;
 
 /**
- * @summary Submit a 5S photo for scoring
+ * @summary Submit a 5S video walk-through (preferred) or photo for scoring
  */
 export const useCreateSubmission = <
   TError = ErrorType<unknown>,
@@ -985,7 +1077,7 @@ export const getGetSubmissionQueryKey = (id: number) => {
 
 export const getGetSubmissionQueryOptions = <
   TData = Awaited<ReturnType<typeof getSubmission>>,
-  TError = ErrorType<ErrorResponse>,
+  TError = ErrorType<unknown>,
 >(
   id: number,
   options?: {
@@ -1020,7 +1112,7 @@ export const getGetSubmissionQueryOptions = <
 export type GetSubmissionQueryResult = NonNullable<
   Awaited<ReturnType<typeof getSubmission>>
 >;
-export type GetSubmissionQueryError = ErrorType<ErrorResponse>;
+export type GetSubmissionQueryError = ErrorType<unknown>;
 
 /**
  * @summary Get a single submission
@@ -1028,7 +1120,7 @@ export type GetSubmissionQueryError = ErrorType<ErrorResponse>;
 
 export function useGetSubmission<
   TData = Awaited<ReturnType<typeof getSubmission>>,
-  TError = ErrorType<ErrorResponse>,
+  TError = ErrorType<unknown>,
 >(
   id: number,
   options?: {
@@ -1050,7 +1142,7 @@ export function useGetSubmission<
 }
 
 /**
- * @summary Re-upload photo for an existing submission
+ * @summary Re-upload media for an existing submission
  */
 export const getReuploadSubmissionUrl = (id: number) => {
   return `/api/submissions/${id}/reupload`;
@@ -1062,9 +1154,17 @@ export const reuploadSubmission = async (
   options?: RequestInit,
 ): Promise<Submission> => {
   const formData = new FormData();
-  formData.append(`photo`, reuploadSubmissionBody.photo);
+  if (reuploadSubmissionBody.media !== undefined) {
+    formData.append(`media`, reuploadSubmissionBody.media);
+  }
+  if (reuploadSubmissionBody.photo !== undefined) {
+    formData.append(`photo`, reuploadSubmissionBody.photo);
+  }
   if (reuploadSubmissionBody.shift !== undefined) {
     formData.append(`shift`, reuploadSubmissionBody.shift);
+  }
+  if (reuploadSubmissionBody.machineTag !== undefined) {
+    formData.append(`machineTag`, reuploadSubmissionBody.machineTag);
   }
 
   return customFetch<Submission>(getReuploadSubmissionUrl(id), {
@@ -1075,7 +1175,7 @@ export const reuploadSubmission = async (
 };
 
 export const getReuploadSubmissionMutationOptions = <
-  TError = ErrorType<ErrorResponse>,
+  TError = ErrorType<unknown>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -1116,13 +1216,13 @@ export type ReuploadSubmissionMutationResult = NonNullable<
   Awaited<ReturnType<typeof reuploadSubmission>>
 >;
 export type ReuploadSubmissionMutationBody = BodyType<ReuploadSubmissionBody>;
-export type ReuploadSubmissionMutationError = ErrorType<ErrorResponse>;
+export type ReuploadSubmissionMutationError = ErrorType<unknown>;
 
 /**
- * @summary Re-upload photo for an existing submission
+ * @summary Re-upload media for an existing submission
  */
 export const useReuploadSubmission = <
-  TError = ErrorType<ErrorResponse>,
+  TError = ErrorType<unknown>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -1586,6 +1686,418 @@ export function useGetOperatorStatus<
 }
 
 /**
+ * @summary Proactive feed of areas/machines that need to be checked next
+ */
+export const getGetNextChecksUrl = () => {
+  return `/api/operator/next-checks`;
+};
+
+export const getNextChecks = async (
+  options?: RequestInit,
+): Promise<NextCheck[]> => {
+  return customFetch<NextCheck[]>(getGetNextChecksUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetNextChecksQueryKey = () => {
+  return [`/api/operator/next-checks`] as const;
+};
+
+export const getGetNextChecksQueryOptions = <
+  TData = Awaited<ReturnType<typeof getNextChecks>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getNextChecks>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetNextChecksQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getNextChecks>>> = ({
+    signal,
+  }) => getNextChecks({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getNextChecks>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetNextChecksQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getNextChecks>>
+>;
+export type GetNextChecksQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Proactive feed of areas/machines that need to be checked next
+ */
+
+export function useGetNextChecks<
+  TData = Awaited<ReturnType<typeof getNextChecks>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getNextChecks>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetNextChecksQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List escalations (manager)
+ */
+export const getListEscalationsUrl = (params?: ListEscalationsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/escalations?${stringifiedParams}`
+    : `/api/escalations`;
+};
+
+export const listEscalations = async (
+  params?: ListEscalationsParams,
+  options?: RequestInit,
+): Promise<Escalation[]> => {
+  return customFetch<Escalation[]>(getListEscalationsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListEscalationsQueryKey = (params?: ListEscalationsParams) => {
+  return [`/api/escalations`, ...(params ? [params] : [])] as const;
+};
+
+export const getListEscalationsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEscalations>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListEscalationsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listEscalations>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListEscalationsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listEscalations>>> = ({
+    signal,
+  }) => listEscalations(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEscalations>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListEscalationsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEscalations>>
+>;
+export type ListEscalationsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List escalations (manager)
+ */
+
+export function useListEscalations<
+  TData = Awaited<ReturnType<typeof listEscalations>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListEscalationsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listEscalations>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListEscalationsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Open escalation count for badges
+ */
+export const getGetEscalationCountUrl = () => {
+  return `/api/escalations/count`;
+};
+
+export const getEscalationCount = async (
+  options?: RequestInit,
+): Promise<EscalationCount> => {
+  return customFetch<EscalationCount>(getGetEscalationCountUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetEscalationCountQueryKey = () => {
+  return [`/api/escalations/count`] as const;
+};
+
+export const getGetEscalationCountQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEscalationCount>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getEscalationCount>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetEscalationCountQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getEscalationCount>>
+  > = ({ signal }) => getEscalationCount({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEscalationCount>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetEscalationCountQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEscalationCount>>
+>;
+export type GetEscalationCountQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Open escalation count for badges
+ */
+
+export function useGetEscalationCount<
+  TData = Awaited<ReturnType<typeof getEscalationCount>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getEscalationCount>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetEscalationCountQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Manager acknowledges an escalation
+ */
+export const getAcknowledgeEscalationUrl = (id: number) => {
+  return `/api/escalations/${id}/acknowledge`;
+};
+
+export const acknowledgeEscalation = async (
+  id: number,
+  options?: RequestInit,
+): Promise<Escalation> => {
+  return customFetch<Escalation>(getAcknowledgeEscalationUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getAcknowledgeEscalationMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof acknowledgeEscalation>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof acknowledgeEscalation>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["acknowledgeEscalation"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof acknowledgeEscalation>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return acknowledgeEscalation(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AcknowledgeEscalationMutationResult = NonNullable<
+  Awaited<ReturnType<typeof acknowledgeEscalation>>
+>;
+
+export type AcknowledgeEscalationMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Manager acknowledges an escalation
+ */
+export const useAcknowledgeEscalation = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof acknowledgeEscalation>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof acknowledgeEscalation>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getAcknowledgeEscalationMutationOptions(options));
+};
+
+/**
+ * @summary Manager resolves an escalation
+ */
+export const getResolveEscalationUrl = (id: number) => {
+  return `/api/escalations/${id}/resolve`;
+};
+
+export const resolveEscalation = async (
+  id: number,
+  options?: RequestInit,
+): Promise<Escalation> => {
+  return customFetch<Escalation>(getResolveEscalationUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getResolveEscalationMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof resolveEscalation>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof resolveEscalation>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["resolveEscalation"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof resolveEscalation>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return resolveEscalation(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ResolveEscalationMutationResult = NonNullable<
+  Awaited<ReturnType<typeof resolveEscalation>>
+>;
+
+export type ResolveEscalationMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Manager resolves an escalation
+ */
+export const useResolveEscalation = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof resolveEscalation>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof resolveEscalation>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getResolveEscalationMutationOptions(options));
+};
+
+/**
  * @summary Label a submission with pillar scores (manager only)
  */
 export const getCreateLabelUrl = () => {
@@ -1757,7 +2269,7 @@ export function useGetLabels<
 }
 
 /**
- * @summary Get AI model status for an area
+ * @summary Get learning status for an area
  */
 export const getGetAreaModelStatusUrl = (id: number) => {
   return `/api/areas/${id}/model-status`;
@@ -1817,7 +2329,7 @@ export type GetAreaModelStatusQueryResult = NonNullable<
 export type GetAreaModelStatusQueryError = ErrorType<unknown>;
 
 /**
- * @summary Get AI model status for an area
+ * @summary Get learning status for an area
  */
 
 export function useGetAreaModelStatus<
@@ -1842,87 +2354,3 @@ export function useGetAreaModelStatus<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
-
-/**
- * @summary Train AI model for an area using labeled submissions
- */
-export const getTrainAreaModelUrl = (id: number) => {
-  return `/api/areas/${id}/train`;
-};
-
-export const trainAreaModel = async (
-  id: number,
-  options?: RequestInit,
-): Promise<TrainResult> => {
-  return customFetch<TrainResult>(getTrainAreaModelUrl(id), {
-    ...options,
-    method: "POST",
-  });
-};
-
-export const getTrainAreaModelMutationOptions = <
-  TError = ErrorType<unknown>,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof trainAreaModel>>,
-    TError,
-    { id: number },
-    TContext
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof trainAreaModel>>,
-  TError,
-  { id: number },
-  TContext
-> => {
-  const mutationKey = ["trainAreaModel"];
-  const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey }, request: undefined };
-
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof trainAreaModel>>,
-    { id: number }
-  > = (props) => {
-    const { id } = props ?? {};
-
-    return trainAreaModel(id, requestOptions);
-  };
-
-  return { mutationFn, ...mutationOptions };
-};
-
-export type TrainAreaModelMutationResult = NonNullable<
-  Awaited<ReturnType<typeof trainAreaModel>>
->;
-
-export type TrainAreaModelMutationError = ErrorType<unknown>;
-
-/**
- * @summary Train AI model for an area using labeled submissions
- */
-export const useTrainAreaModel = <
-  TError = ErrorType<unknown>,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof trainAreaModel>>,
-    TError,
-    { id: number },
-    TContext
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseMutationResult<
-  Awaited<ReturnType<typeof trainAreaModel>>,
-  TError,
-  { id: number },
-  TContext
-> => {
-  return useMutation(getTrainAreaModelMutationOptions(options));
-};

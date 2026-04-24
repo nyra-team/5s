@@ -1,35 +1,22 @@
 import { openai } from "@workspace/integrations-openai-ai-server";
-import { db, idealPhotosTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
 import { logger } from "./logger.js";
-import * as fs from "fs";
-import * as path from "path";
-
-const ML_SERVICE_URL = process.env.ML_SERVICE_URL || "http://localhost:8100";
-
-interface EmbedResult {
-  embedding: number[];
-  embedding_hash: string;
-}
-
-interface PredictResult {
-  similarity: number;
-  total_score: number;
-  pillars: Record<string, number>;
-  scoring_mode: string;
-  model_version: string;
-}
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { extractKeyframes, isVideoFile } from "./keyframes.js";
 
 interface VLMIssue {
   issue: string;
   evidence: string;
   location: string;
+  pillar?: string;
+  principle?: string;
 }
 
 interface VLMRecommendation {
   action: string;
   why: string;
   location: string;
+  principle?: string;
 }
 
 interface VLMPillarScores {
@@ -40,309 +27,246 @@ interface VLMPillarScores {
   sustain: number;
 }
 
-interface VLMResult {
-  issues: VLMIssue[];
-  recommendations: VLMRecommendation[];
-  pillarScores: VLMPillarScores | null;
+export interface VLMProfileExtract {
+  items: string[];
+  machines: string[];
+  layout: string[];
+  observedIssues: string[];
+  summary: string;
 }
 
 export interface AIScoringResult {
   embeddingHash: string;
-  similarityToIdeal: number;
   aiTotalScore: number;
-  aiPillarsJson: Record<string, number>;
+  aiPillarsJson: VLMPillarScores;
   aiRecommendationsJson: VLMRecommendation[];
   aiIssuesJson: VLMIssue[];
+  failingPillars: string[];
   modelVersion: string;
   scoringMode: string;
+  profile: VLMProfileExtract;
 }
 
-async function callMLService<T>(endpoint: string, body: unknown): Promise<T> {
-  const resp = await fetch(`${ML_SERVICE_URL}${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`ML service ${endpoint} failed (${resp.status}): ${text}`);
-  }
-  return resp.json() as Promise<T>;
+export interface ScoringInput {
+  areaId: number;
+  areaName: string;
+  mediaAbsPath: string;
+  mediaType: "image" | "video";
+  machineTag?: string | null;
+  /** Existing learned profile to ground the analysis against, if any */
+  learnedProfile?: {
+    status: "LEARNING" | "TRAINED";
+    items: string[];
+    machines: string[];
+    layout: string[];
+    commonIssues: string[];
+    summary: string | null;
+  } | null;
 }
+
+export interface ScoringOutput extends AIScoringResult {
+  keyframeUrls: string[];
+}
+
+const FIVE_S_GMP_RUBRIC = `
+You are a strict 5S + GMP auditor for a manufacturing facility. Score with rigor.
+
+5S pillars (rate 0-5 each based on visible evidence):
+- SORT (Seiri): only necessary items present; unneeded tools, scrap, personal items removed.
+- SET IN ORDER (Seiton): everything has a designated, labeled place; tools at point-of-use; clear walk paths.
+- SHINE (Seiso): surfaces, equipment, floors are clean; no spills, dust, swarf, debris; equipment inspected.
+- STANDARDIZE (Seiketsu): visual standards visible (shadow boards, labels, color codes, posted procedures, schedules).
+- SUSTAIN (Shitsuke): evidence of routine use — completed checklists, recent log entries, audit boards, PPE worn.
+
+GMP principles to apply (cite when violated):
+- HYGIENE: hand-wash stations stocked, PPE/hairnets/gloves used, no eating/drinking in production.
+- CONTAMINATION CONTROL: separation of raw vs finished, no cross-contact, sealed containers, no exposed product.
+- LABELING & TRACEABILITY: every container/lot labeled with id, date, status; no unlabeled chemicals.
+- DOCUMENTATION: batch records, cleaning logs, calibration tags up to date and visible.
+- EQUIPMENT CLEANLINESS: machines free of buildup, lubricant, residue; cleaning verified.
+
+Score guide: 0=hazardous/chaotic, 1=very poor, 2=poor, 3=acceptable, 4=good, 5=excellent.
+Be harsh: clutter, mess, missing labels, exposed product, unworn PPE, undated logs are all serious.
+
+For each ISSUE you cite, name the pillar (sort/set/shine/standardize/sustain) AND the 5S/GMP principle that it violates.
+For each RECOMMENDATION, name the principle it restores.
+Reference EVIDENCE by frame number (e.g. "frame 2: open container of powder, no lid") and a coarse location (left/right/top/bottom/center).
+
+Also extract a structured PROFILE of what is visible in the area:
+- items: recurring/notable items (e.g. "5L oil cans", "torque wrench set")
+- machines: named pieces of equipment (e.g. "Mixer #2", "Conveyor A")
+- layout: spatial notes (e.g. "tool board on rear wall", "PPE station near entrance")
+- observedIssues: short phrases describing recurring conditions (e.g. "unlabeled chemical bottles")
+- summary: one short paragraph describing the area as observed
+
+Output ONLY valid JSON in this exact shape:
+{
+  "pillar_scores": { "sort": 0-5, "set": 0-5, "shine": 0-5, "standardize": 0-5, "sustain": 0-5 },
+  "issues": [{ "issue": "...", "evidence": "frame N: ...", "location": "left|right|top|bottom|center", "pillar": "sort|set|shine|standardize|sustain", "principle": "..." }],
+  "recommendations": [{ "action": "...", "why": "...", "location": "...", "principle": "..." }],
+  "profile": { "items": ["..."], "machines": ["..."], "layout": ["..."], "observedIssues": ["..."], "summary": "..." }
+}
+`.trim();
 
 function imageToBase64(imagePath: string): string {
-  const fullPath = path.resolve(imagePath);
-  const buffer = fs.readFileSync(fullPath);
-  return buffer.toString("base64");
+  const buf = fs.readFileSync(imagePath);
+  return buf.toString("base64");
 }
 
-async function embedImage(imagePath: string): Promise<EmbedResult> {
-  return callMLService<EmbedResult>("/embed", { image_path: imagePath });
+function clamp05(n: any): number {
+  return Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
 }
 
-async function predictScore(
-  areaId: number,
-  embedding: number[],
-  idealEmbeddings: number[][]
-): Promise<PredictResult> {
-  return callMLService<PredictResult>("/predict", {
-    area_id: areaId,
-    embedding,
-    ideal_embeddings: idealEmbeddings,
-  });
-}
-
-async function getVLMRecommendations(
-  submissionImagePath: string,
-  idealImagePaths: string[],
-  areaName: string
-): Promise<VLMResult> {
-  try {
-    const submissionBase64 = imageToBase64(submissionImagePath);
-
-    const content: any[] = [
-      {
-        type: "text",
-        text: `Area: "${areaName}". Compare the SUBMITTED photo against the IDEAL reference photo(s). Score each of the 5S pillars from 0 (terrible) to 5 (perfect) based on what you see. Also identify specific 5S compliance issues and give actionable recommendations. Reference exact locations (left/right/top/bottom/center) of issues visible in the submitted image. Be strict: a messy, cluttered, or disorganized area should receive low scores (0-2). Only give high scores (4-5) when the area is clearly clean, organized, and well-maintained.`,
-      },
-      {
-        type: "text",
-        text: "SUBMITTED PHOTO:",
-      },
-      {
-        type: "image_url",
-        image_url: { url: `data:image/jpeg;base64,${submissionBase64}` },
-      },
-    ];
-
-    for (let i = 0; i < Math.min(idealImagePaths.length, 3); i++) {
-      if (fs.existsSync(idealImagePaths[i])) {
-        const idealBase64 = imageToBase64(idealImagePaths[i]);
-        content.push({
-          type: "text",
-          text: `IDEAL REFERENCE PHOTO ${i + 1}:`,
-        });
-        content.push({
-          type: "image_url",
-          image_url: { url: `data:image/jpeg;base64,${idealBase64}` },
-        });
-      }
-    }
-
-    const response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
-      response_format: { type: "json_object" },
-      max_completion_tokens: 1024,
-      messages: [
-        {
-          role: "system",
-          content:
-            'You are a strict 5S workplace auditor. Output ONLY valid JSON. Be harsh and critical — messiness, clutter, disorganization, and safety hazards should result in low scores. Base statements only on visible evidence. Output format: {"pillar_scores":{"sort":0-5,"set":0-5,"shine":0-5,"standardize":0-5,"sustain":0-5},"issues":[{"issue":"...","evidence":"...","location":"left/right/top/bottom/center"}],"recommendations":[{"action":"...","why":"...","location":"..."}]}. Score guide: 0=hazardous/chaotic, 1=very poor, 2=poor, 3=acceptable, 4=good, 5=excellent.',
-        },
-        {
-          role: "user",
-          content,
-        },
-      ],
-    });
-
-    const text = response.choices[0]?.message?.content || "{}";
-    const parsed = JSON.parse(text);
-
-    let pillarScores: VLMPillarScores | null = null;
-    if (parsed.pillar_scores && typeof parsed.pillar_scores === "object") {
-      const ps = parsed.pillar_scores;
-      pillarScores = {
-        sort: Math.max(0, Math.min(5, Math.round(Number(ps.sort) || 0))),
-        set: Math.max(0, Math.min(5, Math.round(Number(ps.set) || 0))),
-        shine: Math.max(0, Math.min(5, Math.round(Number(ps.shine) || 0))),
-        standardize: Math.max(0, Math.min(5, Math.round(Number(ps.standardize) || 0))),
-        sustain: Math.max(0, Math.min(5, Math.round(Number(ps.sustain) || 0))),
-      };
-    }
-
-    return {
-      issues: Array.isArray(parsed.issues) ? parsed.issues.slice(0, 5) : [],
-      recommendations: Array.isArray(parsed.recommendations)
-        ? parsed.recommendations.slice(0, 5)
-        : [],
-      pillarScores,
-    };
-  } catch (err) {
-    logger.error({ err }, "VLM recommendation failed, using fallback");
-    return getFallbackRecommendations();
-  }
-}
-
-function getFallbackRecommendations(): VLMResult {
+function emptyResult(reason: string): AIScoringResult {
   return {
-    issues: [
-      {
-        issue: "Unable to perform detailed AI analysis",
-        evidence: "VLM service unavailable",
-        location: "general",
-      },
-    ],
-    recommendations: [
-      {
-        action: "Ensure all tools are in designated locations",
-        why: "Maintains Set in Order (Seiton) standards",
-        location: "general",
-      },
-      {
-        action: "Check for any spills or debris on work surfaces",
-        why: "Maintains Shine (Seiso) standards",
-        location: "general",
-      },
-      {
-        action: "Verify all labels and markings are visible and up to date",
-        why: "Maintains Standardize (Seiketsu) standards",
-        location: "general",
-      },
-    ],
-    pillarScores: null,
+    embeddingHash: "",
+    aiTotalScore: 0,
+    aiPillarsJson: { sort: 0, set: 0, shine: 0, standardize: 0, sustain: 0 },
+    aiRecommendationsJson: [{ action: "Manual inspection required — AI scoring unavailable", why: reason, location: "general" }],
+    aiIssuesJson: [{ issue: "AI scoring unavailable", evidence: reason, location: "general" }],
+    failingPillars: [],
+    modelVersion: "error",
+    scoringMode: "FALLBACK",
+    profile: { items: [], machines: [], layout: [], observedIssues: [], summary: "" },
   };
 }
 
-export async function scoreSubmission(
-  imagePath: string,
-  areaId: number,
-  areaName: string
+async function callVLM(
+  framePaths: string[],
+  areaName: string,
+  machineTag: string | null | undefined,
+  learnedProfile: ScoringInput["learnedProfile"]
 ): Promise<AIScoringResult> {
-  const uploadsDir = path.resolve(process.cwd(), "uploads");
-  const fullImagePath = path.join(uploadsDir, path.basename(imagePath));
+  const profileBlock = learnedProfile && learnedProfile.status === "TRAINED"
+    ? `\nLEARNED AREA PROFILE (this area's own norm — score deviations from it as well):
+- Summary: ${learnedProfile.summary ?? "(none)"}
+- Typical items: ${learnedProfile.items.join(", ") || "(none)"}
+- Known machines: ${learnedProfile.machines.join(", ") || "(none)"}
+- Layout notes: ${learnedProfile.layout.join("; ") || "(none)"}
+- Recurring issues to watch: ${learnedProfile.commonIssues.join("; ") || "(none)"}\n`
+    : "\n(No trained profile yet for this area — score on universal 5S+GMP only.)\n";
 
-  let embResult: EmbedResult;
-  try {
-    embResult = await embedImage(fullImagePath);
-  } catch (err) {
-    logger.error({ err }, "Failed to embed submission image");
-    return {
-      embeddingHash: "",
-      similarityToIdeal: 0,
-      aiTotalScore: 0,
-      aiPillarsJson: { sort: 0, set: 0, shine: 0, standardize: 0, sustain: 0 },
-      aiRecommendationsJson: getFallbackRecommendations().recommendations,
-      aiIssuesJson: getFallbackRecommendations().issues,
-      modelVersion: "error",
-      scoringMode: "FALLBACK",
-    };
+  const machineLine = machineTag ? `\nThe operator tagged this capture as: "${machineTag}".` : "";
+
+  const content: any[] = [
+    {
+      type: "text",
+      text:
+`Area: "${areaName}".${machineLine}\n${profileBlock}\nThe operator submitted ${framePaths.length} frame(s) from a walk-through. Audit the AREA AS A WHOLE across all frames.`,
+    },
+  ];
+
+  for (let i = 0; i < framePaths.length; i++) {
+    const p = framePaths[i];
+    if (!fs.existsSync(p)) continue;
+    const b64 = imageToBase64(p);
+    content.push({ type: "text", text: `FRAME ${i + 1}:` });
+    content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}` } });
   }
 
-  const idealPhotos = await db
-    .select()
-    .from(idealPhotosTable)
-    .where(eq(idealPhotosTable.areaId, areaId));
+  const response = await openai.chat.completions.create({
+    model: "gpt-5-mini",
+    response_format: { type: "json_object" },
+    max_completion_tokens: 2048,
+    messages: [
+      { role: "system", content: FIVE_S_GMP_RUBRIC },
+      { role: "user", content },
+    ],
+  });
 
-  const idealEmbeddings: number[][] = [];
-  const idealImagePaths: string[] = [];
+  const text = response.choices[0]?.message?.content || "{}";
+  const parsed = JSON.parse(text);
 
-  for (const photo of idealPhotos) {
-    if (photo.embeddingJson) {
-      idealEmbeddings.push(photo.embeddingJson as number[]);
-    }
-    const idealFullPath = path.join(uploadsDir, path.basename(photo.imageUrl));
-    if (fs.existsSync(idealFullPath)) {
-      idealImagePaths.push(idealFullPath);
+  const ps = parsed.pillar_scores || {};
+  const pillars: VLMPillarScores = {
+    sort: clamp05(ps.sort),
+    set: clamp05(ps.set),
+    shine: clamp05(ps.shine),
+    standardize: clamp05(ps.standardize),
+    sustain: clamp05(ps.sustain),
+  };
 
-      if (!photo.embeddingJson) {
-        try {
-          const idealEmb = await embedImage(idealFullPath);
-          await db
-            .update(idealPhotosTable)
-            .set({ embeddingJson: idealEmb.embedding as any })
-            .where(eq(idealPhotosTable.id, photo.id));
-          idealEmbeddings.push(idealEmb.embedding);
-        } catch (err) {
-          logger.error({ err, photoId: photo.id }, "Failed to embed ideal photo");
-        }
-      }
-    }
-  }
+  const issues: VLMIssue[] = Array.isArray(parsed.issues)
+    ? parsed.issues.slice(0, 8).map((i: any) => ({
+        issue: String(i.issue ?? ""),
+        evidence: String(i.evidence ?? ""),
+        location: String(i.location ?? "general"),
+        pillar: i.pillar ? String(i.pillar) : undefined,
+        principle: i.principle ? String(i.principle) : undefined,
+      }))
+    : [];
 
-  let prediction: PredictResult;
-  try {
-    prediction = await predictScore(areaId, embResult.embedding, idealEmbeddings);
-  } catch (err) {
-    logger.error({ err }, "Failed to predict score");
-    prediction = {
-      similarity: 0,
-      total_score: 0,
-      pillars: { sort: 0, set: 0, shine: 0, standardize: 0, sustain: 0 },
-      scoring_mode: "FALLBACK",
-      model_version: "error",
-    };
-  }
+  const recs: VLMRecommendation[] = Array.isArray(parsed.recommendations)
+    ? parsed.recommendations.slice(0, 8).map((r: any) => ({
+        action: String(r.action ?? ""),
+        why: String(r.why ?? ""),
+        location: String(r.location ?? "general"),
+        principle: r.principle ? String(r.principle) : undefined,
+      }))
+    : [];
 
-  let vlmResult: VLMResult;
-  try {
-    vlmResult = await getVLMRecommendations(fullImagePath, idealImagePaths, areaName);
-  } catch (err) {
-    logger.error({ err }, "VLM recommendations failed");
-    vlmResult = getFallbackRecommendations();
-  }
+  const profileRaw = parsed.profile || {};
+  const profile: VLMProfileExtract = {
+    items: Array.isArray(profileRaw.items) ? profileRaw.items.slice(0, 25).map(String) : [],
+    machines: Array.isArray(profileRaw.machines) ? profileRaw.machines.slice(0, 15).map(String) : [],
+    layout: Array.isArray(profileRaw.layout) ? profileRaw.layout.slice(0, 10).map(String) : [],
+    observedIssues: Array.isArray(profileRaw.observedIssues) ? profileRaw.observedIssues.slice(0, 10).map(String) : [],
+    summary: String(profileRaw.summary ?? ""),
+  };
 
-  let finalPillars: Record<string, number>;
-  let finalTotal: number;
-  let scoringMode: string;
-
-  if (prediction.scoring_mode === "CALIBRATED") {
-    finalPillars = prediction.pillars;
-    finalTotal = prediction.total_score;
-    scoringMode = "CALIBRATED";
-  } else if (vlmResult.pillarScores) {
-    const vlmPillars = vlmResult.pillarScores;
-    const clipSimilarity = prediction.similarity;
-    const clipWeight = 0.3;
-    const vlmWeight = 0.7;
-
-    const clipNormalized = Math.max(0, Math.min(1, (clipSimilarity - 0.75) / (0.98 - 0.75)));
-
-    finalPillars = {} as Record<string, number>;
-    for (const pillar of ["sort", "set", "shine", "standardize", "sustain"] as const) {
-      const vlmScore = vlmPillars[pillar];
-      const clipAdjusted = clipNormalized * 5;
-      const blended = vlmWeight * vlmScore + clipWeight * clipAdjusted;
-      finalPillars[pillar] = Math.max(0, Math.min(5, Math.round(blended)));
-    }
-    finalTotal = Object.values(finalPillars).reduce((a, b) => a + b, 0);
-    scoringMode = "VLM_BLENDED";
-  } else {
-    finalPillars = prediction.pillars;
-    finalTotal = prediction.total_score;
-    scoringMode = prediction.scoring_mode;
-  }
+  const total = pillars.sort + pillars.set + pillars.shine + pillars.standardize + pillars.sustain;
+  const failing = (Object.entries(pillars) as [string, number][])
+    .filter(([, v]) => v < 3)
+    .map(([k]) => k);
 
   return {
-    embeddingHash: embResult.embedding_hash,
-    similarityToIdeal: prediction.similarity,
-    aiTotalScore: finalTotal,
-    aiPillarsJson: finalPillars,
-    aiRecommendationsJson: vlmResult.recommendations,
-    aiIssuesJson: vlmResult.issues,
-    modelVersion: prediction.model_version,
-    scoringMode,
+    embeddingHash: "",
+    aiTotalScore: total,
+    aiPillarsJson: pillars,
+    aiRecommendationsJson: recs,
+    aiIssuesJson: issues,
+    failingPillars: failing,
+    modelVersion: "gpt-5-mini-5sgmp-v2",
+    scoringMode: "VLM_RUBRIC",
+    profile,
   };
 }
 
-export async function trainAreaModel(
-  areaId: number,
-  embeddings: number[][],
-  labels: Record<string, number>[]
-): Promise<{ modelVersion: string; samplesUsed: number; mae: number }> {
-  const result = await callMLService<{
-    model_version: string;
-    samples_used: number;
-    mae: number;
-  }>("/train", {
-    area_id: areaId,
-    embeddings,
-    labels,
-  });
+export async function scoreSubmission(input: ScoringInput): Promise<ScoringOutput> {
+  const uploadsDir = path.resolve(process.cwd(), "uploads");
+  const fullMediaPath = path.isAbsolute(input.mediaAbsPath)
+    ? input.mediaAbsPath
+    : path.join(uploadsDir, path.basename(input.mediaAbsPath));
 
-  return {
-    modelVersion: result.model_version,
-    samplesUsed: result.samples_used,
-    mae: result.mae,
-  };
+  let framePaths: string[];
+  let frameUrls: string[];
+
+  if (input.mediaType === "video") {
+    try {
+      const kf = await extractKeyframes(fullMediaPath, { maxFrames: 6, intervalSec: 2 });
+      framePaths = kf.frameAbsPaths;
+      frameUrls = kf.frameUrls;
+      if (framePaths.length === 0) {
+        // Fall back to the raw video file as a single still won't work; bail to fallback.
+        const fb = emptyResult("No keyframes could be extracted from the video.");
+        return { ...fb, keyframeUrls: [] };
+      }
+    } catch (err) {
+      logger.error({ err }, "Keyframe extraction failed");
+      const fb = emptyResult("Keyframe extraction failed.");
+      return { ...fb, keyframeUrls: [] };
+    }
+  } else {
+    framePaths = [fullMediaPath];
+    frameUrls = [];
+  }
+
+  try {
+    const result = await callVLM(framePaths, input.areaName, input.machineTag, input.learnedProfile);
+    return { ...result, keyframeUrls: frameUrls };
+  } catch (err) {
+    logger.error({ err }, "VLM scoring failed");
+    const fb = emptyResult(err instanceof Error ? err.message : "VLM error");
+    return { ...fb, keyframeUrls: frameUrls };
+  }
 }

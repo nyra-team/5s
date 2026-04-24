@@ -1,6 +1,7 @@
 import { useAuth } from "@/lib/auth";
 import { Link, useLocation } from "wouter";
-import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List } from "lucide-react";
+import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List, Inbox } from "lucide-react";
+import { useGetEscalationCount } from "@workspace/api-client-react";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -41,10 +42,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const isOperator = user.role === "OPERATOR";
 
+  const { data: escalationCount } = useGetEscalationCount({
+    query: { enabled: !isOperator, refetchInterval: 30_000, queryKey: ["escalation-count"] },
+  });
+  const openCount = escalationCount?.open ?? 0;
+
   const tabs = [
-    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { href: "/submissions", label: "Submissions", icon: List },
-    { href: "/areas", label: "Areas", icon: LayoutGrid },
+    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, badge: 0 },
+    { href: "/submissions", label: "Submissions", icon: List, badge: 0 },
+    { href: "/areas", label: "Areas", icon: LayoutGrid, badge: 0 },
+    { href: "/escalations", label: "Escalations", icon: Inbox, badge: openCount },
   ];
 
   return (
@@ -102,6 +109,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     <span className="relative z-10 inline-flex items-center gap-1.5">
                       <Icon className="w-3.5 h-3.5" />
                       {tab.label}
+                      {tab.badge > 0 && (
+                        <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10.5px] font-bold rounded-full bg-rose-500 text-white">
+                          {tab.badge > 99 ? "99+" : tab.badge}
+                        </span>
+                      )}
                     </span>
                   </Link>
                 );

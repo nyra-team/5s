@@ -11,4 +11,5 @@ export interface DashboardSummary {
   todayAvgScore: number;
   todayCompliance: number;
   totalSubmissions: number;
+  openEscalations: number;
 }

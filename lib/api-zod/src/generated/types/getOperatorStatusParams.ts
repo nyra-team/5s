@@ -8,8 +8,5 @@
 import type { GetOperatorStatusShift } from "./getOperatorStatusShift";
 
 export type GetOperatorStatusParams = {
-  /**
-   * Override auto-detected shift
-   */
   shift?: GetOperatorStatusShift;
 };

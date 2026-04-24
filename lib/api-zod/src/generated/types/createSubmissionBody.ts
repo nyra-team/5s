@@ -9,6 +9,11 @@ import type { CreateSubmissionBodyShift } from "./createSubmissionBodyShift";
 
 export type CreateSubmissionBody = {
   areaId: number;
-  photo: Blob;
+  /** Video (preferred) or image file. Use this OR `photo`. */
+  media?: Blob;
+  /** Legacy image-only field (still accepted). */
+  photo?: Blob;
   shift?: CreateSubmissionBodyShift;
+  /** Optional sub-area / machine being captured. */
+  machineTag?: string;
 };

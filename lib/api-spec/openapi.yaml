@@ -14,16 +14,20 @@ tags:
     description: Authentication
   - name: areas
     description: Area management
+  - name: profiles
+    description: Per-area learned profiles
   - name: submissions
-    description: 5S submissions
+    description: 5S submissions (image or video)
   - name: dashboard
     description: Manager dashboard
-  - name: ideal-photos
-    description: Ideal/reference photos
+  - name: escalations
+    description: Auto-escalations on failed audits
+  - name: schedule
+    description: Proactive check schedule for operators
   - name: labels
     description: Manager labeling for AI calibration
   - name: model
-    description: AI model management
+    description: AI model status
 
 paths:
   /healthz:
@@ -57,12 +61,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LoginResponse"
-        "401":
-          description: Invalid credentials
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
 
   /auth/me:
     get:
@@ -76,12 +74,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/User"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
 
   /areas:
     get:
@@ -139,12 +131,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Area"
-        "404":
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: deleteArea
       tags: [areas]
@@ -158,18 +144,29 @@ paths:
       responses:
         "204":
           description: Area deleted
-        "404":
-          description: Not found
+
+  /areas/{id}/profile:
+    get:
+      operationId: getAreaProfile
+      tags: [profiles]
+      summary: Get the learned profile for an area
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Area profile
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /areas/{id}/ideal-photo:
-    post:
-      operationId: uploadIdealPhoto
-      tags: [ideal-photos]
-      summary: Upload ideal/reference photo for an area
+                $ref: "#/components/schemas/AreaProfile"
+    put:
+      operationId: updateAreaProfile
+      tags: [profiles]
+      summary: Update the learned profile for an area (manager edit)
       parameters:
         - name: id
           in: path
@@ -179,28 +176,20 @@ paths:
       requestBody:
         required: true
         content:
-          multipart/form-data:
+          application/json:
             schema:
-              type: object
-              properties:
-                photo:
-                  type: string
-                  format: binary
-              required:
-                - photo
+              $ref: "#/components/schemas/UpdateAreaProfileBody"
       responses:
-        "201":
-          description: Photo uploaded
+        "200":
+          description: Profile updated
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/IdealPhoto"
-
-  /areas/{id}/ideal-photos:
-    get:
-      operationId: getIdealPhotos
-      tags: [ideal-photos]
-      summary: Get ideal photos for an area
+                $ref: "#/components/schemas/AreaProfile"
+    delete:
+      operationId: resetAreaProfile
+      tags: [profiles]
+      summary: Reset the learned profile for an area
       parameters:
         - name: id
           in: path
@@ -209,13 +198,11 @@ paths:
             type: integer
       responses:
         "200":
-          description: Ideal photos
+          description: Profile reset
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/IdealPhoto"
+                $ref: "#/components/schemas/AreaProfile"
 
   /submissions:
     get:
@@ -249,7 +236,7 @@ paths:
     post:
       operationId: createSubmission
       tags: [submissions]
-      summary: Submit a 5S photo for scoring
+      summary: Submit a 5S video walk-through (preferred) or photo for scoring
       requestBody:
         required: true
         content:
@@ -259,15 +246,22 @@ paths:
               properties:
                 areaId:
                   type: integer
+                media:
+                  type: string
+                  format: binary
+                  description: Video (preferred) or image file. Use this OR `photo`.
                 photo:
                   type: string
                   format: binary
+                  description: Legacy image-only field (still accepted).
                 shift:
                   type: string
                   enum: [A, B, C]
+                machineTag:
+                  type: string
+                  description: Optional sub-area / machine being captured.
               required:
                 - areaId
-                - photo
       responses:
         "201":
           description: Submission created with score
@@ -294,18 +288,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Submission"
-        "404":
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
 
   /submissions/{id}/reupload:
     put:
       operationId: reuploadSubmission
       tags: [submissions]
-      summary: Re-upload photo for an existing submission
+      summary: Re-upload media for an existing submission
       parameters:
         - name: id
           in: path
@@ -318,34 +306,25 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required:
-                - photo
               properties:
+                media:
+                  type: string
+                  format: binary
                 photo:
                   type: string
                   format: binary
                 shift:
                   type: string
                   enum: [A, B, C]
+                machineTag:
+                  type: string
       responses:
         "200":
-          description: Submission updated with new photo and re-scored
+          description: Submission updated and re-scored
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Submission"
-        "403":
-          description: Forbidden - not the owner
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
 
   /dashboard/compliance:
     get:
@@ -435,7 +414,6 @@ paths:
           schema:
             type: string
             enum: [A, B, C]
-          description: Override auto-detected shift
       responses:
         "200":
           description: Status per area for current shift
@@ -445,6 +423,93 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/AreaStatus"
+
+  /operator/next-checks:
+    get:
+      operationId: getNextChecks
+      tags: [schedule]
+      summary: Proactive feed of areas/machines that need to be checked next
+      responses:
+        "200":
+          description: Ordered next-check list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NextCheck"
+
+  /escalations:
+    get:
+      operationId: listEscalations
+      tags: [escalations]
+      summary: List escalations (manager)
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [OPEN, ACKNOWLEDGED, RESOLVED, ALL]
+      responses:
+        "200":
+          description: Escalations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Escalation"
+
+  /escalations/count:
+    get:
+      operationId: getEscalationCount
+      tags: [escalations]
+      summary: Open escalation count for badges
+      responses:
+        "200":
+          description: Counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EscalationCount"
+
+  /escalations/{id}/acknowledge:
+    post:
+      operationId: acknowledgeEscalation
+      tags: [escalations]
+      summary: Manager acknowledges an escalation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Escalation"
+
+  /escalations/{id}/resolve:
+    post:
+      operationId: resolveEscalation
+      tags: [escalations]
+      summary: Manager resolves an escalation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Escalation"
 
   /labels:
     post:
@@ -490,7 +555,7 @@ paths:
     get:
       operationId: getAreaModelStatus
       tags: [model]
-      summary: Get AI model status for an area
+      summary: Get learning status for an area
       parameters:
         - name: id
           in: path
@@ -505,25 +570,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/ModelStatus"
 
-  /areas/{id}/train:
-    post:
-      operationId: trainAreaModel
-      tags: [model]
-      summary: Train AI model for an area using labeled submissions
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Training result
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TrainResult"
-
 components:
   schemas:
     HealthStatus:
@@ -531,16 +577,14 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
     ErrorResponse:
       type: object
       properties:
         error:
           type: string
-      required:
-        - error
+      required: [error]
 
     LoginBody:
       type: object
@@ -550,9 +594,7 @@ components:
           format: email
         password:
           type: string
-      required:
-        - email
-        - password
+      required: [email, password]
 
     LoginResponse:
       type: object
@@ -561,9 +603,7 @@ components:
           type: string
         user:
           $ref: "#/components/schemas/User"
-      required:
-        - token
-        - user
+      required: [token, user]
 
     User:
       type: object
@@ -575,10 +615,7 @@ components:
         role:
           type: string
           enum: [OPERATOR, MANAGER]
-      required:
-        - id
-        - email
-        - role
+      required: [id, email, role]
 
     Area:
       type: object
@@ -587,43 +624,81 @@ components:
           type: integer
         name:
           type: string
-      required:
-        - id
-        - name
+      required: [id, name]
 
     CreateAreaBody:
       type: object
       properties:
         name:
           type: string
-      required:
-        - name
+      required: [name]
 
     UpdateAreaBody:
       type: object
       properties:
         name:
           type: string
-      required:
-        - name
+      required: [name]
 
-    IdealPhoto:
+    AreaProfile:
       type: object
       properties:
-        id:
-          type: integer
         areaId:
           type: integer
-        imageUrl:
+        status:
           type: string
-        createdAt:
+          enum: [LEARNING, TRAINED]
+        submissionsCount:
+          type: integer
+        targetSubmissions:
+          type: integer
+        summary:
+          type: string
+          nullable: true
+        items:
+          type: array
+          items: { type: string }
+        machines:
+          type: array
+          items: { type: string }
+        layout:
+          type: array
+          items: { type: string }
+        commonIssues:
+          type: array
+          items: { type: string }
+        updatedAt:
           type: string
           format: date-time
       required:
-        - id
         - areaId
-        - imageUrl
-        - createdAt
+        - status
+        - submissionsCount
+        - targetSubmissions
+        - items
+        - machines
+        - layout
+        - commonIssues
+        - updatedAt
+
+    UpdateAreaProfileBody:
+      type: object
+      properties:
+        summary:
+          type: string
+          nullable: true
+        items:
+          type: array
+          items: { type: string }
+        machines:
+          type: array
+          items: { type: string }
+        layout:
+          type: array
+          items: { type: string }
+        commonIssues:
+          type: array
+          items: { type: string }
 
     Submission:
       type: object
@@ -646,16 +721,11 @@ components:
         scoreJson:
           type: object
           properties:
-            sort:
-              type: integer
-            set:
-              type: integer
-            shine:
-              type: integer
-            standardize:
-              type: integer
-            sustain:
-              type: integer
+            sort: { type: integer }
+            set: { type: integer }
+            shine: { type: integer }
+            standardize: { type: integer }
+            sustain: { type: integer }
           required: [sort, set, shine, standardize, sustain]
         suggestionsJson:
           type: array
@@ -663,9 +733,22 @@ components:
             type: string
         imageUrl:
           type: string
-        similarityToIdeal:
-          type: number
+        mediaType:
+          type: string
+          enum: [image, video]
+        keyframesJson:
+          type: array
           nullable: true
+          items:
+            type: string
+        machineTag:
+          type: string
+          nullable: true
+        failingPillarsJson:
+          type: array
+          nullable: true
+          items:
+            type: string
         aiTotalScore:
           type: integer
           nullable: true
@@ -673,16 +756,11 @@ components:
           type: object
           nullable: true
           properties:
-            sort:
-              type: integer
-            set:
-              type: integer
-            shine:
-              type: integer
-            standardize:
-              type: integer
-            sustain:
-              type: integer
+            sort: { type: integer }
+            set: { type: integer }
+            shine: { type: integer }
+            standardize: { type: integer }
+            sustain: { type: integer }
         aiRecommendationsJson:
           type: array
           nullable: true
@@ -696,7 +774,6 @@ components:
         scoringMode:
           type: string
           nullable: true
-          enum: [CALIBRATED, VLM_BLENDED, SIMILARITY_ONLY, FALLBACK]
         modelVersion:
           type: string
           nullable: true
@@ -716,6 +793,7 @@ components:
         - scoreJson
         - suggestionsJson
         - imageUrl
+        - mediaType
         - createdAt
 
     AIRecommendation:
@@ -727,10 +805,10 @@ components:
           type: string
         location:
           type: string
-      required:
-        - action
-        - why
-        - location
+        principle:
+          type: string
+          nullable: true
+      required: [action, why, location]
 
     AIIssue:
       type: object
@@ -741,10 +819,13 @@ components:
           type: string
         location:
           type: string
-      required:
-        - issue
-        - evidence
-        - location
+        pillar:
+          type: string
+          nullable: true
+        principle:
+          type: string
+          nullable: true
+      required: [issue, evidence, location]
 
     CreateLabelBody:
       type: object
@@ -754,23 +835,15 @@ components:
         pillarsJson:
           type: object
           properties:
-            sort:
-              type: integer
-            set:
-              type: integer
-            shine:
-              type: integer
-            standardize:
-              type: integer
-            sustain:
-              type: integer
+            sort: { type: integer }
+            set: { type: integer }
+            shine: { type: integer }
+            standardize: { type: integer }
+            sustain: { type: integer }
           required: [sort, set, shine, standardize, sustain]
         totalScore:
           type: integer
-      required:
-        - submissionId
-        - pillarsJson
-        - totalScore
+      required: [submissionId, pillarsJson, totalScore]
 
     Label:
       type: object
@@ -784,16 +857,11 @@ components:
         pillarsJson:
           type: object
           properties:
-            sort:
-              type: integer
-            set:
-              type: integer
-            shine:
-              type: integer
-            standardize:
-              type: integer
-            sustain:
-              type: integer
+            sort: { type: integer }
+            set: { type: integer }
+            shine: { type: integer }
+            standardize: { type: integer }
+            sustain: { type: integer }
           required: [sort, set, shine, standardize, sustain]
         totalScore:
           type: integer
@@ -815,9 +883,12 @@ components:
           type: integer
         labelsCount:
           type: integer
-        idealPhotosCount:
-          type: integer
         submissionsCount:
+          type: integer
+        learningStatus:
+          type: string
+          enum: [LEARNING, TRAINED]
+        targetSubmissions:
           type: integer
         canTrain:
           type: boolean
@@ -830,23 +901,10 @@ components:
       required:
         - areaId
         - labelsCount
-        - idealPhotosCount
         - submissionsCount
+        - learningStatus
+        - targetSubmissions
         - canTrain
-
-    TrainResult:
-      type: object
-      properties:
-        modelVersion:
-          type: string
-        samplesUsed:
-          type: integer
-        mae:
-          type: number
-      required:
-        - modelVersion
-        - samplesUsed
-        - mae
 
     ComplianceData:
       type: object
@@ -861,11 +919,7 @@ components:
           type: array
           items:
             type: string
-      required:
-        - totalAreas
-        - submittedAreas
-        - compliancePercent
-        - missingAreas
+      required: [totalAreas, submittedAreas, compliancePercent, missingAreas]
 
     ScoreSummary:
       type: object
@@ -876,10 +930,7 @@ components:
           type: number
         count:
           type: integer
-      required:
-        - label
-        - avgScore
-        - count
+      required: [label, avgScore, count]
 
     DashboardSummary:
       type: object
@@ -892,11 +943,14 @@ components:
           type: number
         totalSubmissions:
           type: integer
+        openEscalations:
+          type: integer
       required:
         - todaySubmissions
         - todayAvgScore
         - todayCompliance
         - totalSubmissions
+        - openEscalations
 
     CurrentShift:
       type: object
@@ -908,10 +962,7 @@ components:
           type: string
         endTime:
           type: string
-      required:
-        - shift
-        - startTime
-        - endTime
+      required: [shift, startTime, endTime]
 
     AreaStatus:
       type: object
@@ -924,7 +975,102 @@ components:
           type: boolean
         submission:
           $ref: "#/components/schemas/Submission"
+      required: [areaId, areaName, submitted]
+
+    Escalation:
+      type: object
+      properties:
+        id:
+          type: integer
+        submissionId:
+          type: integer
+        areaId:
+          type: integer
+        areaName:
+          type: string
+        operatorId:
+          type: integer
+        operatorEmail:
+          type: string
+        scoreTotal:
+          type: integer
+        scorePercent:
+          type: integer
+        failingPillars:
+          type: array
+          items:
+            type: string
+        recommendedActions:
+          type: array
+          items:
+            type: string
+        evidenceUrls:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [OPEN, ACKNOWLEDGED, RESOLVED]
+        createdAt:
+          type: string
+          format: date-time
+        ackedAt:
+          type: string
+          format: date-time
+          nullable: true
+        resolvedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - id
+        - submissionId
+        - areaId
+        - areaName
+        - operatorId
+        - operatorEmail
+        - scoreTotal
+        - scorePercent
+        - failingPillars
+        - recommendedActions
+        - evidenceUrls
+        - status
+        - createdAt
+
+    EscalationCount:
+      type: object
+      properties:
+        open:
+          type: integer
+      required: [open]
+
+    NextCheck:
+      type: object
+      properties:
+        areaId:
+          type: integer
+        areaName:
+          type: string
+        machine:
+          type: string
+          nullable: true
+        lastCheckAt:
+          type: string
+          format: date-time
+          nullable: true
+        nextDueAt:
+          type: string
+          format: date-time
+        cadenceSeconds:
+          type: integer
+        overdue:
+          type: boolean
+        reason:
+          type: string
       required:
         - areaId
         - areaName
-        - submitted
+        - nextDueAt
+        - cadenceSeconds
+        - overdue
+        - reason

@@ -8,8 +8,8 @@
 import type { AIIssue } from "./aIIssue";
 import type { AIRecommendation } from "./aIRecommendation";
 import type { SubmissionAiPillarsJson } from "./submissionAiPillarsJson";
+import type { SubmissionMediaType } from "./submissionMediaType";
 import type { SubmissionScoreJson } from "./submissionScoreJson";
-import type { SubmissionScoringMode } from "./submissionScoringMode";
 import type { SubmissionShift } from "./submissionShift";
 
 export interface Submission {
@@ -23,12 +23,15 @@ export interface Submission {
   scoreJson: SubmissionScoreJson;
   suggestionsJson: string[];
   imageUrl: string;
-  similarityToIdeal?: number | null;
+  mediaType: SubmissionMediaType;
+  keyframesJson?: string[] | null;
+  machineTag?: string | null;
+  failingPillarsJson?: string[] | null;
   aiTotalScore?: number | null;
   aiPillarsJson?: SubmissionAiPillarsJson;
   aiRecommendationsJson?: AIRecommendation[] | null;
   aiIssuesJson?: AIIssue[] | null;
-  scoringMode?: SubmissionScoringMode;
+  scoringMode?: string | null;
   modelVersion?: string | null;
   embeddingHash?: string | null;
   createdAt: Date;

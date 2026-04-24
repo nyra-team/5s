@@ -10,4 +10,5 @@ export interface AIRecommendation {
   action: string;
   why: string;
   location: string;
+  principle?: string | null;
 }

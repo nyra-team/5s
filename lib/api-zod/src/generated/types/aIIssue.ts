@@ -10,4 +10,6 @@ export interface AIIssue {
   issue: string;
   evidence: string;
   location: string;
+  pillar?: string | null;
+  principle?: string | null;
 }

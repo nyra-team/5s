@@ -1,64 +1,73 @@
 import { Router, type IRouter } from "express";
 import { eq, and, gte, lt, sql } from "drizzle-orm";
-import { db, submissionsTable, areasTable, usersTable } from "@workspace/db";
+import path from "node:path";
+import {
+  db,
+  submissionsTable,
+  areasTable,
+  usersTable,
+  escalationsTable,
+  areaProfilesTable,
+} from "@workspace/db";
 import { GetSubmissionParams, ListSubmissionsQueryParams } from "@workspace/api-zod";
 import { authMiddleware } from "../lib/auth";
 import { upload } from "../lib/upload";
 import { getCurrentShift } from "../lib/scoring";
-import { scoreSubmission, type AIScoringResult } from "../lib/ai-scoring.js";
+import { scoreSubmission, type ScoringOutput } from "../lib/ai-scoring.js";
+import { isVideoFile } from "../lib/keyframes.js";
+import { ingestProfileExtract, getOrCreateProfile, TRAINING_THRESHOLD } from "../lib/learning";
+import { recordCheck } from "../lib/schedule";
 import { logger } from "../lib/logger.js";
 
-const CONSERVATIVE_DEFAULT: AIScoringResult = {
-  embeddingHash: "",
-  similarityToIdeal: 0,
-  aiTotalScore: 0,
-  aiPillarsJson: { sort: 0, set: 0, shine: 0, standardize: 0, sustain: 0 },
-  aiRecommendationsJson: [{ action: "Manual inspection required — AI scoring unavailable", why: "AI pipeline error", location: "general" }],
-  aiIssuesJson: [{ issue: "AI scoring unavailable", evidence: "Pipeline error", location: "general" }],
-  modelVersion: "error",
-  scoringMode: "FALLBACK",
-};
+const ESCALATION_THRESHOLD_PERCENT = (() => {
+  const raw = parseInt(process.env.ESCALATION_THRESHOLD_PERCENT ?? "", 10);
+  if (Number.isFinite(raw) && raw >= 0 && raw <= 100) return raw;
+  return 60;
+})();
 
 const router: IRouter = Router();
 
-function getShiftDateRange(dateStr?: string, shift?: string) {
-  const date = dateStr ? new Date(dateStr + "T00:00:00") : new Date();
+const submissionSelect = {
+  id: submissionsTable.id,
+  areaId: submissionsTable.areaId,
+  areaName: areasTable.name,
+  userId: submissionsTable.userId,
+  userEmail: usersTable.email,
+  shift: submissionsTable.shift,
+  scoreTotal: submissionsTable.scoreTotal,
+  scoreJson: submissionsTable.scoreJson,
+  suggestionsJson: submissionsTable.suggestionsJson,
+  imageUrl: submissionsTable.imageUrl,
+  mediaType: submissionsTable.mediaType,
+  keyframesJson: submissionsTable.keyframesJson,
+  machineTag: submissionsTable.machineTag,
+  failingPillarsJson: submissionsTable.failingPillarsJson,
+  aiTotalScore: submissionsTable.aiTotalScore,
+  aiPillarsJson: submissionsTable.aiPillarsJson,
+  aiRecommendationsJson: submissionsTable.aiRecommendationsJson,
+  aiIssuesJson: submissionsTable.aiIssuesJson,
+  scoringMode: submissionsTable.scoringMode,
+  modelVersion: submissionsTable.modelVersion,
+  embeddingHash: submissionsTable.embeddingHash,
+  createdAt: submissionsTable.createdAt,
+};
+
+function getShiftDateRange(dateStr?: string | Date, shift?: string) {
+  const date = !dateStr ? new Date() : (dateStr instanceof Date ? dateStr : new Date(dateStr + "T00:00:00"));
   const y = date.getFullYear();
   const m = date.getMonth();
   const d = date.getDate();
-
-  if (shift === "A") {
-    return {
-      start: new Date(y, m, d, 6, 0, 0),
-      end: new Date(y, m, d, 14, 0, 0),
-    };
-  } else if (shift === "B") {
-    return {
-      start: new Date(y, m, d, 14, 0, 0),
-      end: new Date(y, m, d, 22, 0, 0),
-    };
-  } else if (shift === "C") {
-    return {
-      start: new Date(y, m, d, 22, 0, 0),
-      end: new Date(y, m, d + 1, 6, 0, 0),
-    };
-  }
-  return {
-    start: new Date(y, m, d, 0, 0, 0),
-    end: new Date(y, m, d + 1, 0, 0, 0),
-  };
+  if (shift === "A") return { start: new Date(y, m, d, 6, 0, 0), end: new Date(y, m, d, 14, 0, 0) };
+  if (shift === "B") return { start: new Date(y, m, d, 14, 0, 0), end: new Date(y, m, d, 22, 0, 0) };
+  if (shift === "C") return { start: new Date(y, m, d, 22, 0, 0), end: new Date(y, m, d + 1, 6, 0, 0) };
+  return { start: new Date(y, m, d, 0, 0, 0), end: new Date(y, m, d + 1, 0, 0, 0) };
 }
 
 router.get("/submissions", authMiddleware, async (req, res): Promise<void> => {
   const query = ListSubmissionsQueryParams.safeParse(req.query);
-
   const conditions = [];
-  if (query.success && query.data.shift) {
-    conditions.push(eq(submissionsTable.shift, query.data.shift));
-  }
-  if (query.success && query.data.areaId) {
-    conditions.push(eq(submissionsTable.areaId, query.data.areaId));
-  }
+  if (query.success && query.data.shift) conditions.push(eq(submissionsTable.shift, query.data.shift));
+  if (query.success && query.data.areaId) conditions.push(eq(submissionsTable.areaId, query.data.areaId));
   if (query.success && query.data.date) {
     const { start, end } = getShiftDateRange(query.data.date);
     conditions.push(gte(submissionsTable.createdAt, start));
@@ -66,26 +75,7 @@ router.get("/submissions", authMiddleware, async (req, res): Promise<void> => {
   }
 
   const rows = await db
-    .select({
-      id: submissionsTable.id,
-      areaId: submissionsTable.areaId,
-      areaName: areasTable.name,
-      userId: submissionsTable.userId,
-      userEmail: usersTable.email,
-      shift: submissionsTable.shift,
-      scoreTotal: submissionsTable.scoreTotal,
-      scoreJson: submissionsTable.scoreJson,
-      suggestionsJson: submissionsTable.suggestionsJson,
-      imageUrl: submissionsTable.imageUrl,
-      similarityToIdeal: submissionsTable.similarityToIdeal,
-      aiTotalScore: submissionsTable.aiTotalScore,
-      aiPillarsJson: submissionsTable.aiPillarsJson,
-      aiRecommendationsJson: submissionsTable.aiRecommendationsJson,
-      aiIssuesJson: submissionsTable.aiIssuesJson,
-      scoringMode: submissionsTable.scoringMode,
-      modelVersion: submissionsTable.modelVersion,
-      createdAt: submissionsTable.createdAt,
-    })
+    .select(submissionSelect)
     .from(submissionsTable)
     .innerJoin(areasTable, eq(submissionsTable.areaId, areasTable.id))
     .innerJoin(usersTable, eq(submissionsTable.userId, usersTable.id))
@@ -95,214 +85,265 @@ router.get("/submissions", authMiddleware, async (req, res): Promise<void> => {
   res.json(rows);
 });
 
-router.post(
-  "/submissions",
-  authMiddleware,
-  upload.single("photo"),
-  async (req, res): Promise<void> => {
-    const { userId } = (req as any).user;
-    const areaId = parseInt(req.body.areaId, 10);
+const uploadFields = upload.fields([
+  { name: "media", maxCount: 1 },
+  { name: "photo", maxCount: 1 },
+]);
 
-    if (isNaN(areaId)) {
-      res.status(400).json({ error: "areaId is required" });
-      return;
-    }
+function extractFile(req: any) {
+  const files = (req.files ?? {}) as Record<string, Express.Multer.File[]>;
+  const f = files.media?.[0] ?? files.photo?.[0] ?? req.file;
+  return f as Express.Multer.File | undefined;
+}
 
-    const file = req.file;
-    if (!file) {
-      res.status(400).json({ error: "Photo is required" });
-      return;
-    }
+async function runScoringPipeline(opts: {
+  areaId: number;
+  areaName: string;
+  file: Express.Multer.File;
+  machineTag: string | null;
+}): Promise<{
+  scoring: ScoringOutput;
+  mediaType: "image" | "video";
+  mediaUrl: string;
+}> {
+  const mediaType: "image" | "video" = isVideoFile(opts.file) ? "video" : "image";
+  const mediaUrl = `/uploads/${opts.file.filename}`;
+  const absPath = path.resolve(process.cwd(), "uploads", opts.file.filename);
 
-    const bodyShift = req.body.shift as string | undefined;
-    const validShifts = ["A", "B", "C"];
-    const shift = bodyShift && validShifts.includes(bodyShift) ? bodyShift : getCurrentShift().shift;
-    const imageUrl = `/uploads/${file.filename}`;
+  const profile = await getOrCreateProfile(opts.areaId);
+  const learnedProfile = {
+    status: profile.status as "LEARNING" | "TRAINED",
+    items: (profile.itemsJson as string[]) ?? [],
+    machines: (profile.machinesJson as string[]) ?? [],
+    layout: (profile.layoutJson as string[]) ?? [],
+    commonIssues: (profile.commonIssuesJson as string[]) ?? [],
+    summary: profile.summary,
+  };
 
-    const [area] = await db
-      .select()
-      .from(areasTable)
-      .where(eq(areasTable.id, areaId));
+  const scoring = await scoreSubmission({
+    areaId: opts.areaId,
+    areaName: opts.areaName,
+    mediaAbsPath: absPath,
+    mediaType,
+    machineTag: opts.machineTag,
+    learnedProfile,
+  });
 
-    let aiResult;
-    try {
-      aiResult = await scoreSubmission(imageUrl, areaId, area?.name ?? "Unknown");
-    } catch (err) {
-      logger.error({ err }, "AI scoring failed entirely, using conservative defaults");
-    }
+  return { scoring, mediaType, mediaUrl };
+}
 
-    const result = aiResult ?? CONSERVATIVE_DEFAULT;
-    const finalScoreTotal = result.aiTotalScore;
-    const finalScoreJson = result.aiPillarsJson;
-    const finalSuggestions = result.aiRecommendationsJson?.length
-      ? result.aiRecommendationsJson.map((r) => r.action)
-      : ["Manual inspection required — AI scoring unavailable"];
+async function maybeCreateEscalation(args: {
+  submissionId: number;
+  areaId: number;
+  operatorId: number;
+  scoreTotal: number;
+  scorePercent: number;
+  failingPillars: string[];
+  recommendedActions: string[];
+  evidenceUrls: string[];
+}) {
+  if (args.scorePercent >= ESCALATION_THRESHOLD_PERCENT) return;
+  await db.insert(escalationsTable).values({
+    submissionId: args.submissionId,
+    areaId: args.areaId,
+    operatorId: args.operatorId,
+    scoreTotal: args.scoreTotal,
+    scorePercent: args.scorePercent,
+    failingPillarsJson: args.failingPillars,
+    recommendedActionsJson: args.recommendedActions,
+    evidenceUrlsJson: args.evidenceUrls,
+    status: "OPEN",
+  });
+}
 
-    const [submission] = await db
-      .insert(submissionsTable)
-      .values({
-        areaId,
-        userId,
-        shift,
-        scoreTotal: finalScoreTotal,
-        scoreJson: finalScoreJson,
-        suggestionsJson: finalSuggestions,
-        imageUrl,
-        embeddingHash: result.embeddingHash || null,
-        similarityToIdeal: result.similarityToIdeal ?? null,
-        aiTotalScore: result.aiTotalScore ?? null,
-        aiPillarsJson: result.aiPillarsJson ?? null,
-        aiRecommendationsJson: result.aiRecommendationsJson ?? null,
-        aiIssuesJson: result.aiIssuesJson ?? null,
-        modelVersion: result.modelVersion ?? null,
-        scoringMode: result.scoringMode ?? null,
-      })
-      .returning();
+router.post("/submissions", authMiddleware, uploadFields, async (req, res): Promise<void> => {
+  const { userId } = (req as any).user;
+  const areaId = parseInt(req.body.areaId, 10);
+  if (isNaN(areaId)) { res.status(400).json({ error: "areaId is required" }); return; }
 
-    const [user] = await db
-      .select()
-      .from(usersTable)
-      .where(eq(usersTable.id, userId));
+  const file = extractFile(req);
+  if (!file) { res.status(400).json({ error: "Media file is required (use field 'media' or 'photo')" }); return; }
 
-    res.status(201).json({
-      ...submission,
-      areaName: area?.name ?? "",
-      userEmail: user?.email ?? "",
-    });
-  }
-);
+  const machineTag = (req.body.machineTag as string | undefined)?.trim() || null;
+  const bodyShift = req.body.shift as string | undefined;
+  const validShifts = ["A", "B", "C"];
+  const shift = bodyShift && validShifts.includes(bodyShift) ? bodyShift : getCurrentShift().shift;
 
-router.put(
-  "/submissions/:id/reupload",
-  authMiddleware,
-  upload.single("photo"),
-  async (req, res): Promise<void> => {
-    const { userId } = (req as any).user;
-    const id = parseInt(req.params.id, 10);
+  const [area] = await db.select().from(areasTable).where(eq(areasTable.id, areaId));
+  if (!area) { res.status(404).json({ error: "Area not found" }); return; }
 
-    if (isNaN(id)) {
-      res.status(400).json({ error: "Invalid submission id" });
-      return;
-    }
-
-    const [existing] = await db
-      .select()
-      .from(submissionsTable)
-      .where(eq(submissionsTable.id, id));
-
-    if (!existing) {
-      res.status(404).json({ error: "Submission not found" });
-      return;
-    }
-
-    if (existing.userId !== userId) {
-      res.status(403).json({ error: "You can only re-upload your own submissions" });
-      return;
-    }
-
-    const file = req.file;
-    if (!file) {
-      res.status(400).json({ error: "Photo is required" });
-      return;
-    }
-
-    const imageUrl = `/uploads/${file.filename}`;
-
-    const bodyShift = req.body.shift as string | undefined;
-    const validShifts = ["A", "B", "C"];
-    const shift = bodyShift && validShifts.includes(bodyShift) ? bodyShift : existing.shift;
-
-    const [area] = await db
-      .select()
-      .from(areasTable)
-      .where(eq(areasTable.id, existing.areaId));
-
-    let aiResult;
-    try {
-      aiResult = await scoreSubmission(imageUrl, existing.areaId, area?.name ?? "Unknown");
-    } catch (err) {
-      logger.error({ err }, "AI scoring failed on reupload, using conservative defaults");
-    }
-
-    const result = aiResult ?? CONSERVATIVE_DEFAULT;
-    const finalScoreTotal = result.aiTotalScore;
-    const finalScoreJson = result.aiPillarsJson;
-    const finalSuggestions = result.aiRecommendationsJson?.length
-      ? result.aiRecommendationsJson.map((r) => r.action)
-      : ["Manual inspection required — AI scoring unavailable"];
-
-    const [updated] = await db
-      .update(submissionsTable)
-      .set({
-        imageUrl,
-        shift,
-        scoreTotal: finalScoreTotal,
-        scoreJson: finalScoreJson,
-        suggestionsJson: finalSuggestions,
-        embeddingHash: result.embeddingHash || null,
-        similarityToIdeal: result.similarityToIdeal ?? null,
-        aiTotalScore: result.aiTotalScore ?? null,
-        aiPillarsJson: result.aiPillarsJson ?? null,
-        aiRecommendationsJson: result.aiRecommendationsJson ?? null,
-        aiIssuesJson: result.aiIssuesJson ?? null,
-        modelVersion: result.modelVersion ?? null,
-        scoringMode: result.scoringMode ?? null,
-      })
-      .where(eq(submissionsTable.id, id))
-      .returning();
-
-    const [user] = await db
-      .select()
-      .from(usersTable)
-      .where(eq(usersTable.id, userId));
-
-    res.json({
-      ...updated,
-      areaName: area?.name ?? "",
-      userEmail: user?.email ?? "",
-    });
-  }
-);
-
-router.get("/submissions/:id", authMiddleware, async (req, res): Promise<void> => {
-  const params = GetSubmissionParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
+  let pipeline;
+  try {
+    pipeline = await runScoringPipeline({ areaId, areaName: area.name, file, machineTag });
+  } catch (err) {
+    logger.error({ err }, "Scoring pipeline failed");
+    res.status(500).json({ error: "Failed to score submission" });
     return;
   }
 
-  const [row] = await db
-    .select({
-      id: submissionsTable.id,
-      areaId: submissionsTable.areaId,
-      areaName: areasTable.name,
-      userId: submissionsTable.userId,
-      userEmail: usersTable.email,
-      shift: submissionsTable.shift,
-      scoreTotal: submissionsTable.scoreTotal,
-      scoreJson: submissionsTable.scoreJson,
-      suggestionsJson: submissionsTable.suggestionsJson,
-      imageUrl: submissionsTable.imageUrl,
-      similarityToIdeal: submissionsTable.similarityToIdeal,
-      aiTotalScore: submissionsTable.aiTotalScore,
-      aiPillarsJson: submissionsTable.aiPillarsJson,
-      aiRecommendationsJson: submissionsTable.aiRecommendationsJson,
-      aiIssuesJson: submissionsTable.aiIssuesJson,
-      scoringMode: submissionsTable.scoringMode,
-      modelVersion: submissionsTable.modelVersion,
-      embeddingHash: submissionsTable.embeddingHash,
-      createdAt: submissionsTable.createdAt,
+  const { scoring, mediaType, mediaUrl } = pipeline;
+  const finalScoreTotal = scoring.aiTotalScore;
+  const finalScoreJson = scoring.aiPillarsJson;
+  const finalSuggestions = scoring.aiRecommendationsJson?.length
+    ? scoring.aiRecommendationsJson.map((r) => r.action)
+    : ["Manual inspection required — AI scoring unavailable"];
+
+  const [submission] = await db
+    .insert(submissionsTable)
+    .values({
+      areaId,
+      userId,
+      shift,
+      scoreTotal: finalScoreTotal,
+      scoreJson: finalScoreJson,
+      suggestionsJson: finalSuggestions,
+      imageUrl: mediaUrl,
+      mediaType,
+      keyframesJson: scoring.keyframeUrls.length ? scoring.keyframeUrls : null,
+      machineTag,
+      failingPillarsJson: scoring.failingPillars,
+      embeddingHash: scoring.embeddingHash || null,
+      aiTotalScore: scoring.aiTotalScore,
+      aiPillarsJson: scoring.aiPillarsJson,
+      aiRecommendationsJson: scoring.aiRecommendationsJson,
+      aiIssuesJson: scoring.aiIssuesJson,
+      modelVersion: scoring.modelVersion,
+      scoringMode: scoring.scoringMode,
     })
+    .returning();
+
+  // Update learned profile
+  try {
+    await ingestProfileExtract(areaId, scoring.profile);
+  } catch (err) {
+    logger.error({ err }, "Failed to ingest profile extract");
+  }
+
+  // Update schedule cadence and last-check time (area baseline + per-machine if tagged)
+  try { await recordCheck(areaId, machineTag ?? null, submission.createdAt); } catch (err) { logger.error({ err }, "recordCheck failed"); }
+
+  // Auto-escalate on failure
+  const scorePercent = Math.round(finalScoreTotal * 4);
+  try {
+    await maybeCreateEscalation({
+      submissionId: submission.id,
+      areaId,
+      operatorId: userId,
+      scoreTotal: finalScoreTotal,
+      scorePercent,
+      failingPillars: scoring.failingPillars,
+      recommendedActions: finalSuggestions.slice(0, 5),
+      evidenceUrls: scoring.keyframeUrls.length ? scoring.keyframeUrls : [mediaUrl],
+    });
+  } catch (err) {
+    logger.error({ err }, "Failed to create escalation");
+  }
+
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+  res.status(201).json({
+    ...submission,
+    areaName: area.name,
+    userEmail: user?.email ?? "",
+  });
+});
+
+router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req, res): Promise<void> => {
+  const { userId } = (req as any).user;
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid submission id" }); return; }
+
+  const [existing] = await db.select().from(submissionsTable).where(eq(submissionsTable.id, id));
+  if (!existing) { res.status(404).json({ error: "Submission not found" }); return; }
+  if (existing.userId !== userId) { res.status(403).json({ error: "You can only re-upload your own submissions" }); return; }
+
+  const file = extractFile(req);
+  if (!file) { res.status(400).json({ error: "Media file is required" }); return; }
+
+  const machineTag = (req.body.machineTag as string | undefined)?.trim() || existing.machineTag || null;
+  const bodyShift = req.body.shift as string | undefined;
+  const validShifts = ["A", "B", "C"];
+  const shift = bodyShift && validShifts.includes(bodyShift) ? bodyShift : existing.shift;
+
+  const [area] = await db.select().from(areasTable).where(eq(areasTable.id, existing.areaId));
+
+  let pipeline;
+  try {
+    pipeline = await runScoringPipeline({ areaId: existing.areaId, areaName: area?.name ?? "Unknown", file, machineTag });
+  } catch (err) {
+    logger.error({ err }, "Scoring pipeline failed on reupload");
+    res.status(500).json({ error: "Failed to score submission" });
+    return;
+  }
+
+  const { scoring, mediaType, mediaUrl } = pipeline;
+  const finalScoreTotal = scoring.aiTotalScore;
+  const finalScoreJson = scoring.aiPillarsJson;
+  const finalSuggestions = scoring.aiRecommendationsJson?.length
+    ? scoring.aiRecommendationsJson.map((r) => r.action)
+    : ["Manual inspection required — AI scoring unavailable"];
+
+  const [updated] = await db
+    .update(submissionsTable)
+    .set({
+      imageUrl: mediaUrl,
+      mediaType,
+      keyframesJson: scoring.keyframeUrls.length ? scoring.keyframeUrls : null,
+      machineTag,
+      shift,
+      scoreTotal: finalScoreTotal,
+      scoreJson: finalScoreJson,
+      suggestionsJson: finalSuggestions,
+      failingPillarsJson: scoring.failingPillars,
+      embeddingHash: scoring.embeddingHash || null,
+      aiTotalScore: scoring.aiTotalScore,
+      aiPillarsJson: scoring.aiPillarsJson,
+      aiRecommendationsJson: scoring.aiRecommendationsJson,
+      aiIssuesJson: scoring.aiIssuesJson,
+      modelVersion: scoring.modelVersion,
+      scoringMode: scoring.scoringMode,
+    })
+    .where(eq(submissionsTable.id, id))
+    .returning();
+
+  try { await ingestProfileExtract(existing.areaId, scoring.profile); } catch (err) { logger.error({ err }, "ingest profile failed"); }
+  try { await recordCheck(existing.areaId, machineTag ?? null, new Date()); } catch (err) { logger.error({ err }, "recordCheck failed"); }
+
+  const scorePercent = Math.round(finalScoreTotal * 4);
+  try {
+    await maybeCreateEscalation({
+      submissionId: id,
+      areaId: existing.areaId,
+      operatorId: userId,
+      scoreTotal: finalScoreTotal,
+      scorePercent,
+      failingPillars: scoring.failingPillars,
+      recommendedActions: finalSuggestions.slice(0, 5),
+      evidenceUrls: scoring.keyframeUrls.length ? scoring.keyframeUrls : [mediaUrl],
+    });
+  } catch (err) {
+    logger.error({ err }, "Failed to create escalation on reupload");
+  }
+
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+  res.json({
+    ...updated,
+    areaName: area?.name ?? "",
+    userEmail: user?.email ?? "",
+  });
+});
+
+router.get("/submissions/:id", authMiddleware, async (req, res): Promise<void> => {
+  const params = GetSubmissionParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+
+  const [row] = await db
+    .select(submissionSelect)
     .from(submissionsTable)
     .innerJoin(areasTable, eq(submissionsTable.areaId, areasTable.id))
     .innerJoin(usersTable, eq(submissionsTable.userId, usersTable.id))
     .where(eq(submissionsTable.id, params.data.id));
 
-  if (!row) {
-    res.status(404).json({ error: "Submission not found" });
-    return;
-  }
-
+  if (!row) { res.status(404).json({ error: "Submission not found" }); return; }
   res.json(row);
 });
 
@@ -322,38 +363,17 @@ router.get("/operator/status", authMiddleware, async (req, res): Promise<void> =
   const d = now.getDate();
 
   let start: Date, end: Date;
-  if (shift === "A") {
-    start = new Date(y, m, d, 6, 0, 0);
-    end = new Date(y, m, d, 14, 0, 0);
-  } else if (shift === "B") {
-    start = new Date(y, m, d, 14, 0, 0);
-    end = new Date(y, m, d, 22, 0, 0);
-  } else {
-    if (now.getHours() < 6) {
-      start = new Date(y, m, d - 1, 22, 0, 0);
-      end = new Date(y, m, d, 6, 0, 0);
-    } else {
-      start = new Date(y, m, d, 22, 0, 0);
-      end = new Date(y, m, d + 1, 6, 0, 0);
-    }
+  if (shift === "A") { start = new Date(y, m, d, 6, 0, 0); end = new Date(y, m, d, 14, 0, 0); }
+  else if (shift === "B") { start = new Date(y, m, d, 14, 0, 0); end = new Date(y, m, d, 22, 0, 0); }
+  else {
+    if (now.getHours() < 6) { start = new Date(y, m, d - 1, 22, 0, 0); end = new Date(y, m, d, 6, 0, 0); }
+    else { start = new Date(y, m, d, 22, 0, 0); end = new Date(y, m, d + 1, 6, 0, 0); }
   }
 
   const areas = await db.select().from(areasTable).orderBy(areasTable.id);
 
   const submissions = await db
-    .select({
-      id: submissionsTable.id,
-      areaId: submissionsTable.areaId,
-      areaName: areasTable.name,
-      userId: submissionsTable.userId,
-      userEmail: usersTable.email,
-      shift: submissionsTable.shift,
-      scoreTotal: submissionsTable.scoreTotal,
-      scoreJson: submissionsTable.scoreJson,
-      suggestionsJson: submissionsTable.suggestionsJson,
-      imageUrl: submissionsTable.imageUrl,
-      createdAt: submissionsTable.createdAt,
-    })
+    .select(submissionSelect)
     .from(submissionsTable)
     .innerJoin(areasTable, eq(submissionsTable.areaId, areasTable.id))
     .innerJoin(usersTable, eq(submissionsTable.userId, usersTable.id))
@@ -378,5 +398,8 @@ router.get("/operator/status", authMiddleware, async (req, res): Promise<void> =
 
   res.json(result);
 });
+
+// Note: profile/learning is exposed under /areas/:id/profile (see profiles route).
+export { TRAINING_THRESHOLD };
 
 export default router;

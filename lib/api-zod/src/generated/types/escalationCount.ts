@@ -6,8 +6,6 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface TrainResult {
-  modelVersion: string;
-  samplesUsed: number;
-  mae: number;
+export interface EscalationCount {
+  open: number;
 }

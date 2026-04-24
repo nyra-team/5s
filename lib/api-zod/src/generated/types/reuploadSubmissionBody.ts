@@ -8,6 +8,8 @@
 import type { ReuploadSubmissionBodyShift } from "./reuploadSubmissionBodyShift";
 
 export type ReuploadSubmissionBody = {
-  photo: Blob;
+  media?: Blob;
+  photo?: Blob;
   shift?: ReuploadSubmissionBodyShift;
+  machineTag?: string;
 };

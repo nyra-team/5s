@@ -80,30 +80,72 @@ export const DeleteAreaParams = zod.object({
 });
 
 /**
- * @summary Upload ideal/reference photo for an area
+ * @summary Get the learned profile for an area
  */
-export const UploadIdealPhotoParams = zod.object({
+export const GetAreaProfileParams = zod.object({
   id: zod.coerce.number(),
 });
 
-export const UploadIdealPhotoBody = zod.object({
-  photo: zod.instanceof(File),
+export const GetAreaProfileResponse = zod.object({
+  areaId: zod.number(),
+  status: zod.enum(["LEARNING", "TRAINED"]),
+  submissionsCount: zod.number(),
+  targetSubmissions: zod.number(),
+  summary: zod.string().nullish(),
+  items: zod.array(zod.string()),
+  machines: zod.array(zod.string()),
+  layout: zod.array(zod.string()),
+  commonIssues: zod.array(zod.string()),
+  updatedAt: zod.coerce.date(),
 });
 
 /**
- * @summary Get ideal photos for an area
+ * @summary Update the learned profile for an area (manager edit)
  */
-export const GetIdealPhotosParams = zod.object({
+export const UpdateAreaProfileParams = zod.object({
   id: zod.coerce.number(),
 });
 
-export const GetIdealPhotosResponseItem = zod.object({
-  id: zod.number(),
-  areaId: zod.number(),
-  imageUrl: zod.string(),
-  createdAt: zod.coerce.date(),
+export const UpdateAreaProfileBody = zod.object({
+  summary: zod.string().nullish(),
+  items: zod.array(zod.string()).optional(),
+  machines: zod.array(zod.string()).optional(),
+  layout: zod.array(zod.string()).optional(),
+  commonIssues: zod.array(zod.string()).optional(),
 });
-export const GetIdealPhotosResponse = zod.array(GetIdealPhotosResponseItem);
+
+export const UpdateAreaProfileResponse = zod.object({
+  areaId: zod.number(),
+  status: zod.enum(["LEARNING", "TRAINED"]),
+  submissionsCount: zod.number(),
+  targetSubmissions: zod.number(),
+  summary: zod.string().nullish(),
+  items: zod.array(zod.string()),
+  machines: zod.array(zod.string()),
+  layout: zod.array(zod.string()),
+  commonIssues: zod.array(zod.string()),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Reset the learned profile for an area
+ */
+export const ResetAreaProfileParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ResetAreaProfileResponse = zod.object({
+  areaId: zod.number(),
+  status: zod.enum(["LEARNING", "TRAINED"]),
+  submissionsCount: zod.number(),
+  targetSubmissions: zod.number(),
+  summary: zod.string().nullish(),
+  items: zod.array(zod.string()),
+  machines: zod.array(zod.string()),
+  layout: zod.array(zod.string()),
+  commonIssues: zod.array(zod.string()),
+  updatedAt: zod.coerce.date(),
+});
 
 /**
  * @summary List submissions with optional filters
@@ -131,7 +173,10 @@ export const ListSubmissionsResponseItem = zod.object({
   }),
   suggestionsJson: zod.array(zod.string()),
   imageUrl: zod.string(),
-  similarityToIdeal: zod.number().nullish(),
+  mediaType: zod.enum(["image", "video"]),
+  keyframesJson: zod.array(zod.string()).nullish(),
+  machineTag: zod.string().nullish(),
+  failingPillarsJson: zod.array(zod.string()).nullish(),
   aiTotalScore: zod.number().nullish(),
   aiPillarsJson: zod
     .object({
@@ -148,6 +193,7 @@ export const ListSubmissionsResponseItem = zod.object({
         action: zod.string(),
         why: zod.string(),
         location: zod.string(),
+        principle: zod.string().nullish(),
       }),
     )
     .nullish(),
@@ -157,12 +203,12 @@ export const ListSubmissionsResponseItem = zod.object({
         issue: zod.string(),
         evidence: zod.string(),
         location: zod.string(),
+        pillar: zod.string().nullish(),
+        principle: zod.string().nullish(),
       }),
     )
     .nullish(),
-  scoringMode: zod
-    .enum(["CALIBRATED", "VLM_BLENDED", "SIMILARITY_ONLY", "FALLBACK"])
-    .nullish(),
+  scoringMode: zod.string().nullish(),
   modelVersion: zod.string().nullish(),
   embeddingHash: zod.string().nullish(),
   createdAt: zod.coerce.date(),
@@ -170,12 +216,23 @@ export const ListSubmissionsResponseItem = zod.object({
 export const ListSubmissionsResponse = zod.array(ListSubmissionsResponseItem);
 
 /**
- * @summary Submit a 5S photo for scoring
+ * @summary Submit a 5S video walk-through (preferred) or photo for scoring
  */
 export const CreateSubmissionBody = zod.object({
   areaId: zod.number(),
-  photo: zod.instanceof(File),
+  media: zod
+    .instanceof(File)
+    .optional()
+    .describe("Video (preferred) or image file. Use this OR `photo`."),
+  photo: zod
+    .instanceof(File)
+    .optional()
+    .describe("Legacy image-only field (still accepted)."),
   shift: zod.enum(["A", "B", "C"]).optional(),
+  machineTag: zod
+    .string()
+    .optional()
+    .describe("Optional sub-area \/ machine being captured."),
 });
 
 /**
@@ -202,7 +259,10 @@ export const GetSubmissionResponse = zod.object({
   }),
   suggestionsJson: zod.array(zod.string()),
   imageUrl: zod.string(),
-  similarityToIdeal: zod.number().nullish(),
+  mediaType: zod.enum(["image", "video"]),
+  keyframesJson: zod.array(zod.string()).nullish(),
+  machineTag: zod.string().nullish(),
+  failingPillarsJson: zod.array(zod.string()).nullish(),
   aiTotalScore: zod.number().nullish(),
   aiPillarsJson: zod
     .object({
@@ -219,6 +279,7 @@ export const GetSubmissionResponse = zod.object({
         action: zod.string(),
         why: zod.string(),
         location: zod.string(),
+        principle: zod.string().nullish(),
       }),
     )
     .nullish(),
@@ -228,27 +289,29 @@ export const GetSubmissionResponse = zod.object({
         issue: zod.string(),
         evidence: zod.string(),
         location: zod.string(),
+        pillar: zod.string().nullish(),
+        principle: zod.string().nullish(),
       }),
     )
     .nullish(),
-  scoringMode: zod
-    .enum(["CALIBRATED", "VLM_BLENDED", "SIMILARITY_ONLY", "FALLBACK"])
-    .nullish(),
+  scoringMode: zod.string().nullish(),
   modelVersion: zod.string().nullish(),
   embeddingHash: zod.string().nullish(),
   createdAt: zod.coerce.date(),
 });
 
 /**
- * @summary Re-upload photo for an existing submission
+ * @summary Re-upload media for an existing submission
  */
 export const ReuploadSubmissionParams = zod.object({
   id: zod.coerce.number(),
 });
 
 export const ReuploadSubmissionBody = zod.object({
-  photo: zod.instanceof(File),
+  media: zod.instanceof(File).optional(),
+  photo: zod.instanceof(File).optional(),
   shift: zod.enum(["A", "B", "C"]).optional(),
+  machineTag: zod.string().optional(),
 });
 
 export const ReuploadSubmissionResponse = zod.object({
@@ -268,7 +331,10 @@ export const ReuploadSubmissionResponse = zod.object({
   }),
   suggestionsJson: zod.array(zod.string()),
   imageUrl: zod.string(),
-  similarityToIdeal: zod.number().nullish(),
+  mediaType: zod.enum(["image", "video"]),
+  keyframesJson: zod.array(zod.string()).nullish(),
+  machineTag: zod.string().nullish(),
+  failingPillarsJson: zod.array(zod.string()).nullish(),
   aiTotalScore: zod.number().nullish(),
   aiPillarsJson: zod
     .object({
@@ -285,6 +351,7 @@ export const ReuploadSubmissionResponse = zod.object({
         action: zod.string(),
         why: zod.string(),
         location: zod.string(),
+        principle: zod.string().nullish(),
       }),
     )
     .nullish(),
@@ -294,12 +361,12 @@ export const ReuploadSubmissionResponse = zod.object({
         issue: zod.string(),
         evidence: zod.string(),
         location: zod.string(),
+        pillar: zod.string().nullish(),
+        principle: zod.string().nullish(),
       }),
     )
     .nullish(),
-  scoringMode: zod
-    .enum(["CALIBRATED", "VLM_BLENDED", "SIMILARITY_ONLY", "FALLBACK"])
-    .nullish(),
+  scoringMode: zod.string().nullish(),
   modelVersion: zod.string().nullish(),
   embeddingHash: zod.string().nullish(),
   createdAt: zod.coerce.date(),
@@ -345,6 +412,7 @@ export const GetDashboardSummaryResponse = zod.object({
   todayAvgScore: zod.number(),
   todayCompliance: zod.number(),
   totalSubmissions: zod.number(),
+  openEscalations: zod.number(),
 });
 
 /**
@@ -360,10 +428,7 @@ export const GetCurrentShiftResponse = zod.object({
  * @summary Get operator submission status for current shift
  */
 export const GetOperatorStatusQueryParams = zod.object({
-  shift: zod
-    .enum(["A", "B", "C"])
-    .optional()
-    .describe("Override auto-detected shift"),
+  shift: zod.enum(["A", "B", "C"]).optional(),
 });
 
 export const GetOperatorStatusResponseItem = zod.object({
@@ -388,7 +453,10 @@ export const GetOperatorStatusResponseItem = zod.object({
       }),
       suggestionsJson: zod.array(zod.string()),
       imageUrl: zod.string(),
-      similarityToIdeal: zod.number().nullish(),
+      mediaType: zod.enum(["image", "video"]),
+      keyframesJson: zod.array(zod.string()).nullish(),
+      machineTag: zod.string().nullish(),
+      failingPillarsJson: zod.array(zod.string()).nullish(),
       aiTotalScore: zod.number().nullish(),
       aiPillarsJson: zod
         .object({
@@ -405,6 +473,7 @@ export const GetOperatorStatusResponseItem = zod.object({
             action: zod.string(),
             why: zod.string(),
             location: zod.string(),
+            principle: zod.string().nullish(),
           }),
         )
         .nullish(),
@@ -414,12 +483,12 @@ export const GetOperatorStatusResponseItem = zod.object({
             issue: zod.string(),
             evidence: zod.string(),
             location: zod.string(),
+            pillar: zod.string().nullish(),
+            principle: zod.string().nullish(),
           }),
         )
         .nullish(),
-      scoringMode: zod
-        .enum(["CALIBRATED", "VLM_BLENDED", "SIMILARITY_ONLY", "FALLBACK"])
-        .nullish(),
+      scoringMode: zod.string().nullish(),
       modelVersion: zod.string().nullish(),
       embeddingHash: zod.string().nullish(),
       createdAt: zod.coerce.date(),
@@ -429,6 +498,104 @@ export const GetOperatorStatusResponseItem = zod.object({
 export const GetOperatorStatusResponse = zod.array(
   GetOperatorStatusResponseItem,
 );
+
+/**
+ * @summary Proactive feed of areas/machines that need to be checked next
+ */
+export const GetNextChecksResponseItem = zod.object({
+  areaId: zod.number(),
+  areaName: zod.string(),
+  machine: zod.string().nullish(),
+  lastCheckAt: zod.coerce.date().nullish(),
+  nextDueAt: zod.coerce.date(),
+  cadenceSeconds: zod.number(),
+  overdue: zod.boolean(),
+  reason: zod.string(),
+});
+export const GetNextChecksResponse = zod.array(GetNextChecksResponseItem);
+
+/**
+ * @summary List escalations (manager)
+ */
+export const ListEscalationsQueryParams = zod.object({
+  status: zod.enum(["OPEN", "ACKNOWLEDGED", "RESOLVED", "ALL"]).optional(),
+});
+
+export const ListEscalationsResponseItem = zod.object({
+  id: zod.number(),
+  submissionId: zod.number(),
+  areaId: zod.number(),
+  areaName: zod.string(),
+  operatorId: zod.number(),
+  operatorEmail: zod.string(),
+  scoreTotal: zod.number(),
+  scorePercent: zod.number(),
+  failingPillars: zod.array(zod.string()),
+  recommendedActions: zod.array(zod.string()),
+  evidenceUrls: zod.array(zod.string()),
+  status: zod.enum(["OPEN", "ACKNOWLEDGED", "RESOLVED"]),
+  createdAt: zod.coerce.date(),
+  ackedAt: zod.coerce.date().nullish(),
+  resolvedAt: zod.coerce.date().nullish(),
+});
+export const ListEscalationsResponse = zod.array(ListEscalationsResponseItem);
+
+/**
+ * @summary Open escalation count for badges
+ */
+export const GetEscalationCountResponse = zod.object({
+  open: zod.number(),
+});
+
+/**
+ * @summary Manager acknowledges an escalation
+ */
+export const AcknowledgeEscalationParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const AcknowledgeEscalationResponse = zod.object({
+  id: zod.number(),
+  submissionId: zod.number(),
+  areaId: zod.number(),
+  areaName: zod.string(),
+  operatorId: zod.number(),
+  operatorEmail: zod.string(),
+  scoreTotal: zod.number(),
+  scorePercent: zod.number(),
+  failingPillars: zod.array(zod.string()),
+  recommendedActions: zod.array(zod.string()),
+  evidenceUrls: zod.array(zod.string()),
+  status: zod.enum(["OPEN", "ACKNOWLEDGED", "RESOLVED"]),
+  createdAt: zod.coerce.date(),
+  ackedAt: zod.coerce.date().nullish(),
+  resolvedAt: zod.coerce.date().nullish(),
+});
+
+/**
+ * @summary Manager resolves an escalation
+ */
+export const ResolveEscalationParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ResolveEscalationResponse = zod.object({
+  id: zod.number(),
+  submissionId: zod.number(),
+  areaId: zod.number(),
+  areaName: zod.string(),
+  operatorId: zod.number(),
+  operatorEmail: zod.string(),
+  scoreTotal: zod.number(),
+  scorePercent: zod.number(),
+  failingPillars: zod.array(zod.string()),
+  recommendedActions: zod.array(zod.string()),
+  evidenceUrls: zod.array(zod.string()),
+  status: zod.enum(["OPEN", "ACKNOWLEDGED", "RESOLVED"]),
+  createdAt: zod.coerce.date(),
+  ackedAt: zod.coerce.date().nullish(),
+  resolvedAt: zod.coerce.date().nullish(),
+});
 
 /**
  * @summary Label a submission with pillar scores (manager only)
@@ -469,7 +636,7 @@ export const GetLabelsResponseItem = zod.object({
 export const GetLabelsResponse = zod.array(GetLabelsResponseItem);
 
 /**
- * @summary Get AI model status for an area
+ * @summary Get learning status for an area
  */
 export const GetAreaModelStatusParams = zod.object({
   id: zod.coerce.number(),
@@ -478,22 +645,10 @@ export const GetAreaModelStatusParams = zod.object({
 export const GetAreaModelStatusResponse = zod.object({
   areaId: zod.number(),
   labelsCount: zod.number(),
-  idealPhotosCount: zod.number(),
   submissionsCount: zod.number(),
+  learningStatus: zod.enum(["LEARNING", "TRAINED"]),
+  targetSubmissions: zod.number(),
   canTrain: zod.boolean(),
   latestScoringMode: zod.string().nullish(),
   latestModelVersion: zod.string().nullish(),
-});
-
-/**
- * @summary Train AI model for an area using labeled submissions
- */
-export const TrainAreaModelParams = zod.object({
-  id: zod.coerce.number(),
-});
-
-export const TrainAreaModelResponse = zod.object({
-  modelVersion: zod.string(),
-  samplesUsed: zod.number(),
-  mae: zod.number(),
 });

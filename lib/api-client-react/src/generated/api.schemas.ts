@@ -49,11 +49,33 @@ export interface UpdateAreaBody {
   name: string;
 }
 
-export interface IdealPhoto {
-  id: number;
+export type AreaProfileStatus =
+  (typeof AreaProfileStatus)[keyof typeof AreaProfileStatus];
+
+export const AreaProfileStatus = {
+  LEARNING: "LEARNING",
+  TRAINED: "TRAINED",
+} as const;
+
+export interface AreaProfile {
   areaId: number;
-  imageUrl: string;
-  createdAt: string;
+  status: AreaProfileStatus;
+  submissionsCount: number;
+  targetSubmissions: number;
+  summary?: string | null;
+  items: string[];
+  machines: string[];
+  layout: string[];
+  commonIssues: string[];
+  updatedAt: string;
+}
+
+export interface UpdateAreaProfileBody {
+  summary?: string | null;
+  items?: string[];
+  machines?: string[];
+  layout?: string[];
+  commonIssues?: string[];
 }
 
 export type SubmissionShift =
@@ -73,6 +95,14 @@ export type SubmissionScoreJson = {
   sustain: number;
 };
 
+export type SubmissionMediaType =
+  (typeof SubmissionMediaType)[keyof typeof SubmissionMediaType];
+
+export const SubmissionMediaType = {
+  image: "image",
+  video: "video",
+} as const;
+
 export type SubmissionAiPillarsJson = {
   sort?: number;
   set?: number;
@@ -81,27 +111,19 @@ export type SubmissionAiPillarsJson = {
   sustain?: number;
 } | null;
 
-export type SubmissionScoringMode =
-  | (typeof SubmissionScoringMode)[keyof typeof SubmissionScoringMode]
-  | null;
-
-export const SubmissionScoringMode = {
-  CALIBRATED: "CALIBRATED",
-  VLM_BLENDED: "VLM_BLENDED",
-  SIMILARITY_ONLY: "SIMILARITY_ONLY",
-  FALLBACK: "FALLBACK",
-} as const;
-
 export interface AIRecommendation {
   action: string;
   why: string;
   location: string;
+  principle?: string | null;
 }
 
 export interface AIIssue {
   issue: string;
   evidence: string;
   location: string;
+  pillar?: string | null;
+  principle?: string | null;
 }
 
 export interface Submission {
@@ -115,12 +137,15 @@ export interface Submission {
   scoreJson: SubmissionScoreJson;
   suggestionsJson: string[];
   imageUrl: string;
-  similarityToIdeal?: number | null;
+  mediaType: SubmissionMediaType;
+  keyframesJson?: string[] | null;
+  machineTag?: string | null;
+  failingPillarsJson?: string[] | null;
   aiTotalScore?: number | null;
   aiPillarsJson?: SubmissionAiPillarsJson;
   aiRecommendationsJson?: AIRecommendation[] | null;
   aiIssuesJson?: AIIssue[] | null;
-  scoringMode?: SubmissionScoringMode;
+  scoringMode?: string | null;
   modelVersion?: string | null;
   embeddingHash?: string | null;
   createdAt: string;
@@ -157,20 +182,23 @@ export interface Label {
   createdAt: string;
 }
 
+export type ModelStatusLearningStatus =
+  (typeof ModelStatusLearningStatus)[keyof typeof ModelStatusLearningStatus];
+
+export const ModelStatusLearningStatus = {
+  LEARNING: "LEARNING",
+  TRAINED: "TRAINED",
+} as const;
+
 export interface ModelStatus {
   areaId: number;
   labelsCount: number;
-  idealPhotosCount: number;
   submissionsCount: number;
+  learningStatus: ModelStatusLearningStatus;
+  targetSubmissions: number;
   canTrain: boolean;
   latestScoringMode?: string | null;
   latestModelVersion?: string | null;
-}
-
-export interface TrainResult {
-  modelVersion: string;
-  samplesUsed: number;
-  mae: number;
 }
 
 export interface ComplianceData {
@@ -191,6 +219,7 @@ export interface DashboardSummary {
   todayAvgScore: number;
   todayCompliance: number;
   totalSubmissions: number;
+  openEscalations: number;
 }
 
 export type CurrentShiftShift =
@@ -215,9 +244,47 @@ export interface AreaStatus {
   submission?: Submission;
 }
 
-export type UploadIdealPhotoBody = {
-  photo: Blob;
-};
+export type EscalationStatus =
+  (typeof EscalationStatus)[keyof typeof EscalationStatus];
+
+export const EscalationStatus = {
+  OPEN: "OPEN",
+  ACKNOWLEDGED: "ACKNOWLEDGED",
+  RESOLVED: "RESOLVED",
+} as const;
+
+export interface Escalation {
+  id: number;
+  submissionId: number;
+  areaId: number;
+  areaName: string;
+  operatorId: number;
+  operatorEmail: string;
+  scoreTotal: number;
+  scorePercent: number;
+  failingPillars: string[];
+  recommendedActions: string[];
+  evidenceUrls: string[];
+  status: EscalationStatus;
+  createdAt: string;
+  ackedAt?: string | null;
+  resolvedAt?: string | null;
+}
+
+export interface EscalationCount {
+  open: number;
+}
+
+export interface NextCheck {
+  areaId: number;
+  areaName: string;
+  machine?: string | null;
+  lastCheckAt?: string | null;
+  nextDueAt: string;
+  cadenceSeconds: number;
+  overdue: boolean;
+  reason: string;
+}
 
 export type ListSubmissionsParams = {
   shift?: ListSubmissionsShift;
@@ -245,8 +312,13 @@ export const CreateSubmissionBodyShift = {
 
 export type CreateSubmissionBody = {
   areaId: number;
-  photo: Blob;
+  /** Video (preferred) or image file. Use this OR `photo`. */
+  media?: Blob;
+  /** Legacy image-only field (still accepted). */
+  photo?: Blob;
   shift?: CreateSubmissionBodyShift;
+  /** Optional sub-area / machine being captured. */
+  machineTag?: string;
 };
 
 export type ReuploadSubmissionBodyShift =
@@ -259,8 +331,10 @@ export const ReuploadSubmissionBodyShift = {
 } as const;
 
 export type ReuploadSubmissionBody = {
-  photo: Blob;
+  media?: Blob;
+  photo?: Blob;
   shift?: ReuploadSubmissionBodyShift;
+  machineTag?: string;
 };
 
 export type GetDashboardComplianceParams = {
@@ -292,9 +366,6 @@ export const GetDashboardScoresGroupBy = {
 } as const;
 
 export type GetOperatorStatusParams = {
-  /**
-   * Override auto-detected shift
-   */
   shift?: GetOperatorStatusShift;
 };
 
@@ -305,4 +376,18 @@ export const GetOperatorStatusShift = {
   A: "A",
   B: "B",
   C: "C",
+} as const;
+
+export type ListEscalationsParams = {
+  status?: ListEscalationsStatus;
+};
+
+export type ListEscalationsStatus =
+  (typeof ListEscalationsStatus)[keyof typeof ListEscalationsStatus];
+
+export const ListEscalationsStatus = {
+  OPEN: "OPEN",
+  ACKNOWLEDGED: "ACKNOWLEDGED",
+  RESOLVED: "RESOLVED",
+  ALL: "ALL",
 } as const;

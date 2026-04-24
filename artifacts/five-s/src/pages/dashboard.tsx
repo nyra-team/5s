@@ -1,7 +1,8 @@
-import { useGetDashboardCompliance, useGetDashboardScores, useGetDashboardSummary } from "@workspace/api-client-react";
+import { useGetDashboardCompliance, useGetDashboardScores, useGetDashboardSummary, useListAreas, useGetAreaProfile } from "@workspace/api-client-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { ClipboardCheck, Target, AlertTriangle, Activity } from "lucide-react";
+import { ClipboardCheck, Target, AlertTriangle, Activity, Inbox, Sparkles, BookOpen } from "lucide-react";
 import { format } from "date-fns";
+import { Link } from "wouter";
 
 function HeroStat({
   label,
@@ -80,7 +81,7 @@ export default function Dashboard() {
         <p className="text-muted-foreground text-[15px]">Live compliance metrics across all shifts</p>
       </header>
 
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
         <HeroStat
           label="Today's Compliance"
           value={`${compliancePercent}%`}
@@ -111,7 +112,18 @@ export default function Dashboard() {
           icon={AlertTriangle}
           tone={missingCount > 0 ? "warn" : "good"}
         />
+        <Link href="/escalations" className="block">
+          <HeroStat
+            label="Open Escalations"
+            value={summary?.openEscalations ?? 0}
+            hint={(summary?.openEscalations ?? 0) > 0 ? "Click to review failing audits" : "All escalations resolved"}
+            icon={Inbox}
+            tone={(summary?.openEscalations ?? 0) > 0 ? "warn" : "good"}
+          />
+        </Link>
       </section>
+
+      <LearningStatusPanel />
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-card rounded-2xl shadow-soft p-6">
@@ -183,6 +195,79 @@ export default function Dashboard() {
           </div>
         </div>
       </section>
+    </div>
+  );
+}
+
+const TRAINING_TARGET = 5;
+
+function LearningStatusPanel() {
+  const { data: areas, isLoading } = useListAreas();
+  if (isLoading) {
+    return (
+      <section className="bg-card rounded-2xl shadow-soft p-6">
+        <div className="h-20 bg-secondary rounded-xl animate-pulse" />
+      </section>
+    );
+  }
+  if (!areas || areas.length === 0) return null;
+  return (
+    <section className="bg-card rounded-2xl shadow-soft p-6">
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <p className="eyebrow">AI learning</p>
+          <h2 className="text-lg font-semibold tracking-tight mt-1">Per-area model status</h2>
+        </div>
+        <Link
+          href="/areas"
+          className="text-[12.5px] text-primary hover:underline inline-flex items-center gap-1"
+        >
+          <BookOpen className="w-3.5 h-3.5" /> Manage profiles
+        </Link>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {areas.map((a) => (
+          <LearningChip key={a.id} areaId={a.id} areaName={a.name} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LearningChip({ areaId, areaName }: { areaId: number; areaName: string }) {
+  const { data: profile } = useGetAreaProfile(areaId);
+  const submissions = profile?.submissionsCount ?? 0;
+  const isTrained = profile?.status === "TRAINED";
+  const pct = Math.min(100, Math.round((submissions / TRAINING_TARGET) * 100));
+  return (
+    <div
+      className="rounded-xl bg-secondary/40 px-4 py-3 flex items-center gap-3"
+      data-testid={`dashboard-learning-${areaId}`}
+    >
+      <div
+        className={`w-8 h-8 rounded-full flex items-center justify-center ${
+          isTrained
+            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+            : "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+        }`}
+      >
+        <Sparkles className="w-4 h-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-medium truncate">{areaName}</p>
+        {isTrained ? (
+          <p className="text-[11.5px] text-muted-foreground">Trained · {submissions} walk-throughs</p>
+        ) : (
+          <>
+            <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden mt-1">
+              <div className="h-full bg-amber-500 rounded-full" style={{ width: `${pct}%` }} />
+            </div>
+            <p className="text-[11.5px] text-muted-foreground mt-0.5">
+              Learning {submissions}/{TRAINING_TARGET}
+            </p>
+          </>
+        )}
+      </div>
     </div>
   );
 }

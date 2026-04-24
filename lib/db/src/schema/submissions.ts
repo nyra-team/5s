@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, timestamp, jsonb, doublePrecision } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, timestamp, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { areasTable } from "./areas";
@@ -13,8 +13,11 @@ export const submissionsTable = pgTable("submissions", {
   scoreJson: jsonb("score_json").notNull(),
   suggestionsJson: jsonb("suggestions_json").notNull(),
   imageUrl: text("image_url").notNull(),
+  mediaType: text("media_type").notNull().default("image"),
+  keyframesJson: jsonb("keyframes_json"),
+  machineTag: text("machine_tag"),
+  failingPillarsJson: jsonb("failing_pillars_json"),
   embeddingHash: text("embedding_hash"),
-  similarityToIdeal: doublePrecision("similarity_to_ideal"),
   aiTotalScore: integer("ai_total_score"),
   aiPillarsJson: jsonb("ai_pillars_json"),
   aiRecommendationsJson: jsonb("ai_recommendations_json"),

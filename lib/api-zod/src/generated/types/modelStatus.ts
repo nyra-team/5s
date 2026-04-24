@@ -5,12 +5,14 @@
  * 5S Compliance API
  * OpenAPI spec version: 0.1.0
  */
+import type { ModelStatusLearningStatus } from "./modelStatusLearningStatus";
 
 export interface ModelStatus {
   areaId: number;
   labelsCount: number;
-  idealPhotosCount: number;
   submissionsCount: number;
+  learningStatus: ModelStatusLearningStatus;
+  targetSubmissions: number;
   canTrain: boolean;
   latestScoringMode?: string | null;
   latestModelVersion?: string | null;
