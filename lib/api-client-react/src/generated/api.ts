@@ -20,6 +20,7 @@ import type {
   Area,
   AreaAssignmentList,
   AreaDetectionAgreement,
+  AreaDetectionEvent,
   AreaIdentificationResult,
   AreaOperatorThresholds,
   AreaProfile,
@@ -54,6 +55,7 @@ import type {
   HealthStatus,
   IdentifySubmissionAreaBody,
   Label,
+  ListAreaDetectionEventsParams,
   ListEscalationsParams,
   ListSubmissionsParams,
   LiveShift,
@@ -71,6 +73,7 @@ import type {
   OperatorThresholds,
   OperatorUser,
   QuickApproveLabelBody,
+  RebuildAreaProfileResult,
   RecentSubmission,
   ReuploadSubmissionBody,
   ScoreSummary,
@@ -2768,7 +2771,7 @@ export function useGetDashboardOperatorCoverage<
 }
 
 /**
- * Aggregates agreement between `tappedAreaId` (intent) and `areaId` (chosen) over the requested window. Submissions with no recorded `tappedAreaId` (legacy rows) are excluded from the totals so the rate isn't diluted.
+ * Aggregates agreement between `tappedAreaId` (intent) and `areaId` (chosen) over the requested window. Submissions with no recorded `tappedAreaId` (legacy rows) are excluded from the totals so the rate isn't diluted. Per-area rows include the auto-retune `needsRebuild` flag plus `flaggedAt` / `lastRebuildAt` so the dashboard can surface a "Rebuild profile" CTA on areas the auto-flag hook marked.
  * @summary How often the auto-detected area matched the area the operator originally tapped
  */
 export const getGetAreaDetectionAgreementUrl = (
@@ -2869,6 +2872,201 @@ export function useGetAreaDetectionAgreement<
     params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Replays every recent submission for this area's stored VLM profile extracts (chronologically) into a fresh profile, weighting submissions whose `tappedAreaId !== areaId` (the operator overrode the AI's area pick) more heavily so the rebuilt profile reflects the operator's ground truth. Clears the `needsRebuild` flag and stamps `lastRebuildAt`. Manager-only.
+ * @summary Rebuild an area's learned profile from its recent corrected submissions
+ */
+export const getRebuildAreaProfileUrl = (areaId: number) => {
+  return `/api/dashboard/areas/${areaId}/rebuild-profile`;
+};
+
+export const rebuildAreaProfile = async (
+  areaId: number,
+  options?: RequestInit,
+): Promise<RebuildAreaProfileResult> => {
+  return customFetch<RebuildAreaProfileResult>(
+    getRebuildAreaProfileUrl(areaId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getRebuildAreaProfileMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rebuildAreaProfile>>,
+    TError,
+    { areaId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rebuildAreaProfile>>,
+  TError,
+  { areaId: number },
+  TContext
+> => {
+  const mutationKey = ["rebuildAreaProfile"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rebuildAreaProfile>>,
+    { areaId: number }
+  > = (props) => {
+    const { areaId } = props ?? {};
+
+    return rebuildAreaProfile(areaId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RebuildAreaProfileMutationResult = NonNullable<
+  Awaited<ReturnType<typeof rebuildAreaProfile>>
+>;
+
+export type RebuildAreaProfileMutationError = ErrorType<void>;
+
+/**
+ * @summary Rebuild an area's learned profile from its recent corrected submissions
+ */
+export const useRebuildAreaProfile = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rebuildAreaProfile>>,
+    TError,
+    { areaId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof rebuildAreaProfile>>,
+  TError,
+  { areaId: number },
+  TContext
+> => {
+  return useMutation(getRebuildAreaProfileMutationOptions(options));
+};
+
+/**
+ * Returns rows from the persisted `area_detection_events` audit table (DRIFT = chosen area differed from operator's tap; CORRECTION = operator overrode the AI's top suggestion). Use this as a queryable replacement for grepping the legacy `kind:` log lines.
+ * @summary Audit log of structured drift / correction events
+ */
+export const getListAreaDetectionEventsUrl = (
+  params?: ListAreaDetectionEventsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/dashboard/area-detection-events?${stringifiedParams}`
+    : `/api/dashboard/area-detection-events`;
+};
+
+export const listAreaDetectionEvents = async (
+  params?: ListAreaDetectionEventsParams,
+  options?: RequestInit,
+): Promise<AreaDetectionEvent[]> => {
+  return customFetch<AreaDetectionEvent[]>(
+    getListAreaDetectionEventsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListAreaDetectionEventsQueryKey = (
+  params?: ListAreaDetectionEventsParams,
+) => {
+  return [
+    `/api/dashboard/area-detection-events`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListAreaDetectionEventsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAreaDetectionEvents>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAreaDetectionEventsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAreaDetectionEvents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListAreaDetectionEventsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listAreaDetectionEvents>>
+  > = ({ signal }) =>
+    listAreaDetectionEvents(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAreaDetectionEvents>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAreaDetectionEventsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAreaDetectionEvents>>
+>;
+export type ListAreaDetectionEventsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Audit log of structured drift / correction events
+ */
+
+export function useListAreaDetectionEvents<
+  TData = Awaited<ReturnType<typeof listAreaDetectionEvents>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAreaDetectionEventsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAreaDetectionEvents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAreaDetectionEventsQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

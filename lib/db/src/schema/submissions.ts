@@ -42,6 +42,11 @@ export const submissionsTable = pgTable("submissions", {
   aiReasoningJson: jsonb("ai_reasoning_json"),
   modelVersion: text("model_version"),
   scoringMode: text("scoring_mode"),
+  // Snapshot of the VLM-extracted profile fields (items / machines / layout /
+  // observedIssues / summary) for THIS submission. Persisted so the area
+  // profile can be rebuilt from history without re-running the VLM. Nullable
+  // because legacy rows from before this column existed don't carry it.
+  profileExtractJson: jsonb("profile_extract_json"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

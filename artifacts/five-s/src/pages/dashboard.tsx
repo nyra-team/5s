@@ -17,6 +17,8 @@ import {
   useBackfillReasoning,
   getGetBackfillReasoningStatusQueryKey,
   useGetDashboardOperatorCoverage,
+  getGetAreaDetectionAgreementQueryKey,
+  useRebuildAreaProfile,
   type AreaTrend,
   type GetDashboardTrendsShift,
   type OperatorDismissSummary,
@@ -1581,6 +1583,36 @@ function DetectionAgreementPanel() {
   const { data, isLoading } = useGetAreaDetectionAgreement({
     days: AGREEMENT_WINDOW_DAYS,
   });
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  // Track which area is currently rebuilding so we can disable just that
+  // row's button (parallel rebuilds across areas are fine).
+  const [rebuildingAreaId, setRebuildingAreaId] = useState<number | null>(null);
+  const rebuildMutation = useRebuildAreaProfile({
+    mutation: {
+      onSuccess: (result) => {
+        toast({
+          title: "Profile rebuilt",
+          description: `Replayed ${result.replayed} submission${result.replayed === 1 ? "" : "s"}${result.correctionsWeighted > 0 ? ` (${result.correctionsWeighted} weighted as operator corrections)` : ""}.`,
+        });
+        queryClient.invalidateQueries({
+          queryKey: getGetAreaDetectionAgreementQueryKey({
+            days: AGREEMENT_WINDOW_DAYS,
+          }),
+        });
+      },
+      onError: () => {
+        toast({
+          title: "Rebuild failed",
+          description: "Couldn't rebuild this area's profile. Try again shortly.",
+          variant: "destructive",
+        });
+      },
+      onSettled: () => {
+        setRebuildingAreaId(null);
+      },
+    },
+  });
 
   if (isLoading) {
     return (
@@ -1597,9 +1629,12 @@ function DetectionAgreementPanel() {
   // Surface only rows with at least one disagreement so the panel is
   // actionable. Cap the visible list so the dashboard doesn't grow without
   // bound for facilities with a lot of areas/operators; the full breakdown
-  // can move into a dedicated page later if needed.
+  // can move into a dedicated page later if needed. Areas that the
+  // auto-flag hook has marked as `needsRebuild` are always surfaced —
+  // even if they have no current-window drift — so the manager can act
+  // on the flag immediately.
   const driftAreas = data.perArea
-    .filter((row) => row.total - row.agreed > 0)
+    .filter((row) => row.needsRebuild || row.total - row.agreed > 0)
     .slice(0, 6);
   const driftOperators = data.perOperator
     .filter((row) => row.total - row.agreed > 0)
@@ -1649,17 +1684,13 @@ function DetectionAgreementPanel() {
         </p>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <AgreementBreakdownTable
-            title="Areas with the most drift"
-            emptyMessage="Every area is at full agreement in this window."
-            rows={driftAreas.map((row) => ({
-              key: `area-${row.areaId}`,
-              label: row.areaName,
-              total: row.total,
-              agreed: row.agreed,
-              agreementPercent: row.agreementPercent,
-              testId: `detection-agreement-area-${row.areaId}`,
-            }))}
+          <AreaAgreementTable
+            rows={driftAreas}
+            rebuildingAreaId={rebuildingAreaId}
+            onRebuild={(areaId) => {
+              setRebuildingAreaId(areaId);
+              rebuildMutation.mutate({ areaId });
+            }}
           />
           <AgreementBreakdownTable
             title="Operators with the most drift"
@@ -2143,6 +2174,105 @@ function OperatorCoverageRow({
         </span>
       </Link>
     </li>
+  );
+}
+
+function AreaAgreementTable({
+  rows,
+  rebuildingAreaId,
+  onRebuild,
+}: {
+  rows: Array<{
+    areaId: number;
+    areaName: string;
+    total: number;
+    agreed: number;
+    agreementPercent: number | null;
+    needsRebuild: boolean;
+    flaggedAt: string | null;
+    flagReason: string | null;
+    lastRebuildAt: string | null;
+  }>;
+  rebuildingAreaId: number | null;
+  onRebuild: (areaId: number) => void;
+}) {
+  return (
+    <div className="rounded-xl bg-secondary/30 p-4">
+      <p className="eyebrow mb-3">Areas with the most drift</p>
+      {rows.length === 0 ? (
+        <p className="text-[12.5px] text-muted-foreground italic">
+          Every area is at full agreement in this window.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {rows.map((row) => {
+            const tone = agreementTone(row.agreementPercent);
+            const disagreed = row.total - row.agreed;
+            const isRebuilding = rebuildingAreaId === row.areaId;
+            return (
+              <li
+                key={`area-${row.areaId}`}
+                className="flex flex-col gap-1.5 text-[13px] bg-card/40 rounded-lg p-2.5"
+                data-testid={`detection-agreement-area-${row.areaId}`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span
+                    className="truncate min-w-0 font-medium"
+                    title={row.areaName}
+                  >
+                    {row.areaName}
+                  </span>
+                  <span className="flex items-center gap-2 shrink-0">
+                    <span className="text-[11.5px] text-muted-foreground tabular-nums">
+                      {disagreed} of {row.total} drifted
+                    </span>
+                    <span
+                      className={`text-[11.5px] font-semibold px-2 py-0.5 rounded-full tabular-nums ${tone.bg} ${tone.text}`}
+                    >
+                      {tone.label}
+                    </span>
+                  </span>
+                </div>
+                {(row.needsRebuild || row.lastRebuildAt) && (
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <span className="text-[11px] text-muted-foreground">
+                      {row.needsRebuild ? (
+                        <span className="text-amber-700 dark:text-amber-300 font-medium">
+                          Flagged for rebuild
+                          {row.flaggedAt
+                            ? ` ${formatDistanceToNow(parseISO(row.flaggedAt), { addSuffix: true })}`
+                            : ""}
+                          {row.flagReason ? ` · ${row.flagReason}` : ""}
+                        </span>
+                      ) : row.lastRebuildAt ? (
+                        <>
+                          Rebuilt{" "}
+                          {formatDistanceToNow(parseISO(row.lastRebuildAt), {
+                            addSuffix: true,
+                          })}
+                        </>
+                      ) : null}
+                    </span>
+                    {row.needsRebuild && (
+                      <button
+                        type="button"
+                        onClick={() => onRebuild(row.areaId)}
+                        disabled={isRebuilding}
+                        className="text-[11.5px] font-semibold px-2.5 py-1 rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5"
+                        data-testid={`rebuild-profile-${row.areaId}`}
+                      >
+                        <Repeat className="w-3 h-3" />
+                        {isRebuilding ? "Rebuilding…" : "Rebuild profile"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 

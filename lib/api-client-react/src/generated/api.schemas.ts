@@ -820,7 +820,7 @@ export interface AreaDetectionAgreementBucket {
 }
 
 /**
- * One row per area the operator either tapped or which was finally chosen, so drift in either direction is visible.
+ * One row per area the operator either tapped or which was finally chosen, so drift in either direction is visible. The `needsRebuild` / `flaggedAt` / `flagReason` / `lastRebuildAt` fields surface the auto-retune state so the dashboard can show a "Rebuild profile" CTA for areas the auto-flag hook marked.
  */
 export interface AreaDetectionAgreementAreaRow {
   areaId: number;
@@ -828,6 +828,14 @@ export interface AreaDetectionAgreementAreaRow {
   total: number;
   agreed: number;
   agreementPercent: number | null;
+  /** True when the auto-flag hook (or a manager) has marked this area's profile as needing a rebuild and the rebuild hasn't happened yet. */
+  needsRebuild: boolean;
+  /** When the area was most recently flagged for rebuild. */
+  flaggedAt: string | null;
+  /** Short tag describing why the area was flagged (e.g. "low-agreement"). */
+  flagReason: string | null;
+  /** When the area's profile was last rebuilt, or null if never. */
+  lastRebuildAt: string | null;
 }
 
 export interface AreaDetectionAgreementOperatorRow {
@@ -847,6 +855,53 @@ export interface AreaDetectionAgreement {
   overall: AreaDetectionAgreementBucket;
   perArea: AreaDetectionAgreementAreaRow[];
   perOperator: AreaDetectionAgreementOperatorRow[];
+}
+
+export type RebuildAreaProfileResultStatus =
+  (typeof RebuildAreaProfileResultStatus)[keyof typeof RebuildAreaProfileResultStatus];
+
+export const RebuildAreaProfileResultStatus = {
+  LEARNING: "LEARNING",
+  TRAINED: "TRAINED",
+} as const;
+
+/**
+ * Outcome of a manager-triggered profile rebuild.
+ */
+export interface RebuildAreaProfileResult {
+  areaId: number;
+  /** Number of historical submissions whose stored VLM extract was merged into the rebuilt profile. */
+  replayed: number;
+  /** How many of the replayed submissions counted as operator corrections (tappedAreaId !== areaId) and were therefore weighted higher. */
+  correctionsWeighted: number;
+  status: RebuildAreaProfileResultStatus;
+  itemCount: number;
+  machineCount: number;
+}
+
+export type AreaDetectionEventKind =
+  (typeof AreaDetectionEventKind)[keyof typeof AreaDetectionEventKind];
+
+export const AreaDetectionEventKind = {
+  DRIFT: "DRIFT",
+  CORRECTION: "CORRECTION",
+} as const;
+
+/**
+ * One row from the `area_detection_events` audit table.
+ */
+export interface AreaDetectionEvent {
+  id: number;
+  submissionId: number;
+  userId: number;
+  /** The area the submission was ultimately saved against. */
+  areaId: number;
+  /** The area the operator originally tapped (intent), if known. */
+  tappedAreaId: number | null;
+  /** The AI's top-confidence area suggestion at submit time, if known. */
+  aiSuggestedAreaId: number | null;
+  kind: AreaDetectionEventKind;
+  createdAt: string;
 }
 
 export interface DashboardSummary {
@@ -1537,6 +1592,29 @@ export type GetAreaDetectionAgreementParams = {
    */
   days?: number;
 };
+
+export type ListAreaDetectionEventsParams = {
+  areaId?: number;
+  kind?: ListAreaDetectionEventsKind;
+  /**
+   * @minimum 1
+   * @maximum 90
+   */
+  days?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+};
+
+export type ListAreaDetectionEventsKind =
+  (typeof ListAreaDetectionEventsKind)[keyof typeof ListAreaDetectionEventsKind];
+
+export const ListAreaDetectionEventsKind = {
+  DRIFT: "DRIFT",
+  CORRECTION: "CORRECTION",
+} as const;
 
 export type GetOperatorStatusParams = {
   shift?: GetOperatorStatusShift;

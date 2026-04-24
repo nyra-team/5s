@@ -7,7 +7,7 @@
  */
 
 /**
- * One row per area the operator either tapped or which was finally chosen, so drift in either direction is visible.
+ * One row per area the operator either tapped or which was finally chosen, so drift in either direction is visible. The `needsRebuild` / `flaggedAt` / `flagReason` / `lastRebuildAt` fields surface the auto-retune state so the dashboard can show a "Rebuild profile" CTA for areas the auto-flag hook marked.
  */
 export interface AreaDetectionAgreementAreaRowType {
   areaId: number;
@@ -15,4 +15,12 @@ export interface AreaDetectionAgreementAreaRowType {
   total: number;
   agreed: number;
   agreementPercent: number | null;
+  /** True when the auto-flag hook (or a manager) has marked this area's profile as needing a rebuild and the rebuild hasn't happened yet. */
+  needsRebuild: boolean;
+  /** When the area was most recently flagged for rebuild. */
+  flaggedAt: Date | null;
+  /** Short tag describing why the area was flagged (e.g. "low-agreement"). */
+  flagReason: string | null;
+  /** When the area's profile was last rebuilt, or null if never. */
+  lastRebuildAt: Date | null;
 }

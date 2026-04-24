@@ -1359,7 +1359,7 @@ export const GetDashboardOperatorCoverageResponse = zod.object({
 });
 
 /**
- * Aggregates agreement between `tappedAreaId` (intent) and `areaId` (chosen) over the requested window. Submissions with no recorded `tappedAreaId` (legacy rows) are excluded from the totals so the rate isn't diluted.
+ * Aggregates agreement between `tappedAreaId` (intent) and `areaId` (chosen) over the requested window. Submissions with no recorded `tappedAreaId` (legacy rows) are excluded from the totals so the rate isn't diluted. Per-area rows include the auto-retune `needsRebuild` flag plus `flaggedAt` / `lastRebuildAt` so the dashboard can surface a "Rebuild profile" CTA on areas the auto-flag hook marked.
  * @summary How often the auto-detected area matched the area the operator originally tapped
  */
 export const getAreaDetectionAgreementQueryDaysDefault = 30;
@@ -1397,9 +1397,30 @@ export const GetAreaDetectionAgreementResponse = zod
           total: zod.number(),
           agreed: zod.number(),
           agreementPercent: zod.number().nullable(),
+          needsRebuild: zod
+            .boolean()
+            .describe(
+              "True when the auto-flag hook (or a manager) has marked this area's profile as needing a rebuild and the rebuild hasn't happened yet.",
+            ),
+          flaggedAt: zod.coerce
+            .date()
+            .nullable()
+            .describe("When the area was most recently flagged for rebuild."),
+          flagReason: zod
+            .string()
+            .nullable()
+            .describe(
+              'Short tag describing why the area was flagged (e.g. \"low-agreement\").',
+            ),
+          lastRebuildAt: zod.coerce
+            .date()
+            .nullable()
+            .describe(
+              "When the area's profile was last rebuilt, or null if never.",
+            ),
         })
         .describe(
-          "One row per area the operator either tapped or which was finally chosen, so drift in either direction is visible.",
+          'One row per area the operator either tapped or which was finally chosen, so drift in either direction is visible. The `needsRebuild` \/ `flaggedAt` \/ `flagReason` \/ `lastRebuildAt` fields surface the auto-retune state so the dashboard can show a \"Rebuild profile\" CTA for areas the auto-flag hook marked.',
         ),
     ),
     perOperator: zod.array(
@@ -1415,6 +1436,84 @@ export const GetAreaDetectionAgreementResponse = zod
   .describe(
     "Auto-detect agreement metrics. `agreementPercent` is `agreed \/ total \* 100` rounded to the nearest integer; null when there are no qualifying submissions.",
   );
+
+/**
+ * Replays every recent submission for this area's stored VLM profile extracts (chronologically) into a fresh profile, weighting submissions whose `tappedAreaId !== areaId` (the operator overrode the AI's area pick) more heavily so the rebuilt profile reflects the operator's ground truth. Clears the `needsRebuild` flag and stamps `lastRebuildAt`. Manager-only.
+ * @summary Rebuild an area's learned profile from its recent corrected submissions
+ */
+export const RebuildAreaProfileParams = zod.object({
+  areaId: zod.coerce.number(),
+});
+
+export const RebuildAreaProfileResponse = zod
+  .object({
+    areaId: zod.number(),
+    replayed: zod
+      .number()
+      .describe(
+        "Number of historical submissions whose stored VLM extract was merged into the rebuilt profile.",
+      ),
+    correctionsWeighted: zod
+      .number()
+      .describe(
+        "How many of the replayed submissions counted as operator corrections (tappedAreaId !== areaId) and were therefore weighted higher.",
+      ),
+    status: zod.enum(["LEARNING", "TRAINED"]),
+    itemCount: zod.number(),
+    machineCount: zod.number(),
+  })
+  .describe("Outcome of a manager-triggered profile rebuild.");
+
+/**
+ * Returns rows from the persisted `area_detection_events` audit table (DRIFT = chosen area differed from operator's tap; CORRECTION = operator overrode the AI's top suggestion). Use this as a queryable replacement for grepping the legacy `kind:` log lines.
+ * @summary Audit log of structured drift / correction events
+ */
+export const listAreaDetectionEventsQueryDaysDefault = 30;
+export const listAreaDetectionEventsQueryDaysMax = 90;
+
+export const listAreaDetectionEventsQueryLimitDefault = 100;
+export const listAreaDetectionEventsQueryLimitMax = 500;
+
+export const ListAreaDetectionEventsQueryParams = zod.object({
+  areaId: zod.coerce.number().optional(),
+  kind: zod.enum(["DRIFT", "CORRECTION"]).optional(),
+  days: zod.coerce
+    .number()
+    .min(1)
+    .max(listAreaDetectionEventsQueryDaysMax)
+    .default(listAreaDetectionEventsQueryDaysDefault),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listAreaDetectionEventsQueryLimitMax)
+    .default(listAreaDetectionEventsQueryLimitDefault),
+});
+
+export const ListAreaDetectionEventsResponseItem = zod
+  .object({
+    id: zod.number(),
+    submissionId: zod.number(),
+    userId: zod.number(),
+    areaId: zod
+      .number()
+      .describe("The area the submission was ultimately saved against."),
+    tappedAreaId: zod
+      .number()
+      .nullable()
+      .describe("The area the operator originally tapped (intent), if known."),
+    aiSuggestedAreaId: zod
+      .number()
+      .nullable()
+      .describe(
+        "The AI's top-confidence area suggestion at submit time, if known.",
+      ),
+    kind: zod.enum(["DRIFT", "CORRECTION"]),
+    createdAt: zod.coerce.date(),
+  })
+  .describe("One row from the `area_detection_events` audit table.");
+export const ListAreaDetectionEventsResponse = zod.array(
+  ListAreaDetectionEventsResponseItem,
+);
 
 /**
  * @summary Get the current shift based on server time

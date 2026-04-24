@@ -29,6 +29,11 @@ import { dismissNudgesForSubmission } from "./nudges";
 import { logger } from "../lib/logger.js";
 import { notifyEscalationCreated } from "../lib/notifications.js";
 import {
+  recordAreaDetectionEvent,
+  flagAreaIfBelowAgreementThreshold,
+  AREA_DETECTION_EVENT_KIND,
+} from "../lib/area-profile-tuning.js";
+import {
   priorBestWindowMs,
   getEnvOperatorThresholds,
   getDbOperatorThresholds,
@@ -510,6 +515,10 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
       aiReasoningJson: scoring.aiReasoningJson,
       modelVersion: scoring.modelVersion,
       scoringMode: scoring.scoringMode,
+      // Snapshot the VLM-extracted profile fields per submission so the
+      // auto-retune loop can rebuild this area's profile from corrected
+      // history without re-running the (expensive) VLM.
+      profileExtractJson: scoring.profile,
     })
     .returning();
 
@@ -520,17 +529,28 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
     logger.error({ err }, "Failed to ingest profile extract");
   }
 
-  // Correction signals for the area-identification prompt. Two cases
-  // worth a structured log so a future profile rebuild (see
-  // lib/ai-identification.ts) can mine corrections without scanning
-  // every submission row:
-  //   - tappedAreaId !== areaId: the chosen area drifted from the operator's
-  //     intent (either AI auto-switch or explicit manual change). When the AI
-  //     suggested the chosen area, that's an AI-driven override of intent.
-  //   - aiSuggestedAreaId is provided AND chosen area !== AI suggestion: the
-  //     operator explicitly overrode the AI's top suggestion — the highest
-  //     signal correction we can capture.
-  if (tappedAreaId !== areaId) {
+  // Drift / correction signals for the auto-retune loop. We persist these
+  // as rows in `area_detection_events` (queryable, joinable) and ALSO keep
+  // a structured log line for backwards compatibility with any downstream
+  // alerting that already greps for the `kind:` value. A future profile
+  // rebuild (see lib/ai-identification.ts) can mine corrections from the
+  // table without scanning every submission row.
+  //   - tappedAreaId !== areaId: the chosen area drifted from the
+  //     operator's intent (either AI auto-switch or explicit manual change).
+  //     When the AI suggested the chosen area, that's an AI-driven override
+  //     of intent.
+  //   - aiSuggestedAreaId is provided AND chosen area !== AI suggestion:
+  //     the operator explicitly overrode the AI's top suggestion — the
+  //     highest signal correction we can capture.
+  if (tappedAreaId !== null && tappedAreaId !== areaId) {
+    await recordAreaDetectionEvent({
+      submissionId: submission.id,
+      userId,
+      areaId,
+      tappedAreaId,
+      aiSuggestedAreaId,
+      kind: AREA_DETECTION_EVENT_KIND.DRIFT,
+    });
     logger.info(
       {
         submissionId: submission.id,
@@ -545,6 +565,14 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
     );
   }
   if (aiSuggestedAreaId != null && aiSuggestedAreaId !== areaId) {
+    await recordAreaDetectionEvent({
+      submissionId: submission.id,
+      userId,
+      areaId,
+      tappedAreaId,
+      aiSuggestedAreaId,
+      kind: AREA_DETECTION_EVENT_KIND.CORRECTION,
+    });
     logger.info(
       {
         submissionId: submission.id,
@@ -558,6 +586,14 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
       "Operator overrode the AI's auto-detected area",
     );
   }
+
+  // Auto-flag this area for profile rebuild if its recent agreement has
+  // dropped below the configured threshold. Fire-and-forget so a slow
+  // aggregation query never wedges the submission response — failures
+  // are logged inside the helper.
+  flagAreaIfBelowAgreementThreshold(areaId).catch((err) =>
+    logger.error({ err, areaId }, "auto-flag: unhandled error"),
+  );
 
   // Update schedule cadence and last-check time (area baseline + per-machine if tagged)
   try { await recordCheck(areaId, machineTag ?? null, submission.createdAt); } catch (err) { logger.error({ err }, "recordCheck failed"); }
@@ -675,6 +711,10 @@ router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req
       aiReasoningJson: scoring.aiReasoningJson,
       modelVersion: scoring.modelVersion,
       scoringMode: scoring.scoringMode,
+      // Refresh the per-submission VLM extract so a future profile rebuild
+      // sees the latest take on this area, not a stale snapshot from the
+      // first upload.
+      profileExtractJson: scoring.profile,
     })
     .where(eq(submissionsTable.id, id))
     .returning();

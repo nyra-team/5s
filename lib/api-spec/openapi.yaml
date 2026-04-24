@@ -828,7 +828,7 @@ paths:
       operationId: getAreaDetectionAgreement
       tags: [dashboard]
       summary: How often the auto-detected area matched the area the operator originally tapped
-      description: Aggregates agreement between `tappedAreaId` (intent) and `areaId` (chosen) over the requested window. Submissions with no recorded `tappedAreaId` (legacy rows) are excluded from the totals so the rate isn't diluted.
+      description: Aggregates agreement between `tappedAreaId` (intent) and `areaId` (chosen) over the requested window. Submissions with no recorded `tappedAreaId` (legacy rows) are excluded from the totals so the rate isn't diluted. Per-area rows include the auto-retune `needsRebuild` flag plus `flaggedAt` / `lastRebuildAt` so the dashboard can surface a "Rebuild profile" CTA on areas the auto-flag hook marked.
       parameters:
         - name: days
           in: query
@@ -844,6 +844,82 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaDetectionAgreement"
+
+  /dashboard/areas/{areaId}/rebuild-profile:
+    post:
+      operationId: rebuildAreaProfile
+      tags: [dashboard]
+      summary: Rebuild an area's learned profile from its recent corrected submissions
+      description: >-
+        Replays every recent submission for this area's stored VLM profile
+        extracts (chronologically) into a fresh profile, weighting submissions
+        whose `tappedAreaId !== areaId` (the operator overrode the AI's area
+        pick) more heavily so the rebuilt profile reflects the operator's
+        ground truth. Clears the `needsRebuild` flag and stamps
+        `lastRebuildAt`. Manager-only.
+      parameters:
+        - name: areaId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Rebuild summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RebuildAreaProfileResult"
+        "404":
+          description: Area not found
+
+  /dashboard/area-detection-events:
+    get:
+      operationId: listAreaDetectionEvents
+      tags: [dashboard]
+      summary: Audit log of structured drift / correction events
+      description: >-
+        Returns rows from the persisted `area_detection_events` audit table
+        (DRIFT = chosen area differed from operator's tap; CORRECTION =
+        operator overrode the AI's top suggestion). Use this as a queryable
+        replacement for grepping the legacy `kind:` log lines.
+      parameters:
+        - name: areaId
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [DRIFT, CORRECTION]
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 30
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "200":
+          description: Newest-first list of detection events in the window
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AreaDetectionEvent"
 
   /shift/current:
     get:
@@ -2658,7 +2734,7 @@ components:
 
     AreaDetectionAgreementAreaRow:
       type: object
-      description: One row per area the operator either tapped or which was finally chosen, so drift in either direction is visible.
+      description: One row per area the operator either tapped or which was finally chosen, so drift in either direction is visible. The `needsRebuild` / `flaggedAt` / `flagReason` / `lastRebuildAt` fields surface the auto-retune state so the dashboard can show a "Rebuild profile" CTA for areas the auto-flag hook marked.
       properties:
         areaId:
           type: integer
@@ -2671,7 +2747,74 @@ components:
         agreementPercent:
           type: integer
           nullable: true
-      required: [areaId, areaName, total, agreed, agreementPercent]
+        needsRebuild:
+          type: boolean
+          description: True when the auto-flag hook (or a manager) has marked this area's profile as needing a rebuild and the rebuild hasn't happened yet.
+        flaggedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the area was most recently flagged for rebuild.
+        flagReason:
+          type: string
+          nullable: true
+          description: Short tag describing why the area was flagged (e.g. "low-agreement").
+        lastRebuildAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the area's profile was last rebuilt, or null if never.
+      required: [areaId, areaName, total, agreed, agreementPercent, needsRebuild, flaggedAt, flagReason, lastRebuildAt]
+
+    RebuildAreaProfileResult:
+      type: object
+      description: Outcome of a manager-triggered profile rebuild.
+      properties:
+        areaId:
+          type: integer
+        replayed:
+          type: integer
+          description: Number of historical submissions whose stored VLM extract was merged into the rebuilt profile.
+        correctionsWeighted:
+          type: integer
+          description: How many of the replayed submissions counted as operator corrections (tappedAreaId !== areaId) and were therefore weighted higher.
+        status:
+          type: string
+          enum: [LEARNING, TRAINED]
+        itemCount:
+          type: integer
+        machineCount:
+          type: integer
+      required: [areaId, replayed, correctionsWeighted, status, itemCount, machineCount]
+
+    AreaDetectionEvent:
+      type: object
+      description: One row from the `area_detection_events` audit table.
+      properties:
+        id:
+          type: integer
+        submissionId:
+          type: integer
+        userId:
+          type: integer
+        areaId:
+          type: integer
+          description: The area the submission was ultimately saved against.
+        tappedAreaId:
+          type: integer
+          nullable: true
+          description: The area the operator originally tapped (intent), if known.
+        aiSuggestedAreaId:
+          type: integer
+          nullable: true
+          description: The AI's top-confidence area suggestion at submit time, if known.
+        kind:
+          type: string
+          enum: [DRIFT, CORRECTION]
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, submissionId, userId, areaId, tappedAreaId, aiSuggestedAreaId, kind, createdAt]
 
     AreaDetectionAgreementOperatorRow:
       type: object

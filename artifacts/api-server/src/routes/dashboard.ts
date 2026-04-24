@@ -10,6 +10,8 @@ import {
   usersTable,
   areaAssignmentsTable,
   aiScoringMetricsTable,
+  AREA_DETECTION_EVENT_KIND,
+  type AreaDetectionEventKind,
 } from "@workspace/db";
 import { computeRetryStatsSince } from "../lib/ai-reliability.js";
 import type { NudgeDismissReason } from "@workspace/db";
@@ -23,6 +25,11 @@ import {
   GetDashboardOperatorCoverageQueryParams,
 } from "@workspace/api-zod";
 import { authMiddleware, requireRole } from "../lib/auth";
+import {
+  rebuildAreaProfile,
+  listAreaDetectionEvents,
+} from "../lib/area-profile-tuning.js";
+import { logger } from "../lib/logger.js";
 import {
   getISTDayRange,
   getISTShiftRange,
@@ -1062,7 +1069,7 @@ router.get(
 
     const areaIds = Array.from(perAreaMap.keys());
     const userIds = Array.from(perOperatorMap.keys());
-    const [areaRows, userRows] = await Promise.all([
+    const [areaRows, userRows, profileRows] = await Promise.all([
       areaIds.length
         ? db
             .select({ id: areasTable.id, name: areasTable.name })
@@ -1075,19 +1082,48 @@ router.get(
             .from(usersTable)
             .where(inArray(usersTable.id, userIds))
         : Promise.resolve([] as { id: number; email: string }[]),
+      areaIds.length
+        ? db
+            .select({
+              areaId: areaProfilesTable.areaId,
+              needsRebuild: areaProfilesTable.needsRebuild,
+              flaggedAt: areaProfilesTable.flaggedAt,
+              flagReason: areaProfilesTable.flagReason,
+              lastRebuildAt: areaProfilesTable.lastRebuildAt,
+            })
+            .from(areaProfilesTable)
+            .where(inArray(areaProfilesTable.areaId, areaIds))
+        : Promise.resolve(
+            [] as {
+              areaId: number;
+              needsRebuild: boolean;
+              flaggedAt: Date | null;
+              flagReason: string | null;
+              lastRebuildAt: Date | null;
+            }[],
+          ),
     ]);
     const areaNameById = new Map(areaRows.map((a) => [a.id, a.name]));
     const userEmailById = new Map(userRows.map((u) => [u.id, u.email]));
+    const profileByArea = new Map(profileRows.map((p) => [p.areaId, p]));
 
     const perArea = areaIds
       .map((areaId) => {
         const agg = perAreaMap.get(areaId)!;
+        const profile = profileByArea.get(areaId);
         return {
           areaId,
           areaName: areaNameById.get(areaId) ?? `Area #${areaId}`,
           total: agg.total,
           agreed: agg.agreed,
           agreementPercent: agreementPercent(agg.agreed, agg.total),
+          // Auto-retune bookkeeping for the dashboard CTA. Defaults are
+          // safe values for areas that don't yet have an areaProfiles row
+          // (e.g. brand-new areas with submissions but no scoring run).
+          needsRebuild: profile?.needsRebuild ?? false,
+          flaggedAt: profile?.flaggedAt ?? null,
+          flagReason: profile?.flagReason ?? null,
+          lastRebuildAt: profile?.lastRebuildAt ?? null,
         };
       })
       // Sort lowest agreement first so attention lands on the worst offenders.
@@ -1128,6 +1164,87 @@ router.get(
       perArea,
       perOperator,
     });
+  },
+);
+
+// Manager-triggered profile rebuild for a single area. Pulls every recent
+// submission for the area, replays its stored VLM profile extracts, and
+// weights operator corrections (rows where `tappedAreaId !== areaId`) so the
+// rebuilt profile reflects the operator's ground-truth overrides. Clears
+// the `needsRebuild` flag and stamps `lastRebuildAt` on success.
+router.post(
+  "/dashboard/areas/:areaId/rebuild-profile",
+  authMiddleware,
+  requireRole("MANAGER"),
+  async (req, res): Promise<void> => {
+    const areaId = parseInt(String(req.params.areaId), 10);
+    if (!Number.isFinite(areaId)) {
+      res.status(400).json({ error: "Invalid areaId" });
+      return;
+    }
+    const [area] = await db
+      .select({ id: areasTable.id })
+      .from(areasTable)
+      .where(eq(areasTable.id, areaId));
+    if (!area) {
+      res.status(404).json({ error: "Area not found" });
+      return;
+    }
+
+    try {
+      const result = await rebuildAreaProfile(areaId);
+      res.json(result);
+    } catch (err) {
+      logger.error({ err, areaId }, "Profile rebuild failed");
+      res.status(500).json({ error: "Profile rebuild failed" });
+    }
+  },
+);
+
+// Read-only audit log of structured drift / correction events. Lets
+// managers (and our debugging surface) see *why* the auto-flag fired
+// without having to scrape application logs.
+router.get(
+  "/dashboard/area-detection-events",
+  authMiddleware,
+  requireRole("MANAGER"),
+  async (req, res): Promise<void> => {
+    const rawDays = parseInt(String(req.query.days ?? ""), 10);
+    const days =
+      Number.isFinite(rawDays) && rawDays >= 1 && rawDays <= 90 ? rawDays : 30;
+    const rawLimit = parseInt(String(req.query.limit ?? ""), 10);
+    const limit =
+      Number.isFinite(rawLimit) && rawLimit >= 1 && rawLimit <= 500
+        ? rawLimit
+        : 100;
+    const rawAreaId = parseInt(String(req.query.areaId ?? ""), 10);
+    const areaId = Number.isFinite(rawAreaId) ? rawAreaId : undefined;
+    const kindRaw = String(req.query.kind ?? "");
+    const kind: AreaDetectionEventKind | undefined =
+      kindRaw === AREA_DETECTION_EVENT_KIND.DRIFT ||
+      kindRaw === AREA_DETECTION_EVENT_KIND.CORRECTION
+        ? kindRaw
+        : undefined;
+
+    const events = await listAreaDetectionEvents({
+      areaId,
+      kind,
+      days,
+      limit,
+    });
+
+    res.json(
+      events.map((e) => ({
+        id: e.id,
+        submissionId: e.submissionId,
+        userId: e.userId,
+        areaId: e.areaId,
+        tappedAreaId: e.tappedAreaId,
+        aiSuggestedAreaId: e.aiSuggestedAreaId,
+        kind: e.kind,
+        createdAt: e.createdAt,
+      })),
+    );
   },
 );
 
