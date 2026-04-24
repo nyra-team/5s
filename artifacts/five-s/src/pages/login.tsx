@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { ClipboardList } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useEffect } from "react";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -62,7 +63,10 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-[100dvh] bg-background flex flex-col justify-center items-center p-6">
+    <div className="relative min-h-[100dvh] bg-background flex flex-col justify-center items-center p-6">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-[400px] flex flex-col gap-10">
         <div className="flex flex-col items-center text-center gap-5">
           <div className="w-14 h-14 bg-primary text-primary-foreground rounded-2xl flex items-center justify-center shadow-elevated">
