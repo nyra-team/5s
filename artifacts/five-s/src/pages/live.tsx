@@ -14,7 +14,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Activity, AlertTriangle, Bell, BellOff, CheckCircle2, Clock, Eye, Inbox, MapPin, Sparkles } from "lucide-react";
-import { format, formatDistanceToNowStrict } from "date-fns";
+import { formatDistanceToNowStrict } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
@@ -157,6 +157,7 @@ function OverdueCard({ item, shift }: { item: LiveShiftOverdueCheck; shift: Crea
 }
 
 function LowScoringRow({ item }: { item: LiveShiftLowScoring }) {
+  const { formatClockTime } = useShiftConfig();
   const tone =
     item.scorePercent < 40
       ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
@@ -173,7 +174,7 @@ function LowScoringRow({ item }: { item: LiveShiftLowScoring }) {
       <div className="min-w-0 flex-1">
         <p className="font-medium text-[14px] truncate">{item.areaName}</p>
         <p className="text-[12px] text-muted-foreground truncate">
-          {item.operatorEmail} · {format(new Date(item.createdAt), "h:mm a")}
+          {item.operatorEmail} · {formatClockTime(new Date(item.createdAt))}
         </p>
       </div>
       <div className="flex flex-col items-end gap-1">
