@@ -89,11 +89,15 @@ vi.mock("@workspace/api-client-react", () => {
       last7d: { totalCalls: 0, retriedCalls: 0, retryRate: 0 },
     }),
     useGetDashboardAiCost: noopQuery(undefined),
-    useGetAreaDetectionAgreement: noopQuery(undefined),
     useGetDashboardOperatorCoverage: noopQuery({
       totalOperators: 0,
       totalAreas: 0,
       operators: [],
+    }),
+    useGetAreaDetectionAgreement: noopQuery(undefined),
+    useRebuildAreaProfile: () => ({
+      mutate: vi.fn(),
+      isPending: false,
     }),
     useGetBackfillReasoningStatus: noopQuery({ remaining: 0 }),
     useBackfillReasoning: () => ({
@@ -110,6 +114,7 @@ vi.mock("@workspace/api-client-react", () => {
       isPending: false,
       isSuccess: false,
       isError: false,
+      data: undefined,
       reset: vi.fn(),
     }),
     useRebuildAreaProfile: noopMutation,

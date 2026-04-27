@@ -4,6 +4,7 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import sharp from "sharp";
 import { logger } from "./logger.js";
+import { recordFfmpegTimeout } from "./ffmpeg-timeout-monitor.js";
 
 const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
 
@@ -314,6 +315,16 @@ async function runFfmpeg(videoAbsPath: string, vfilter: string, maxCandidates: n
           { videoAbsPath, vfilter, timeoutMs },
           "ffmpeg invocation exceeded timeout; killing",
         );
+        // Tick the rolling timeout counter so the on-call team sees an alert
+        // when timeouts spike above the configured threshold (see
+        // ffmpeg-timeout-monitor for the rate/window/threshold semantics).
+        try {
+          recordFfmpegTimeout({ videoAbsPath, timeoutMs, vfilter });
+        } catch (err) {
+          // Counter is best-effort observability — never let a monitor bug
+          // mask the underlying ffmpeg failure to the caller.
+          logger.error({ err }, "ffmpeg-timeout-monitor: recordFfmpegTimeout threw");
+        }
         try { proc.kill("SIGKILL"); } catch { /* best-effort */ }
         reject(new Error(`ffmpeg timed out after ${timeoutMs}ms`));
       }, timeoutMs);

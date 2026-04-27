@@ -1655,3 +1655,208 @@ export function notificationProviderStatus(): { emailConfigured: boolean; slackC
     slackConfigured: !!process.env.SLACK_WEBHOOK_URL?.trim(),
   };
 }
+
+/**
+ * Generic ops alert payload used for non-escalation notifications (e.g.
+ * "ffmpeg timeouts spiking"). Routed through the same Slack webhook + Resend
+ * email channels managers already use for escalations so on-call doesn't need
+ * to subscribe to a second pipe.
+ *
+ * Quiet hours are intentionally NOT applied to ops alerts: they fire on
+ * active production-health symptoms (timeout spikes, build regressions,
+ * upload-abuse waves), and silently suppressing them overnight defeats the
+ * point. The Slack/email per-recipient toggles are still respected.
+ */
+export interface OpsAlertPayload {
+  /** Short headline rendered in Slack/email (e.g. "ffmpeg timeouts spiking"). */
+  title: string;
+  /** Plain-text body — should explain what happened and likely causes. */
+  message: string;
+  /**
+   * Optional structured key/value pairs rendered as a small details table
+   * under the message. Keys are shown verbatim; pick human-readable labels.
+   */
+  details?: Record<string, string | number | boolean>;
+}
+
+export type OpsAlertNotifierFn = (payload: OpsAlertPayload) => Promise<void>;
+
+const defaultOpsAlertNotifier: OpsAlertNotifierFn = async (payload) => {
+  await dispatchOpsAlert(payload);
+};
+
+let opsAlertNotifierImpl: OpsAlertNotifierFn = defaultOpsAlertNotifier;
+
+/**
+ * Fire a single ops alert through the manager-notification channel
+ * (Slack webhook + manager emails). Failures are logged and swallowed so the
+ * caller (typically a hot path like an upload handler) is never blocked on
+ * provider I/O.
+ */
+export async function sendOpsAlert(payload: OpsAlertPayload): Promise<void> {
+  await opsAlertNotifierImpl(payload);
+}
+
+/**
+ * Test-only seam: replace the ops alert notifier with `fn`, or restore the
+ * default by passing `null`. Returns the previously-installed notifier so
+ * suites can chain stubs/restorations cleanly.
+ */
+export function setOpsAlertNotifierForTesting(
+  fn: OpsAlertNotifierFn | null,
+): OpsAlertNotifierFn {
+  const prev = opsAlertNotifierImpl;
+  opsAlertNotifierImpl = fn ?? defaultOpsAlertNotifier;
+  return prev;
+}
+
+async function dispatchOpsAlert(payload: OpsAlertPayload): Promise<void> {
+  let managers: ManagerRow[];
+  try {
+    managers = await db
+      .select({
+        id: usersTable.id,
+        email: usersTable.email,
+        notifyEmailEnabled: usersTable.notifyEmailEnabled,
+        notifySlackEnabled: usersTable.notifySlackEnabled,
+        quietHoursEnabled: usersTable.quietHoursEnabled,
+        quietHoursStart: usersTable.quietHoursStart,
+        quietHoursEnd: usersTable.quietHoursEnd,
+        quietHoursWeekdayMask: usersTable.quietHoursWeekdayMask,
+      })
+      .from(usersTable)
+      .where(eq(usersTable.role, "MANAGER"));
+  } catch (err) {
+    logger.error(
+      { err, title: payload.title },
+      "notify: ops alert — failed to load manager recipients",
+    );
+    return;
+  }
+
+  const emailRecipients = managers
+    .filter((m) => m.notifyEmailEnabled)
+    .map((m) => m.email);
+  const anySlackSubscriber = managers.some((m) => m.notifySlackEnabled);
+
+  await Promise.allSettled([
+    emailRecipients.length > 0 ? sendOpsEmails(emailRecipients, payload) : Promise.resolve(),
+    anySlackSubscriber ? sendOpsSlack(payload) : Promise.resolve(),
+  ]);
+}
+
+function formatOpsDetailLines(details: Record<string, string | number | boolean> | undefined): string[] {
+  if (!details) return [];
+  return Object.entries(details).map(([k, v]) => `${k}: ${v}`);
+}
+
+async function sendOpsSlack(payload: OpsAlertPayload): Promise<void> {
+  const webhook = process.env.SLACK_WEBHOOK_URL?.trim();
+  if (!webhook) {
+    logger.info(
+      { title: payload.title },
+      "notify: SLACK_WEBHOOK_URL not set — skipping ops Slack message",
+    );
+    return;
+  }
+
+  const detailLines = formatOpsDetailLines(payload.details);
+  const detailsBlock = detailLines.length
+    ? `\n\n${detailLines.map((l) => `• ${l}`).join("\n")}`
+    : "";
+
+  const message = {
+    text: `:warning: Ops alert — ${payload.title}`,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `:warning: *Ops alert — ${payload.title}*\n${payload.message}${detailsBlock}`,
+        },
+      },
+    ],
+  };
+
+  try {
+    const res = await fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(message),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logger.error(
+        { title: payload.title, status: res.status, body: body.slice(0, 200) },
+        "notify: ops Slack webhook returned non-2xx",
+      );
+      return;
+    }
+    logger.info({ title: payload.title }, "notify: ops Slack message posted");
+  } catch (err) {
+    logger.error({ err, title: payload.title }, "notify: ops Slack post failed");
+  }
+}
+
+async function sendOpsEmails(recipients: string[], payload: OpsAlertPayload): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  const from = process.env.NOTIFICATION_FROM_EMAIL?.trim();
+  if (!apiKey || !from) {
+    logger.info(
+      { title: payload.title, recipientCount: recipients.length },
+      "notify: RESEND_API_KEY / NOTIFICATION_FROM_EMAIL not set — skipping ops email",
+    );
+    return;
+  }
+
+  const detailLines = formatOpsDetailLines(payload.details);
+  const subject = `[Ops] ${payload.title}`;
+  const detailsHtml = detailLines.length
+    ? `<table style="margin-top:14px;font-size:13px;line-height:1.5;color:#444">` +
+      detailLines
+        .map((line) => {
+          const idx = line.indexOf(": ");
+          const k = idx >= 0 ? line.slice(0, idx) : line;
+          const v = idx >= 0 ? line.slice(idx + 2) : "";
+          return `<tr><td style="color:#666;padding-right:12px;vertical-align:top">${escapeHtml(k)}</td><td><b>${escapeHtml(v)}</b></td></tr>`;
+        })
+        .join("") +
+      `</table>`
+    : "";
+  const html =
+    `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;color:#222">` +
+    `<h2 style="margin:0 0 10px;font-size:18px">⚠️ Ops alert — ${escapeHtml(payload.title)}</h2>` +
+    `<p style="margin:0;font-size:14px;line-height:1.5">${escapeHtml(payload.message)}</p>` +
+    detailsHtml +
+    `</div>`;
+  const text =
+    `Ops alert — ${payload.title}\n\n` +
+    `${payload.message}\n` +
+    (detailLines.length ? `\n${detailLines.map((l) => `  - ${l}`).join("\n")}\n` : "");
+
+  await Promise.allSettled(
+    recipients.map(async (to) => {
+      try {
+        const res = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({ from, to, subject, html, text }),
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          logger.error(
+            { title: payload.title, to, status: res.status, body: body.slice(0, 200) },
+            "notify: Resend returned non-2xx for ops alert",
+          );
+          return;
+        }
+        logger.info({ title: payload.title, to }, "notify: ops email sent");
+      } catch (err) {
+        logger.error({ err, title: payload.title, to }, "notify: ops email send failed");
+      }
+    }),
+  );
+}
