@@ -5,7 +5,7 @@
  */
 import { db, aiSettingsTable } from "@workspace/db";
 
-export const DEFAULT_VLM_MODEL = "gpt-5";
+export const DEFAULT_VLM_MODEL = "gpt-5-mini";
 export const VLM_MODEL_MAX_LENGTH = 128;
 
 export const VLM_MODEL_VALIDATOR = (v: unknown): v is string =>

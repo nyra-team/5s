@@ -83,6 +83,12 @@ beforeAll(async () => {
   const twoDaysAgo = new Date(now - 2 * 24 * 3600 * 1000);
 
   async function dismissedNudge(areaId: number, dismissedAt: Date) {
+    // Pin createdAt to the dismissal time so the fixture rows look like
+    // genuine historical nudges. If we let createdAt default to "now", every
+    // fixture row falls inside the route's 1-hour throttle window for shift
+    // "A" — and when the current shift happens to be A, the very first
+    // POST under test trips the throttle on its OWN seed data, returning
+    // 429 instead of 201 (a flaky time-of-day failure).
     const [row] = await db
       .insert(nudgesTable)
       .values({
@@ -91,6 +97,7 @@ beforeAll(async () => {
         shift: "A",
         message: null,
         createdByUserId: managerId,
+        createdAt: dismissedAt,
       })
       .returning({ id: nudgesTable.id });
     await db
@@ -217,6 +224,11 @@ describe("POST /api/dashboard/operator-coaching-nudge", () => {
       .insert(areasTable)
       .values({ name: `${RUN_TAG}-default-area` })
       .returning();
+    // Backdate both createdAt and dismissedAt so this seed row sits well
+    // outside the route's 1-hour throttle window — otherwise a fresh
+    // fixture nudge on shift "A" trips the throttle on the very POST we're
+    // about to make whenever the current shift happens to be A.
+    const seededAt = new Date(Date.now() - 2 * 3600 * 1000);
     const [n] = await db
       .insert(nudgesTable)
       .values({
@@ -225,12 +237,13 @@ describe("POST /api/dashboard/operator-coaching-nudge", () => {
         shift: "A",
         message: null,
         createdByUserId: managerId,
+        createdAt: seededAt,
       })
       .returning({ id: nudgesTable.id });
     await db
       .update(nudgesTable)
       .set({
-        dismissedAt: new Date(),
+        dismissedAt: seededAt,
         dismissedByUserId: op.id,
         dismissReason: "OPERATOR_DISMISS",
       })

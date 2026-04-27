@@ -16,6 +16,28 @@ vi.mock("@workspace/integrations-openai-ai-server", () => ({
 }));
 
 const insertedRows: any[] = [];
+
+// `loadEffectiveVlmModel` (called from `callVLM`) reads `ai_settings` via
+// select/from/orderBy/limit, awaiting the terminal stage as `Promise<unknown[]>`.
+// Without this stub, `db.select is not a function` would explode every test
+// here. Returning no rows keeps the resolver on the env (unset) → shipped
+// default fallback path so the test exercises real production behaviour.
+interface SelectChain extends PromiseLike<unknown[]> {
+  from: () => SelectChain;
+  orderBy: () => SelectChain;
+  limit: () => SelectChain;
+}
+function emptySelectChain(): SelectChain {
+  const chain: SelectChain = {
+    from: () => chain,
+    orderBy: () => chain,
+    limit: () => chain,
+    then: (onfulfilled) =>
+      Promise.resolve([]).then(onfulfilled) as unknown as PromiseLike<never>,
+  };
+  return chain;
+}
+
 vi.mock("@workspace/db", () => ({
   db: {
     insert: () => ({
@@ -23,8 +45,10 @@ vi.mock("@workspace/db", () => ({
         insertedRows.push(row);
       },
     }),
+    select: () => emptySelectChain(),
   },
   aiScoringMetricsTable: {},
+  aiSettingsTable: {},
 }));
 
 // Minimal error shapes that match the openai SDK's public contract

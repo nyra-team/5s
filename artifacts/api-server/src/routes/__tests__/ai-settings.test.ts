@@ -78,21 +78,23 @@ describe("GET /api/ai-settings", () => {
       .get("/api/ai-settings")
       .set("Authorization", `Bearer ${operatorToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.vlmModel).toBe("gpt-5");
-    expect(res.body.defaults).toEqual({ vlmModel: "gpt-5" });
+    expect(res.body.vlmModel).toBe("gpt-5-mini");
+    expect(res.body.defaults).toEqual({ vlmModel: "gpt-5-mini" });
     expect(res.body.envOverrides).toEqual({ vlmModel: null });
     expect(res.body.dbOverrides).toEqual({ vlmModel: null });
     expect(res.body.updatedAt).toBeNull();
   });
 
   it("reflects an env override and surfaces it in envOverrides", async () => {
-    process.env.VLM_MODEL = "gpt-5-mini";
+    // Pick a value distinct from the shipped default so the assertion
+    // actually proves the env layer drove the effective value.
+    process.env.VLM_MODEL = "gpt-5";
     const res = await request(app)
       .get("/api/ai-settings")
       .set("Authorization", `Bearer ${managerToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.vlmModel).toBe("gpt-5-mini");
-    expect(res.body.envOverrides).toEqual({ vlmModel: "gpt-5-mini" });
+    expect(res.body.vlmModel).toBe("gpt-5");
+    expect(res.body.envOverrides).toEqual({ vlmModel: "gpt-5" });
     expect(res.body.dbOverrides).toEqual({ vlmModel: null });
   });
 
@@ -103,12 +105,12 @@ describe("GET /api/ai-settings", () => {
       .set("Authorization", `Bearer ${managerToken}`)
       .send({ vlmModel: "claude-x" });
 
-    process.env.VLM_MODEL = "gpt-5-mini";
+    process.env.VLM_MODEL = "gpt-5";
     const res = await request(app)
       .get("/api/ai-settings")
       .set("Authorization", `Bearer ${managerToken}`);
-    expect(res.body.vlmModel).toBe("gpt-5-mini");
-    expect(res.body.envOverrides.vlmModel).toBe("gpt-5-mini");
+    expect(res.body.vlmModel).toBe("gpt-5");
+    expect(res.body.envOverrides.vlmModel).toBe("gpt-5");
     expect(res.body.dbOverrides.vlmModel).toBe("claude-x");
   });
 });
@@ -130,42 +132,46 @@ describe("PUT /api/ai-settings", () => {
   });
 
   it("accepts a valid model id from a manager and surfaces it as the effective value", async () => {
+    // Use a non-default value so the assertion proves the DB override actually
+    // drove the effective value, not just that it happened to match the default.
     const res = await request(app)
       .put("/api/ai-settings")
       .set("Authorization", `Bearer ${managerToken}`)
-      .send({ vlmModel: "gpt-5-mini" });
+      .send({ vlmModel: "gpt-5" });
     expect(res.status).toBe(200);
-    expect(res.body.vlmModel).toBe("gpt-5-mini");
-    expect(res.body.dbOverrides).toEqual({ vlmModel: "gpt-5-mini" });
+    expect(res.body.vlmModel).toBe("gpt-5");
+    expect(res.body.dbOverrides).toEqual({ vlmModel: "gpt-5" });
     expect(res.body.updatedByUserId).toBe(managerId);
     expect(res.body.updatedAt).not.toBeNull();
     // Reading back returns the same effective value.
     const get = await request(app)
       .get("/api/ai-settings")
       .set("Authorization", `Bearer ${managerToken}`);
-    expect(get.body.vlmModel).toBe("gpt-5-mini");
+    expect(get.body.vlmModel).toBe("gpt-5");
   });
 
   it("trims whitespace before storing", async () => {
     const res = await request(app)
       .put("/api/ai-settings")
       .set("Authorization", `Bearer ${managerToken}`)
-      .send({ vlmModel: "  gpt-5-mini  " });
+      .send({ vlmModel: "  gpt-5  " });
     expect(res.status).toBe(200);
-    expect(res.body.dbOverrides.vlmModel).toBe("gpt-5-mini");
+    expect(res.body.dbOverrides.vlmModel).toBe("gpt-5");
   });
 
   it("clears the override when given null and falls back to the default", async () => {
+    // Seed with a value distinct from the shipped default so the clear step
+    // visibly flips the effective model back to the default.
     await request(app)
       .put("/api/ai-settings")
       .set("Authorization", `Bearer ${managerToken}`)
-      .send({ vlmModel: "gpt-5-mini" });
+      .send({ vlmModel: "gpt-5" });
     const res = await request(app)
       .put("/api/ai-settings")
       .set("Authorization", `Bearer ${managerToken}`)
       .send({ vlmModel: null });
     expect(res.status).toBe(200);
-    expect(res.body.vlmModel).toBe("gpt-5");
+    expect(res.body.vlmModel).toBe("gpt-5-mini");
     expect(res.body.dbOverrides).toEqual({ vlmModel: null });
   });
 

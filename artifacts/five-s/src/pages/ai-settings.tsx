@@ -23,8 +23,8 @@ import {
 const VLM_MODEL_MAX_LENGTH = 128;
 
 const PRESETS: { id: string; label: string; hint: string }[] = [
-  { id: "gpt-5", label: "gpt-5", hint: "Default" },
-  { id: "gpt-5-mini", label: "gpt-5-mini", hint: "Cheaper rollback" },
+  { id: "gpt-5-mini", label: "gpt-5-mini", hint: "Default" },
+  { id: "gpt-5", label: "gpt-5", hint: "Flagship" },
 ];
 
 function clean(s: string): string {
@@ -106,7 +106,7 @@ export default function AiSettingsPage() {
         <p className="text-muted-foreground text-[15px]">
           Choose which model the scoring and identification calls use.
           Changes take effect on the next request without a restart.
-          Use this to quickly roll back (e.g. to <span className="font-mono">gpt-5-mini</span>)
+          Use this to quickly switch (e.g. up to <span className="font-mono">gpt-5</span>)
           if the default model regresses.
         </p>
       </header>
