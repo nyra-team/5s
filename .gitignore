@@ -14,6 +14,11 @@ artifacts/*/uploads/
 # dependencies
 node_modules
 
+# Local-only environment / secrets — must never be checked in
+.env
+.env.*
+!.env.example
+
 # IDEs and editors
 /.idea
 .project

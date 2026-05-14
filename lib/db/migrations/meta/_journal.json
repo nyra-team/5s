@@ -50,6 +50,13 @@
       "when": 1777060000000,
       "tag": "0006_scoring_reliability",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1778756107179,
+      "tag": "0007_perfect_robin_chapel",
+      "breakpoints": true
     }
   ]
 }

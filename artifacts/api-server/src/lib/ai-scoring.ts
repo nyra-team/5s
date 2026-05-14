@@ -58,6 +58,16 @@ export class ScoringError extends Error {
 
 type Severity = "high" | "medium" | "low";
 
+// Bounding box for a problematic region, in normalized (0-1) frame
+// coordinates: [x, y, w, h] where x/y are the top-left corner. `frameIndex`
+// is the index into the keyframe array shown to the model. The VLM may
+// omit this when an issue is non-spatial (e.g. "no labels anywhere"); the
+// frontend simply skips overlay rendering in that case.
+interface VLMIssueRegion {
+  frameIndex: number;
+  box: [number, number, number, number];
+}
+
 interface VLMIssue {
   issue: string;
   evidence: string;
@@ -65,6 +75,7 @@ interface VLMIssue {
   pillar?: string;
   principle?: string;
   severity?: Severity;
+  region?: VLMIssueRegion;
 }
 
 interface VLMRecommendation {
@@ -349,8 +360,36 @@ function imageToBase64(imagePath: string): string {
   return buf.toString("base64");
 }
 
+// Claude (and some other models) wrap JSON output in ```json ... ``` fences
+// even when asked for plain JSON. Strip a single leading/trailing fence so
+// JSON.parse sees the raw object. No-op when the text isn't fenced.
+function stripJsonCodeFence(text: string): string {
+  const trimmed = text.trim();
+  const fence = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i);
+  return fence ? fence[1].trim() : trimmed;
+}
+
 function clamp05(n: any): number {
   return Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
+}
+
+// Validate + clamp a region returned by the VLM. Drops the region entirely
+// if frameIndex is out of range or the box is degenerate (<1px wide/tall in
+// normalized space); the caller treats absence as "non-spatial issue".
+function normalizeRegion(raw: any, frameCount: number): VLMIssueRegion | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const fi = Number(raw.frameIndex);
+  if (!Number.isFinite(fi) || fi < 0 || fi >= frameCount) return undefined;
+  const box = raw.box;
+  if (!Array.isArray(box) || box.length !== 4) return undefined;
+  const [x, y, w, h] = box.map((v) => Number(v));
+  if (![x, y, w, h].every((v) => Number.isFinite(v))) return undefined;
+  const cx = Math.max(0, Math.min(1, x));
+  const cy = Math.max(0, Math.min(1, y));
+  const cw = Math.max(0, Math.min(1 - cx, w));
+  const ch = Math.max(0, Math.min(1 - cy, h));
+  if (cw < 0.005 || ch < 0.005) return undefined;
+  return { frameIndex: Math.floor(fi), box: [cx, cy, cw, ch] };
 }
 
 function normalizeSeverity(s: any): Severity | undefined {
@@ -764,7 +803,11 @@ export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
   const envLabel = getEnvironmentLabel(environmentType);
 
   const userText =
-`Area: "${areaName}".\nEnvironment: ${envLabel}.${machineLine}\n${profileBlock}\nThe operator submitted ${framePaths.length} frame(s) from a walk-through. Audit the AREA AS A WHOLE across all frames. Ground EVERY observation in something you can actually see in a specific frame — never invent details.`;
+`Area: "${areaName}".\nEnvironment: ${envLabel}.${machineLine}\n${profileBlock}\nThe operator submitted ${framePaths.length} frame(s) from a walk-through. Audit the AREA AS A WHOLE across all frames. Ground EVERY observation in something you can actually see in a specific frame — never invent details.
+
+For each issue you report, attach a "region" object pointing at the smallest visible frame area that proves the issue:
+  "region": { "frameIndex": 0-based index of the frame, "box": [x, y, w, h] }
+where x, y, w, h are normalized (0.0–1.0) with x,y being the TOP-LEFT corner of the box and w,h being its width/height. Frames are numbered starting from 0 in the order shown ("FRAME 1" is frameIndex 0, "FRAME 2" is frameIndex 1, etc.). Omit "region" only when the issue is genuinely non-spatial (e.g. "no labels anywhere in area"). Boxes must lie inside the frame; clip if needed. Be tight: cover only the offending object/zone, not the whole frame.`;
 
   const baseContent: any[] = [{ type: "text", text: userText }];
 
@@ -792,13 +835,21 @@ export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
   // + up to 8 issues + 8 recommendations + the profile block, with margin
   // for complex scenes that need extra reasoning. gpt-5-mini reasons less
   // than flagship gpt-5, so the headroom is comfortable. (Task #124.)
-  const baseRequest = {
+  // Anthropic's OpenAI-compatible endpoint rejects `response_format: json_object`
+  // (it only accepts `json_schema`). The retry/repair loop already enforces JSON
+  // shape, so for Claude we omit `response_format` entirely and rely on the
+  // prompt + validation loop. The fence-strip in parseVlmJsonText handles
+  // Claude's habit of wrapping JSON in ```json ... ``` blocks.
+  const isClaude = /^claude/i.test(model);
+  const baseRequest: Record<string, unknown> = {
     model,
-    response_format: { type: "json_object" as const },
     max_completion_tokens: 8192,
     top_p: 1,
     seed: 5,
   };
+  if (!isClaude) {
+    baseRequest.response_format = { type: "json_object" as const };
+  }
 
   const messages: any[] = [
     { role: "system", content: getRubric(environmentType) },
@@ -814,7 +865,13 @@ export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
 {
   "reasoning": { "sort": string, "set": string, "shine": string, "standardize": string, "sustain": string },
   "pillar_scores": { "sort": 0-5, "set": 0-5, "shine": 0-5, "standardize": 0-5, "sustain": 0-5 },
-  "issues": [...],
+  "issues": [
+    {
+      "issue": string, "evidence": string, "location": string,
+      "pillar": string, "principle": string, "severity": "high|medium|low",
+      "region": { "frameIndex": 0, "box": [x, y, w, h] }   // optional; normalized 0-1, top-left origin
+    }
+  ],
   "recommendations": [...],
   "profile": { "items": [...], "machines": [...], "layout": [...], "observedIssues": [...], "summary": "..." }
 }`;
@@ -878,7 +935,8 @@ export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
         latencyMs += Date.now() - tCall;
       }
       accumulateUsage(resp?.usage);
-      const text = resp.choices[0]?.message?.content || "{}";
+      const rawText = resp.choices[0]?.message?.content || "{}";
+      const text = stripJsonCodeFence(rawText);
 
       try {
         parsed = JSON.parse(text);
@@ -972,6 +1030,7 @@ export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
     sustain: String(r.sustain ?? "").trim().slice(0, REASONING_MAX),
   };
 
+  const frameCount = framePaths.length;
   const issues: VLMIssue[] = Array.isArray(parsed.issues)
     ? parsed.issues.slice(0, 8).map((i: any) => ({
         issue: String(i.issue ?? ""),
@@ -980,6 +1039,7 @@ export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
         pillar: i.pillar ? String(i.pillar) : undefined,
         principle: i.principle ? String(i.principle) : undefined,
         severity: normalizeSeverity(i.severity),
+        region: normalizeRegion(i.region, frameCount),
       }))
     : [];
 

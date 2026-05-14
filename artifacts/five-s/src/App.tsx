@@ -11,6 +11,7 @@ import { ProtectedRoute } from "@/components/protected-route";
 // Pages
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
+import ResetPassword from "@/pages/reset-password";
 import OperatorHome from "@/pages/operator";
 import Dashboard from "@/pages/dashboard";
 import Submissions from "@/pages/submissions";
@@ -28,6 +29,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/login" component={Login} />
+      <Route path="/reset-password" component={ResetPassword} />
       
       <Route path="/">
         <ProtectedRoute allowedRoles={["OPERATOR"]}>

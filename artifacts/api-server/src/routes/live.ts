@@ -137,6 +137,7 @@ router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, r
       scoreTotal: submissionsTable.scoreTotal,
       createdAt: submissionsTable.createdAt,
       thumbnailUrl: submissionsTable.imageUrl,
+      aiIssuesJson: submissionsTable.aiIssuesJson,
     })
     .from(submissionsTable)
     .innerJoin(areasTable, eq(submissionsTable.areaId, areasTable.id))
@@ -170,6 +171,7 @@ router.get("/shift/live", authMiddleware, requireRole("MANAGER"), async (_req, r
     scorePercent: Math.round((r.scoreTotal ?? 0) * 4),
     createdAt: r.createdAt,
     thumbnailUrl: r.thumbnailUrl,
+    aiIssuesJson: r.aiIssuesJson,
     hasOpenEscalation: openEscalationsBySub.has(r.submissionId),
   }));
 

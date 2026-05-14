@@ -11,7 +11,9 @@
   },
   "private": true,
   "devDependencies": {
-    "typescript": "~5.9.2",
-    "prettier": "^3.8.1"
+    "@rollup/rollup-linux-arm64-gnu": "^4.60.2",
+    "lightningcss-linux-arm64-gnu": "^1.32.0",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.2"
   }
 }

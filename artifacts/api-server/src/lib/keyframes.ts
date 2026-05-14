@@ -462,18 +462,26 @@ export async function extractKeyframes(
   }
   sceneDetectMs = Date.now() - tScene;
 
-  // 2. Fallback to fixed interval if scene detection found nothing AND we
-  //    still have headroom under the overall keyframes deadline. Otherwise
-  //    fail fast so the operator gets VIDEO_UNREADABLE instead of waiting
-  //    out another full per-pass timeout.
+  // 2. Top-up with fixed-interval sampling when scene detection produced too
+  //    few candidates (e.g. a static walk-through video where the scene barely
+  //    changes). The dedup pass below collapses any near-duplicates between
+  //    the two sources, so over-sampling is safe. We still skip the fallback
+  //    if we've blown past the overall keyframes deadline. Threshold is the
+  //    floor of a "useful" multi-frame sample — below this the VLM only sees
+  //    one moment of the area instead of the walk-through.
+  const minCandidatesForUsefulAnalysis = Math.max(3, Math.ceil(maxFrames / 2));
   let usedFallback = false;
-  if (candidates.length === 0 && Date.now() - t0 < overallDeadlineMs) {
+  if (candidates.length < minCandidatesForUsefulAnalysis && Date.now() - t0 < overallDeadlineMs) {
     usedFallback = true;
     const intervalFilter = `fps=1/${fallbackInterval},scale=720:-2`;
     const tFallback = Date.now();
     try {
       usedPrefixes.push(`${id}_i`);
-      candidates = await runFfmpeg(videoAbsPath, intervalFilter, maxCandidates, `${id}_i`);
+      const intervalCandidates = await runFfmpeg(videoAbsPath, intervalFilter, maxCandidates, `${id}_i`);
+      // Merge rather than replace so we don't throw away the scene-detected
+      // frames: those typically capture the most interesting transitions and
+      // dedup keeps interval frames that happen to fall on the same moments.
+      candidates = [...candidates, ...intervalCandidates];
     } catch (err) {
       logger.warn({ err, videoAbsPath }, "fallback interval ffmpeg pass failed");
     }

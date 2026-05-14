@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import type { KeyframeMetrics } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
+import { MaskedImage, extractRegions } from "@/components/masked-image";
 
 const SHIFT_FILTER_OPTIONS = [
   { value: "", label: "All" },
@@ -333,7 +334,13 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
             {isVideoSub ? (
               <video src={`/api${sub.imageUrl}`} controls className="w-full h-auto" />
             ) : (
-              <img src={`/api${sub.imageUrl}`} alt="Submission" className="w-full h-auto object-contain" />
+              <MaskedImage
+                src={`/api${sub.imageUrl}`}
+                alt="Submission"
+                regions={extractRegions(sub.aiIssuesJson)}
+                frameIndex={0}
+                className="w-full h-auto"
+              />
             )}
           </div>
 
@@ -343,7 +350,14 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
               <div className="grid grid-cols-3 gap-2">
                 {keyframes.map((k, i) => (
                   <div key={i} className="rounded-lg overflow-hidden bg-card shadow-soft">
-                    <img src={`/api${k}`} alt={`Frame ${i + 1}`} className="w-full h-20 object-cover" />
+                    <MaskedImage
+                      src={`/api${k}`}
+                      alt={`Frame ${i + 1}`}
+                      regions={extractRegions(sub.aiIssuesJson)}
+                      frameIndex={i}
+                      className="w-full h-20"
+                      imgClassName="w-full h-full object-cover"
+                    />
                     <div className="text-[10.5px] text-center py-0.5 text-muted-foreground">Frame {i + 1}</div>
                   </div>
                 ))}
@@ -451,7 +465,14 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
               <div className="grid grid-cols-3 gap-2">
                 {keyframes.map((k, i) => (
                   <div key={i} className="rounded-lg overflow-hidden bg-secondary shadow-soft">
-                    <img src={`/api${k}`} alt={`Frame ${i + 1}`} className="w-full h-20 object-cover" />
+                    <MaskedImage
+                      src={`/api${k}`}
+                      alt={`Frame ${i + 1}`}
+                      regions={extractRegions(sub.aiIssuesJson)}
+                      frameIndex={i}
+                      className="w-full h-20"
+                      imgClassName="w-full h-full object-cover"
+                    />
                     <div className="text-[10.5px] text-center py-0.5 text-muted-foreground">Frame {i + 1}</div>
                   </div>
                 ))}
@@ -911,7 +932,14 @@ export default function Submissions() {
                     className="w-full text-left px-4 pt-4 pb-3 flex gap-3 items-start active:bg-primary/10 transition-colors"
                   >
                     <div className="w-16 h-16 rounded-lg bg-secondary overflow-hidden shrink-0">
-                      <img src={`/api${thumb}`} alt="" className="w-full h-full object-cover" />
+                      <MaskedImage
+                        src={`/api${thumb}`}
+                        alt=""
+                        regions={extractRegions(sub.aiIssuesJson)}
+                        frameIndex={0}
+                        className="w-full h-full"
+                        imgClassName="w-full h-full object-cover"
+                      />
                     </div>
                     <div className="flex-1 min-w-0 space-y-1">
                       <div className="flex items-start justify-between gap-2">
@@ -993,7 +1021,14 @@ export default function Submissions() {
                     >
                       <td className="px-5 py-3">
                         <div className="w-16 h-12 rounded-lg bg-secondary overflow-hidden">
-                          <img src={`/api${thumb}`} alt="" className="w-full h-full object-cover" />
+                          <MaskedImage
+                            src={`/api${thumb}`}
+                            alt=""
+                            regions={extractRegions(sub.aiIssuesJson)}
+                            frameIndex={0}
+                            className="w-full h-full"
+                            imgClassName="w-full h-full object-cover"
+                          />
                         </div>
                       </td>
                       <td className="px-3 py-3 font-medium">{sub.areaName}</td>

@@ -30,13 +30,34 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+>(({ className, children, style, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
+      // Cap height so a tall body (e.g. operator RecentDetailDialog: hero image
+      // + score + reasoning + issues + recommendations) doesn't push the
+      // dialog off the viewport on phones; `overflow-y-auto` lets the body
+      // scroll inside the dialog instead of growing past it. Width sits at
+      // 720 px by default on roomy viewports and shrinks to `100% − 2rem` on
+      // phones so the dialog always leaves a 1rem viewport gutter. Inline
+      // styles are used because Tailwind v4's JIT in this project doesn't
+      // reliably emit arbitrary `calc()` / `sm:max-w-2xl` values for us.
+      //
+      // Per-call-site overrides come last so a caller can widen the dialog
+      // (e.g. RecentDetailDialog wants 1100 px to fit a 3-column body) without
+      // losing the maxHeight / width defaults that keep the dialog inside the
+      // viewport. Spreading {...style} on top of the defaults is what makes
+      // that merge work — React's `style` prop is replace-not-merge by
+      // default, so we have to flatten it here.
+      style={{
+        maxHeight: "90dvh",
+        width: "calc(100% - 2rem)",
+        maxWidth: "720px",
+        ...style,
+      }}
       className={cn(
-        "dialog-spring fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg sm:rounded-lg",
+        "dialog-spring fixed left-[50%] top-[50%] z-50 grid translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg sm:rounded-lg overflow-y-auto",
         className
       )}
       {...props}

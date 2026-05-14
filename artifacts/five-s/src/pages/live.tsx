@@ -21,6 +21,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Link } from "wouter";
 import { useShiftConfig } from "@/lib/shift-config";
 import { useMinuteTick } from "@/hooks/use-minute-tick";
+import { MaskedImage, extractRegions } from "@/components/masked-image";
 
 // Renders a relative "x ago" label that ticks every minute via the shared
 // minute-tick subscription, and exposes the absolute timestamp on hover via a
@@ -209,7 +210,14 @@ function LowScoringRow({ item }: { item: LiveShiftLowScoring }) {
       data-testid={`card-low-${item.submissionId}`}
     >
       <div className="w-14 h-14 rounded-xl overflow-hidden bg-secondary shrink-0">
-        <img src={`/api${item.thumbnailUrl}`} alt="" className="w-full h-full object-cover" />
+        <MaskedImage
+          src={`/api${item.thumbnailUrl}`}
+          alt=""
+          regions={extractRegions((item as any).aiIssuesJson)}
+          frameIndex={0}
+          className="w-full h-full"
+          imgClassName="w-full h-full object-cover"
+        />
       </div>
       <div className="min-w-0 flex-1">
         <p className="font-medium text-[14px] truncate">{item.areaName}</p>

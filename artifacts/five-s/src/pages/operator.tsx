@@ -94,6 +94,7 @@ import { useFacilitySettingsChangeListener } from "@/lib/facility-settings";
 import { useEffectiveOperatorThresholds } from "@/lib/operator-thresholds";
 import { EnvironmentChecklist, normalizeEnvironment } from "@/lib/environment";
 import { useMinuteTick } from "@/hooks/use-minute-tick";
+import { MaskedImage, extractRegions } from "@/components/masked-image";
 
 const RECENT_STRIP_PREF_KEY = "operator.recentStrip.collapsed";
 
@@ -1209,7 +1210,7 @@ function RecentDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md rounded-2xl">
+      <DialogContent className="rounded-2xl" style={{ maxWidth: "1100px" }}>
         <DialogHeader>
           <DialogTitle className="text-xl">{data?.areaName ?? "Submission"}</DialogTitle>
           <DialogDescription>
@@ -1224,16 +1225,20 @@ function RecentDetailDialog({
           <div className="space-y-4">
             <div className="rounded-xl overflow-hidden bg-secondary/60">
               {data.mediaType === "video" && data.keyframesJson && data.keyframesJson.length > 0 ? (
-                <img
+                <MaskedImage
                   src={`/api${data.keyframesJson[0]}`}
                   alt={data.areaName}
-                  className="w-full h-56 object-cover"
+                  regions={extractRegions(data.aiIssuesJson)}
+                  frameIndex={0}
+                  className="w-full h-56"
                 />
               ) : (
-                <img
+                <MaskedImage
                   src={`/api${data.imageUrl}`}
                   alt={data.areaName}
-                  className="w-full h-56 object-cover"
+                  regions={extractRegions(data.aiIssuesJson)}
+                  frameIndex={0}
+                  className="w-full h-56"
                 />
               )}
             </div>
@@ -1307,79 +1312,90 @@ function RecentDetailDialog({
                     {Math.round(data.scoreTotal * 4)}%
                   </span>
                 </div>
-                {data.scoreJson && (
-                  <div className="space-y-2">
-                    <p className="eyebrow flex items-center gap-1.5">
-                      <Sparkles className="w-3 h-3" /> Why each pillar got the score it did
-                    </p>
-                    <ul className="space-y-2" data-testid="recent-pillar-reasoning">
-                      {Object.entries(data.scoreJson as Record<string, number>).map(([key, value]) => {
-                        const reason = (data.aiReasoningJson as Record<string, string> | null | undefined)?.[key];
-                        return (
-                          <li key={key} className="bg-secondary/60 p-3 rounded-xl">
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="capitalize text-[12.5px] font-semibold text-foreground/80">{key}</span>
-                              <span className="text-[12.5px] font-semibold tabular-nums">{value}/5</span>
-                            </div>
-                            {reason ? (
-                              <p
-                                className="text-[12.5px] leading-snug text-muted-foreground mt-1"
-                                data-testid={`recent-pillar-reasoning-${key}`}
-                              >
-                                {reason}
-                              </p>
-                            ) : (
-                              <p className="text-[12px] italic text-muted-foreground/70 mt-1">
-                                No reasoning recorded.
-                              </p>
+                {/* Three-column comparison at lg+ so the operator can read
+                    "why each pillar scored what it did", "what to fix", and
+                    "what the AI actually flagged" side-by-side. Stepped
+                    down at narrower breakpoints:
+                      lg+ (1024px) → 3 columns
+                      sm (640px)   → 2 columns, with Observed issues spanning
+                                     the full second row so the bottom item
+                                     doesn't dangle alone
+                      mobile       → single-column stack */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {data.scoreJson && (
+                    <div className="space-y-2 sm:col-span-1">
+                      <p className="eyebrow flex items-center gap-1.5">
+                        <Sparkles className="w-3 h-3" /> Why each pillar got the score it did
+                      </p>
+                      <ul className="space-y-2" data-testid="recent-pillar-reasoning">
+                        {Object.entries(data.scoreJson as Record<string, number>).map(([key, value]) => {
+                          const reason = (data.aiReasoningJson as Record<string, string> | null | undefined)?.[key];
+                          return (
+                            <li key={key} className="bg-secondary/60 p-3 rounded-xl">
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="capitalize text-[12.5px] font-semibold text-foreground/80">{key}</span>
+                                <span className="text-[12.5px] font-semibold tabular-nums">{value}/5</span>
+                              </div>
+                              {reason ? (
+                                <p
+                                  className="text-[12.5px] leading-snug text-muted-foreground mt-1"
+                                  data-testid={`recent-pillar-reasoning-${key}`}
+                                >
+                                  {reason}
+                                </p>
+                              ) : (
+                                <p className="text-[12px] italic text-muted-foreground/70 mt-1">
+                                  No reasoning recorded.
+                                </p>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                  {data.suggestionsJson && data.suggestionsJson.length > 0 && (
+                    <div className="space-y-1.5 sm:col-span-1">
+                      <p className="eyebrow flex items-center gap-1.5">
+                        <Info className="w-3 h-3" /> Action items
+                      </p>
+                      <ul className="space-y-2">
+                        {data.suggestionsJson.map((s: string, i: number) => (
+                          <SuggestionRow
+                            key={i}
+                            text={s}
+                            index={i}
+                            // suggestionsJson is derived 1:1 from
+                            // aiRecommendationsJson on the server, so the
+                            // indices line up. Older submissions lack the
+                            // recommendations array entirely; SuggestionRow
+                            // falls back to keyword inference when severity
+                            // is null.
+                            aiSeverity={normalizeAiSeverity(
+                              data.aiRecommendationsJson?.[i]?.severity ?? null,
                             )}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                )}
-                {data.suggestionsJson && data.suggestionsJson.length > 0 && (
-                  <div className="space-y-1.5">
-                    <p className="eyebrow flex items-center gap-1.5">
-                      <Info className="w-3 h-3" /> Action items
-                    </p>
-                    <ul className="space-y-2">
-                      {data.suggestionsJson.map((s: string, i: number) => (
-                        <SuggestionRow
-                          key={i}
-                          text={s}
-                          index={i}
-                          // suggestionsJson is derived 1:1 from aiRecommendationsJson
-                          // on the server (`recommendations.map(r => r.action)`),
-                          // so the indices line up. Older submissions lack the
-                          // recommendations array entirely; SuggestionRow falls
-                          // back to keyword inference when severity is null.
-                          aiSeverity={normalizeAiSeverity(
-                            data.aiRecommendationsJson?.[i]?.severity ?? null,
-                          )}
-                        />
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                          />
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {data.aiIssuesJson && data.aiIssuesJson.length > 0 && (
+                    <div
+                      className="space-y-1.5 sm:col-span-2 lg:col-span-1"
+                      data-testid="recent-observed-issues"
+                    >
+                      <p className="eyebrow flex items-center gap-1.5">
+                        <AlertTriangle className="w-3 h-3" /> Observed issues
+                      </p>
+                      <ul className="space-y-2">
+                        {data.aiIssuesJson.map((issue, i) => (
+                          <IssueRow key={i} issue={issue} index={i} />
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
               </>
-            )}
-            {/* "Observed issues" sits underneath "Action items" so the operator
-                sees what the AI flagged (e.g. "leak observed near pump base")
-                alongside the recommended fix. Hidden entirely for older
-                submissions whose payload predates aiIssuesJson. */}
-            {data.aiIssuesJson && data.aiIssuesJson.length > 0 && (
-              <div className="space-y-1.5" data-testid="recent-observed-issues">
-                <p className="eyebrow flex items-center gap-1.5">
-                  <AlertTriangle className="w-3 h-3" /> Observed issues
-                </p>
-                <ul className="space-y-2">
-                  {data.aiIssuesJson.map((issue, i) => (
-                    <IssueRow key={i} issue={issue} index={i} />
-                  ))}
-                </ul>
-              </div>
             )}
           </div>
         )}

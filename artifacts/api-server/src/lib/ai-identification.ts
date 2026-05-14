@@ -144,17 +144,24 @@ export async function callIdentificationVLM(
   // ai_scoring_metrics table the scoring pipeline writes to. Logging is
   // best-effort: a DB hiccup must never break identification.
   const tStart = Date.now();
+  // Anthropic's OpenAI-compat endpoint rejects `response_format: json_object`
+  // (json_schema only). Mirror the scoring path: omit it for Claude and
+  // rely on the prompt + the fence-strip below.
+  const isClaude = /^claude/i.test(model);
+  const baseRequest: Record<string, unknown> = {
+    model,
+    max_completion_tokens: 1024,
+    messages: [
+      { role: "system", content: IDENTIFICATION_PROMPT },
+      { role: "user", content },
+    ],
+  };
+  if (!isClaude) {
+    baseRequest.response_format = { type: "json_object" };
+  }
   let response: Awaited<ReturnType<typeof openai.chat.completions.create>>;
   try {
-    response = await openai.chat.completions.create({
-      model,
-      response_format: { type: "json_object" },
-      max_completion_tokens: 1024,
-      messages: [
-        { role: "system", content: IDENTIFICATION_PROMPT },
-        { role: "user", content },
-      ],
-    });
+    response = await openai.chat.completions.create(baseRequest as any);
   } catch (err) {
     // Even on a thrown call, record the time we spent waiting so a chronic
     // upstream timeout shows up in the latency dashboard. Token fields stay
@@ -200,7 +207,11 @@ export async function callIdentificationVLM(
     logger.warn({ err }, "failed to record AI identification metric");
   }
 
-  const text = response.choices[0]?.message?.content || "{}";
+  const rawText = response.choices[0]?.message?.content || "{}";
+  // Claude wraps JSON output in ```json ... ``` fences; strip a single fence
+  // so JSON.parse sees the raw object. No-op for unfenced output.
+  const fenceMatch = rawText.trim().match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i);
+  const text = fenceMatch ? fenceMatch[1].trim() : rawText.trim();
   const parsed = JSON.parse(text);
   const rawCandidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
 
