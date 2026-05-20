@@ -1,10 +1,9 @@
 import { useAuth } from "@/lib/auth";
 import { Link, useLocation } from "wouter";
-import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List, Inbox, Activity, Bell, Sliders, Clock, Bot } from "lucide-react";
+import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List, Inbox, Settings } from "lucide-react";
 import { useGetEscalationCount, useGetMyNotificationPreferences } from "@workspace/api-client-react";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { QuietHoursStatusBadge } from "@/components/quiet-hours-status-badge";
 import { useShiftConfig } from "@/lib/shift-config";
 
@@ -54,16 +53,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
     query: { enabled: !isOperator, refetchInterval: 60_000, refetchOnWindowFocus: true },
   });
 
+  // Manager top-nav: only the operational pages. Configuration-style routes
+  // (Notifications, Thresholds, Shifts, AI model, Theme) live under
+  // /settings now, reached via the gear icon top-right. Live Shift is no
+  // longer its own page — it surfaces above Factory Overview on /dashboard.
+  // The /live route is still wired so deep-links from emails/escalations
+  // continue to work; it's just not in the tab strip anymore.
   const tabs = [
-    { href: "/live", label: "Live shift", icon: Activity, badge: 0 },
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, badge: 0 },
     { href: "/submissions", label: "Submissions", icon: List, badge: 0 },
     { href: "/areas", label: "Areas", icon: LayoutGrid, badge: 0 },
     { href: "/escalations", label: "Escalations", icon: Inbox, badge: openCount },
-    { href: "/notifications", label: "Notifications", icon: Bell, badge: 0 },
-    { href: "/operator-thresholds", label: "Thresholds", icon: Sliders, badge: 0 },
-    { href: "/facility-settings", label: "Shifts", icon: Clock, badge: 0 },
-    { href: "/ai-settings", label: "AI model", icon: Bot, badge: 0 },
   ];
 
   return (
@@ -93,7 +93,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <span className="text-[13px] text-muted-foreground hidden sm:inline-block ml-2">
               {user.email}
             </span>
-            <ThemeToggle />
+            {/* Settings gear — managers only. Hosts the configuration tabs
+                (notifications, thresholds, shifts, AI, theme) that used to
+                live in the top nav. Sits left of Sign-out so the chrome
+                reads as "configure | leave". Operators don't see it; the
+                settings surface is manager-only. */}
+            {!isOperator && (
+              <Link
+                href="/settings"
+                className="p-2 rounded-full text-muted-foreground hover:text-foreground hover-overlay transition-colors"
+                title="Settings & Stats"
+                aria-label="Settings & Stats"
+                data-testid="nav-settings"
+              >
+                <Settings className="w-[18px] h-[18px]" />
+              </Link>
+            )}
             <button
               onClick={logout}
               className="p-2 -mr-2 rounded-full text-muted-foreground hover:text-foreground hover-overlay transition-colors"

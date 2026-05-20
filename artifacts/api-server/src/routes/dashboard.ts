@@ -10,6 +10,7 @@ import {
   usersTable,
   areaAssignmentsTable,
   aiScoringMetricsTable,
+  aiScoreCacheTable,
   AREA_DETECTION_EVENT_KIND,
   type AreaDetectionEventKind,
 } from "@workspace/db";
@@ -1245,6 +1246,60 @@ router.get(
         createdAt: e.createdAt,
       })),
     );
+  },
+);
+
+/**
+ * Surface the AI-score cache's effectiveness: total cached entries, total
+ * hits today, an overall hit-rate, and the top 5 areas by cached-hit
+ * count. Reads ai_score_cache (hit_count, last_hit_at) joined with areas
+ * for display. Powers the Cache hit rate panel in Settings → AI ops stats.
+ */
+router.get(
+  "/dashboard/ai-cache",
+  authMiddleware,
+  requireRole("MANAGER"),
+  async (_req, res): Promise<void> => {
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+    const [totals] = await db
+      .select({
+        entries: count(),
+        totalHits: sql<number>`COALESCE(SUM(${aiScoreCacheTable.hitCount}), 0)::int`,
+        hitsToday: sql<number>`COALESCE(SUM(CASE WHEN ${aiScoreCacheTable.lastHitAt} >= ${startOfDay} THEN ${aiScoreCacheTable.hitCount} ELSE 0 END), 0)::int`,
+      })
+      .from(aiScoreCacheTable);
+
+    const topAreas = await db
+      .select({
+        areaId: aiScoreCacheTable.areaId,
+        areaName: areasTable.name,
+        hits: sql<number>`SUM(${aiScoreCacheTable.hitCount})::int`,
+        entries: count(),
+      })
+      .from(aiScoreCacheTable)
+      .innerJoin(areasTable, eq(aiScoreCacheTable.areaId, areasTable.id))
+      .groupBy(aiScoreCacheTable.areaId, areasTable.name)
+      .orderBy(desc(sql`SUM(${aiScoreCacheTable.hitCount})`))
+      .limit(5);
+
+    res.json({
+      entries: totals?.entries ?? 0,
+      totalHits: totals?.totalHits ?? 0,
+      hitsToday: totals?.hitsToday ?? 0,
+      // hits / (hits + entries) is roughly "of every scoring request we
+      // could have made, how many did we skip via cache". Imprecise (we
+      // don't track misses separately) but useful as a directional metric.
+      hitRate:
+        (totals?.totalHits ?? 0) + (totals?.entries ?? 0) > 0
+          ? Math.round(
+              ((totals?.totalHits ?? 0) /
+                ((totals?.totalHits ?? 0) + (totals?.entries ?? 0))) *
+                100,
+            )
+          : 0,
+      topAreas,
+    });
   },
 );
 

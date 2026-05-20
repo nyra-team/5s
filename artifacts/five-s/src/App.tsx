@@ -1,6 +1,7 @@
 import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MotionConfig } from "framer-motion";
+import { Suspense, lazy } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/lib/auth";
@@ -8,29 +9,46 @@ import { ThemeProvider } from "@/lib/theme";
 import { Layout } from "@/components/layout";
 import { ProtectedRoute } from "@/components/protected-route";
 
-// Pages
+// Pages that ship on the initial paint (login flow + operator home).
+// Anything operators don't need on first paint is lazy-imported below so
+// the operator's bundle doesn't carry Recharts / dashboard panels / etc.
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import ResetPassword from "@/pages/reset-password";
 import OperatorHome from "@/pages/operator";
-import Dashboard from "@/pages/dashboard";
-import Submissions from "@/pages/submissions";
-import Areas from "@/pages/areas";
-import Escalations from "@/pages/escalations";
-import LiveShift from "@/pages/live";
-import Notifications from "@/pages/notifications";
-import OperatorThresholds from "@/pages/operator-thresholds";
-import AiSettingsPage from "@/pages/ai-settings";
-import FacilitySettingsPage from "@/pages/facility-settings";
+
+// Manager-only pages — lazy so the operator path doesn't pay for them.
+// Each becomes its own bundle chunk on `pnpm build`.
+const Dashboard = lazy(() => import("@/pages/dashboard"));
+const Submissions = lazy(() => import("@/pages/submissions"));
+const Areas = lazy(() => import("@/pages/areas"));
+const Escalations = lazy(() => import("@/pages/escalations"));
+const LiveShift = lazy(() => import("@/pages/live"));
+const Notifications = lazy(() => import("@/pages/notifications"));
+const OperatorThresholds = lazy(() => import("@/pages/operator-thresholds"));
+const AiSettingsPage = lazy(() => import("@/pages/ai-settings"));
+const FacilitySettingsPage = lazy(() => import("@/pages/facility-settings"));
+const SettingsPage = lazy(() => import("@/pages/settings"));
+
+// Light-weight loader shown while a lazy route resolves. Sub-100 ms on a
+// warm cache; the spinner is mostly for cold first-loads or slow networks.
+function RouteLoading() {
+  return (
+    <div className="flex justify-center py-20">
+      <div className="animate-spin rounded-full h-6 w-6 border-2 border-muted border-t-primary" />
+    </div>
+  );
+}
 
 const queryClient = new QueryClient();
 
 function Router() {
   return (
+    <Suspense fallback={<RouteLoading />}>
     <Switch>
       <Route path="/login" component={Login} />
       <Route path="/reset-password" component={ResetPassword} />
-      
+
       <Route path="/">
         <ProtectedRoute allowedRoles={["OPERATOR"]}>
           <Layout>
@@ -111,8 +129,17 @@ function Router() {
         </ProtectedRoute>
       </Route>
 
+      <Route path="/settings">
+        <ProtectedRoute allowedRoles={["MANAGER"]}>
+          <Layout>
+            <SettingsPage />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+
       <Route component={NotFound} />
     </Switch>
+    </Suspense>
   );
 }
 

@@ -9,6 +9,9 @@
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "test": "vitest run",
     "test:watch": "vitest",
+    "e2e": "node e2e/auth-flow.mjs && node e2e/manager-flow.mjs",
+    "e2e:auth": "node e2e/auth-flow.mjs",
+    "e2e:manager": "node e2e/manager-flow.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
@@ -81,5 +84,8 @@
     "vitest": "^3.2.4",
     "wouter": "^3.3.5",
     "zod": "catalog:"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.105.4"
   }
 }

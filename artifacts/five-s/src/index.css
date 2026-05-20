@@ -1,7 +1,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap");
 @plugin "@tailwindcss/typography";
+
+/* Plus Jakarta Sans (heading font) + Inter (body) are loaded via <link> in
+   index.html. Loading them through a CSS @import here breaks Tailwind v4's
+   @import "tailwindcss" expansion (CSS spec: every @import must precede all
+   other declarations, but tailwind inlines a huge ruleset ahead of it). */
 
 @custom-variant dark (&:is(.dark *));
 

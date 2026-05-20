@@ -2,7 +2,8 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useLocation } from "wouter";
-import { useState } from "react";
+import { useState, useEffect, forwardRef } from "react";
+import { getSupabase } from "@/lib/supabase-client";
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -13,8 +14,39 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Eye, EyeOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { ThemeToggle } from "@/components/theme-toggle";
+
+// Mirrors the PasswordInput on the login page so the reset flow shows the
+// same eye toggle. Inline copy is intentional: keeping the helper inside
+// each page avoids a circular-ish import between auth screens and an even
+// thinner shared component file that's only used twice in the app.
+type PasswordInputProps = React.ComponentProps<typeof Input>;
+const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
+  function PasswordInput({ className, ...props }, ref) {
+    const [visible, setVisible] = useState(false);
+    return (
+      <div className="relative">
+        <Input
+          ref={ref}
+          {...props}
+          type={visible ? "text" : "password"}
+          className={`${className ?? ""} pr-11`}
+        />
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label={visible ? "Hide password" : "Show password"}
+          onClick={() => setVisible((v) => !v)}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:text-foreground"
+        >
+          {visible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+        </button>
+      </div>
+    );
+  },
+);
 
 const resetSchema = z
   .object({
@@ -35,11 +67,43 @@ export default function ResetPassword() {
   const { toast } = useToast();
   const [pending, setPending] = useState(false);
   const [done, setDone] = useState(false);
+  // When the user lands here via Supabase's hosted email, the URL carries
+  // `?code=…` instead of our `?token=…`. supabase-js auto-detects the
+  // code on page load and exchanges it for a session — we just have to
+  // wait one tick before reading the session. `null` = haven't checked
+  // yet; `{ accessToken: null }` = no Supabase session present;
+  // a real value = active session, the form should submit via the
+  // Supabase path.
+  const [supabaseAccessToken, setSupabaseAccessToken] = useState<string | null | undefined>(undefined);
 
   // Wouter's <Route> doesn't surface query params, so read them off the
-  // browser URL directly. The token is mandatory; without it the page
-  // explains what went wrong and links back to the request form.
+  // browser URL directly. The token is for OUR backend-issued recovery
+  // flow; absence is fine when the user came in through Supabase email.
   const token = new URLSearchParams(window.location.search).get("token");
+
+  useEffect(() => {
+    let cancelled = false;
+    // If our own token is present we don't need to look up the Supabase
+    // session — the existing reset flow handles it.
+    if (token) {
+      setSupabaseAccessToken(null);
+      return;
+    }
+    const supabase = getSupabase();
+    if (!supabase) {
+      setSupabaseAccessToken(null);
+      return;
+    }
+    // Give supabase-js a tick to exchange the URL `?code=` for a session.
+    setTimeout(async () => {
+      const { data } = await supabase.auth.getSession();
+      if (cancelled) return;
+      setSupabaseAccessToken(data.session?.access_token ?? null);
+    }, 50);
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   const form = useForm<ResetValues>({
     resolver: zodResolver(resetSchema),
@@ -47,23 +111,84 @@ export default function ResetPassword() {
   });
 
   const onSubmit = async (values: ResetValues) => {
-    if (!token) return;
     setPending(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, password: values.password }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
+      if (token) {
+        // Backend-issued reset token flow — existing path. Hits our
+        // /auth/reset-password which validates the token + rotates the
+        // bcrypt hash in public.users (and mirrors into auth.users when
+        // Supabase Auth is configured server-side).
+        const res = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, password: values.password }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          toast({
+            variant: "destructive",
+            title: "Couldn't reset password",
+            description: body?.error ?? `Request failed (${res.status})`,
+          });
+          return;
+        }
+      } else if (supabaseAccessToken) {
+        // Supabase-recovery-email flow — the user clicked an emailed
+        // link, supabase-js exchanged the magic-link code for a session,
+        // we now have an access token. Two-step:
+        //   1. Update auth.users via supabase.auth.updateUser so future
+        //      Supabase emails work with the new credential.
+        //   2. Mirror into public.users so OUR JWT login accepts the new
+        //      password (validated server-side via the access token).
+        const supabase = getSupabase();
+        if (!supabase) {
+          toast({
+            variant: "destructive",
+            title: "Couldn't reset password",
+            description: "Supabase client unavailable.",
+          });
+          return;
+        }
+        const { error: supError } = await supabase.auth.updateUser({ password: values.password });
+        if (supError) {
+          toast({
+            variant: "destructive",
+            title: "Couldn't reset password",
+            description: supError.message,
+          });
+          return;
+        }
+        const syncRes = await fetch(`${API_BASE_URL}/api/auth/sync-password-from-supabase`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            access_token: supabaseAccessToken,
+            password: values.password,
+          }),
+        });
+        if (!syncRes.ok) {
+          const syncBody = await syncRes.json().catch(() => ({}));
+          toast({
+            variant: "destructive",
+            title: "Password set on Supabase but app sync failed",
+            description: syncBody?.error ?? `Sync failed (${syncRes.status})`,
+          });
+          return;
+        }
+        // Sign out the recovery session so a stale Supabase token can't
+        // linger in storage after the reset completes.
+        await supabase.auth.signOut().catch(() => {});
+      } else {
+        // No backend token AND no Supabase session — the user hit this
+        // page directly or with an invalid link.
         toast({
           variant: "destructive",
-          title: "Couldn't reset password",
-          description: body?.error ?? `Request failed (${res.status})`,
+          title: "Reset link is missing or expired",
+          description: "Request a new password reset from the sign-in page.",
         });
         return;
       }
+
       setDone(true);
       toast({
         title: "Password updated",
@@ -114,9 +239,17 @@ export default function ResetPassword() {
         </div>
 
         <div className="bg-card rounded-2xl shadow-elevated p-7 sm:p-8 border border-slate-200/70 dark:border-border">
-          {!token ? (
+          {/* Three rendering states beyond done:
+                a) we have our backend token (`token`) → show the form
+                b) we have a Supabase recovery session → show the form
+                c) we have neither (and the Supabase check has resolved) →
+                   show the "missing link" guidance
+              `supabaseAccessToken === undefined` means we're still
+              checking, so render the form skeleton anyway to avoid a
+              flash of error UI during the ~50 ms post-mount tick. */}
+          {!token && supabaseAccessToken === null ? (
             <div className="space-y-4 text-[14px]">
-              <p>This reset link is missing its token. Request a new one from the sign-in page.</p>
+              <p>This reset link is missing or expired. Request a new one from the sign-in page.</p>
               <Button
                 type="button"
                 onClick={() => setLocation("/login")}
@@ -137,9 +270,8 @@ export default function ResetPassword() {
                     <FormItem>
                       <FormLabel className="text-[13px] font-medium text-muted-foreground">New password</FormLabel>
                       <FormControl>
-                        <Input
+                        <PasswordInput
                           placeholder="At least 8 characters"
-                          type="password"
                           autoComplete="new-password"
                           className="h-12 rounded-xl text-[15px] bg-secondary/60 border-transparent focus-visible:bg-card focus-visible:border-ring"
                           {...field}
@@ -156,9 +288,8 @@ export default function ResetPassword() {
                     <FormItem>
                       <FormLabel className="text-[13px] font-medium text-muted-foreground">Confirm password</FormLabel>
                       <FormControl>
-                        <Input
+                        <PasswordInput
                           placeholder="Re-enter the new password"
-                          type="password"
                           autoComplete="new-password"
                           className="h-12 rounded-xl text-[15px] bg-secondary/60 border-transparent focus-visible:bg-card focus-visible:border-ring"
                           {...field}

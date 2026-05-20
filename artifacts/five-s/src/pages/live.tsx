@@ -13,7 +13,8 @@ import {
   type CreateNudgeBodyShift,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Bell, BellOff, BellRing, CheckCircle2, Clock, Eye, Inbox, MapPin, Sparkles } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { Activity, AlertTriangle, Bell, BellOff, BellRing, CheckCircle2, ChevronRight, Clock, Eye, Inbox, MapPin, Sparkles, type LucideIcon } from "lucide-react";
 import { format, formatDistanceToNowStrict } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -321,7 +322,19 @@ function OpenEscalationRow({ item }: { item: Escalation }) {
   );
 }
 
-export default function LiveShiftPage() {
+/**
+ * Live Shift body — the 4 sections (pending areas, overdue checks, low
+ * scoring, open escalations). Renders in two modes:
+ *
+ *   `compact={true}`  → 4 summary tiles on the Manager Dashboard. One
+ *                       tile per category, count + a 1-line "worst
+ *                       offender" preview + a click-through to /live.
+ *                       Optimised for executive scan; no laundry list.
+ *   `compact={false}` → the standalone /live page. Full detailed cards
+ *                       per row so a manager triaging the shift can
+ *                       nudge individual operators inline.
+ */
+export function LiveShiftBlock({ compact = false }: { compact?: boolean } = {}) {
   const { data, isLoading } = useGetLiveShift({
     query: { refetchInterval: 30_000, queryKey: getGetLiveShiftQueryKey() },
   });
@@ -329,8 +342,8 @@ export default function LiveShiftPage() {
 
   if (isLoading || !data) {
     return (
-      <div className="flex justify-center py-16">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-muted border-t-primary"></div>
+      <div className="flex justify-center py-10">
+        <div className="animate-spin rounded-full h-6 w-6 border-2 border-muted border-t-primary"></div>
       </div>
     );
   }
@@ -340,19 +353,18 @@ export default function LiveShiftPage() {
   const endsAt = new Date(data.endsAt);
   const totalThings =
     data.pendingAreas.length + data.overdueChecks.length + data.lowScoring.length + data.openEscalations.length;
+  const summaryLine = `${formatDayTime(startsAt)} – ${formatClockTime(endsAt)} ${tzLabel} · ${
+    totalThings === 0 ? "all clear" : `${totalThings} thing${totalThings === 1 ? "" : "s"} need attention`
+  }`;
 
+  // ───── Compact mode (dashboard): tiles + click-to-expand inline ─────
+  if (compact) {
+    return <CompactLiveShift data={data} shift={shift} summaryLine={summaryLine} />;
+  }
+
+  // ───── Full mode (/live page): the detailed card grids ─────
   return (
-    <div className="space-y-8 pb-12">
-      <header className="space-y-2">
-        <p className="eyebrow inline-flex items-center gap-1.5">
-          <Activity className="w-3 h-3" /> Now
-        </p>
-        <h1 className="text-[26px] sm:text-[34px] font-semibold tracking-tight leading-tight">Live shift {shift}</h1>
-        <p className="text-muted-foreground text-[14px] sm:text-[15px] break-words">
-          {formatDayTime(startsAt)} – {formatClockTime(endsAt)} {tzLabel} · {totalThings === 0 ? "all clear" : `${totalThings} thing${totalThings === 1 ? "" : "s"} need attention`}
-        </p>
-      </header>
-
+    <div className="space-y-8">
       <section className="space-y-3">
         <h2 className="text-[15px] font-semibold inline-flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-primary" /> Pending areas
@@ -416,6 +428,330 @@ export default function LiveShiftPage() {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+/**
+ * Click-to-expand compact view used on the manager dashboard. Each tile
+ * is a button; clicking it pins the inline detail panel for that
+ * category below the tile row. Click again (or click another tile) to
+ * swap. Keeps the dashboard scannable while making the data one click
+ * away — no page navigation to /live for the common case.
+ */
+type LiveShiftCategory = "pending" | "overdue" | "low" | "esc";
+
+function CompactLiveShift({
+  data,
+  shift,
+  summaryLine,
+}: {
+  data: ReturnType<typeof useGetLiveShift>["data"] & object;
+  shift: CreateNudgeBodyShift;
+  summaryLine: string;
+}) {
+  const [openTile, setOpenTile] = useState<LiveShiftCategory | null>(null);
+
+  if (!data) return null;
+
+  const tileFor = (cat: LiveShiftCategory) => () =>
+    setOpenTile((current) => (current === cat ? null : cat));
+
+  // Worst-offender previews. Each is computed defensively because the
+  // upstream lists can be empty.
+  const firstPending = data.pendingAreas[0]?.areaName ?? null;
+  // overdueChecks ships sorted by overdueSinceMinutes desc (api side),
+  // so [0] is already the worst offender.
+  const worstOverdueMinutes = data.overdueChecks[0]?.overdueSinceMinutes ?? 0;
+  const worstOverdueLine = data.overdueChecks.length > 0
+    ? `${formatOverdueDuration(worstOverdueMinutes)} overdue · top: ${data.overdueChecks[0]?.areaName ?? ""}`
+    : null;
+  const worstLow = data.lowScoring.reduce<typeof data.lowScoring[number] | null>(
+    (acc, l) => (acc === null || l.scorePercent < acc.scorePercent ? l : acc),
+    null,
+  );
+  const worstLowLine = worstLow ? `${worstLow.scorePercent}% · ${worstLow.areaName}` : null;
+  const oldestEsc = data.openEscalations[0];
+  const escLine = oldestEsc ? `oldest: ${oldestEsc.areaName ?? "—"}` : null;
+
+  const totalThings =
+    data.pendingAreas.length + data.overdueChecks.length + data.lowScoring.length + data.openEscalations.length;
+
+  return (
+    <div className="space-y-4">
+      <header className="flex items-baseline justify-between">
+        <div className="space-y-1">
+          <p className="eyebrow inline-flex items-center gap-1.5">
+            <Activity className="w-3 h-3" /> Live shift {shift}
+          </p>
+          <p className="text-muted-foreground text-[13px]">{summaryLine}</p>
+        </div>
+        {totalThings > 0 && (
+          <Link
+            href="/live"
+            className="text-[12.5px] text-primary hover:underline inline-flex items-center gap-1"
+            data-testid="live-shift-view-all"
+          >
+            Open full triage <ChevronRight className="w-3.5 h-3.5" />
+          </Link>
+        )}
+      </header>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="live-shift-summary-tiles">
+        <SummaryTile
+          icon={Sparkles}
+          tone="neutral"
+          label="Pending areas"
+          count={data.pendingAreas.length}
+          preview={firstPending}
+          onClick={tileFor("pending")}
+          active={openTile === "pending"}
+          testId="tile-pending"
+        />
+        <SummaryTile
+          icon={Clock}
+          tone="warn"
+          label="Overdue checks"
+          count={data.overdueChecks.length}
+          preview={worstOverdueLine}
+          onClick={tileFor("overdue")}
+          active={openTile === "overdue"}
+          testId="tile-overdue"
+        />
+        <SummaryTile
+          icon={AlertTriangle}
+          tone="bad"
+          label="Low scoring"
+          count={data.lowScoring.length}
+          preview={worstLowLine}
+          onClick={tileFor("low")}
+          active={openTile === "low"}
+          testId="tile-low-scoring"
+        />
+        <SummaryTile
+          icon={Inbox}
+          tone="bad"
+          label="Open escalations"
+          count={data.openEscalations.length}
+          preview={escLine}
+          onClick={tileFor("esc")}
+          active={openTile === "esc"}
+          testId="tile-escalations"
+        />
+      </div>
+
+      {/* Inline detail panel for the currently-open tile. We mount only
+          one at a time and keep the markup tight (cards reuse the same
+          components as /live so the nudge / acknowledge / resolve actions
+          work identically). Empty-state messages match the full-mode
+          surface so a manager who knows /live recognises them. */}
+      {openTile && (
+        <ExpandedPanel
+          title={
+            openTile === "pending" ? "Pending areas" :
+            openTile === "overdue" ? "Overdue checks" :
+            openTile === "low" ? "Low scoring this shift" :
+            "Open escalations"
+          }
+          onClose={() => setOpenTile(null)}
+          testId={`expanded-panel-${openTile}`}
+        >
+          {openTile === "pending" && (
+            data.pendingAreas.length === 0 ? (
+              <p className="text-[13px] text-muted-foreground">Every area has at least one submission this shift.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {data.pendingAreas.map((p) => (
+                  <PendingAreaCard key={p.areaId} item={p} shift={shift} />
+                ))}
+              </div>
+            )
+          )}
+          {openTile === "overdue" && (
+            data.overdueChecks.length === 0 ? (
+              <p className="text-[13px] text-muted-foreground">Cadence is on track.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {data.overdueChecks.map((o) => (
+                  <OverdueCard key={`${o.areaId}-${o.machine ?? "area"}`} item={o} shift={shift} />
+                ))}
+              </div>
+            )
+          )}
+          {openTile === "low" && (
+            data.lowScoring.length === 0 ? (
+              <p className="text-[13px] text-muted-foreground">No submissions below 60% so far.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {data.lowScoring.map((l) => (
+                  <LowScoringRow key={l.submissionId} item={l} />
+                ))}
+              </div>
+            )
+          )}
+          {openTile === "esc" && (
+            data.openEscalations.length === 0 ? (
+              <p className="text-[13px] text-muted-foreground">No open escalations.</p>
+            ) : (
+              <div className="space-y-3">
+                {data.openEscalations.map((e) => (
+                  <OpenEscalationRow key={e.id} item={e} />
+                ))}
+              </div>
+            )
+          )}
+        </ExpandedPanel>
+      )}
+    </div>
+  );
+}
+
+function ExpandedPanel({
+  title,
+  onClose,
+  testId,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  testId?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      className="bg-card rounded-2xl shadow-soft border border-slate-200/70 dark:border-border p-5 sm:p-6 space-y-3"
+      data-testid={testId}
+    >
+      <div className="flex items-center justify-between">
+        <h3 className="text-[15px] font-semibold tracking-tight">{title}</h3>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-[12.5px] text-muted-foreground hover:text-foreground transition-colors"
+          aria-label={`Close ${title}`}
+        >
+          Hide
+        </button>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+
+/**
+ * Format a minutes count into the densest unit that still reads cleanly:
+ * < 60m → "Nm", < 48h → "Nh", otherwise "Nd". Anything past 2 days is
+ * almost always an area that was never set up — bucketing to days makes
+ * that visible at a glance instead of buried inside a 4-digit minute count.
+ */
+function formatOverdueDuration(totalMinutes: number): string {
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  if (totalMinutes < 48 * 60) return `${Math.round(totalMinutes / 60)}h`;
+  return `${Math.round(totalMinutes / (60 * 24))}d`;
+}
+
+/**
+ * One summary tile for the compact LiveShiftBlock. Click-through links to
+ * the relevant detail surface (/live, /submissions, /escalations). Tone
+ * controls only the count's color — the card itself stays white so a
+ * dashboard full of tiles doesn't look like a Christmas tree.
+ */
+function SummaryTile({
+  icon: Icon,
+  tone,
+  label,
+  count,
+  preview,
+  onClick,
+  active,
+  testId,
+}: {
+  icon: LucideIcon;
+  tone: "neutral" | "warn" | "bad";
+  label: string;
+  count: number;
+  preview: string | null;
+  onClick: () => void;
+  active?: boolean;
+  testId?: string;
+}) {
+  const countTone =
+    tone === "bad" && count > 0
+      ? "text-rose-600 dark:text-rose-400"
+      : tone === "warn" && count > 0
+      ? "text-amber-600 dark:text-amber-400"
+      : "text-foreground";
+  const iconTone =
+    tone === "bad"
+      ? "text-rose-500"
+      : tone === "warn"
+      ? "text-amber-600 dark:text-amber-400"
+      : "text-primary";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      // The `active` ring gives clear feedback for which tile's detail
+      // panel is currently expanded below. Hover lifts subtly so a
+      // manager scanning the dashboard sees the tiles are clickable.
+      className={`text-left bg-card rounded-2xl shadow-soft p-4 flex flex-col gap-2 transition-all hover:shadow-elevated cursor-pointer ${
+        active
+          ? "ring-2 ring-primary/60 ring-offset-2 ring-offset-background"
+          : ""
+      }`}
+      data-testid={testId}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-[12px] font-medium text-muted-foreground inline-flex items-center gap-1.5">
+          <Icon className={`w-3.5 h-3.5 ${iconTone}`} /> {label}
+        </span>
+        <ChevronRight
+          className={`w-3.5 h-3.5 text-muted-foreground/60 transition-transform ${active ? "rotate-90" : ""}`}
+        />
+      </div>
+      <div className={`text-[28px] font-semibold tabular-nums leading-none ${countTone}`}>
+        {count}
+      </div>
+      <p className="text-[12px] text-muted-foreground truncate min-h-[1em]">
+        {count === 0 ? "All clear" : preview ?? ""}
+      </p>
+    </button>
+  );
+}
+
+export default function LiveShiftPage() {
+  const { data } = useGetLiveShift({
+    query: { refetchInterval: 30_000, queryKey: getGetLiveShiftQueryKey() },
+  });
+  const { tzLabel, formatClockTime, formatDayTime } = useShiftConfig();
+
+  const shift = (data?.shift as CreateNudgeBodyShift | undefined) ?? "A";
+  const startsAt = data ? new Date(data.startsAt) : null;
+  const endsAt = data ? new Date(data.endsAt) : null;
+  const totalThings = data
+    ? data.pendingAreas.length + data.overdueChecks.length + data.lowScoring.length + data.openEscalations.length
+    : 0;
+
+  return (
+    <div className="space-y-8 pb-12">
+      <header className="space-y-2">
+        <p className="eyebrow inline-flex items-center gap-1.5">
+          <Activity className="w-3 h-3" /> Now
+        </p>
+        <h1 className="text-[26px] sm:text-[34px] font-semibold tracking-tight leading-tight">
+          Live shift {shift}
+        </h1>
+        {startsAt && endsAt && (
+          <p className="text-muted-foreground text-[14px] sm:text-[15px] break-words">
+            {formatDayTime(startsAt)} – {formatClockTime(endsAt)} {tzLabel} ·{" "}
+            {totalThings === 0 ? "all clear" : `${totalThings} thing${totalThings === 1 ? "" : "s"} need attention`}
+          </p>
+        )}
+      </header>
+      <LiveShiftBlock />
     </div>
   );
 }

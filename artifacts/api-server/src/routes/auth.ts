@@ -1,12 +1,18 @@
 import { Router, type IRouter } from "express";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db, usersTable, passwordResetTokensTable } from "@workspace/db";
 import { LoginBody } from "@workspace/api-zod";
 import { signToken, authMiddleware } from "../lib/auth";
 import { logger } from "../lib/logger";
+import { isDev } from "../lib/env";
+import {
+  ensureAuthUserExists,
+  updateAuthUserPassword,
+  isSupabaseAuthEnabled,
+} from "../lib/supabase-auth";
 
 const router: IRouter = Router();
 
@@ -63,12 +69,20 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
+  // rememberMe is not in the generated LoginBody schema yet (would need
+  // an openapi spec update + regen). Read it loosely from the raw body
+  // for now — coerce only boolean true, treat anything else as the
+  // 24h-default flow.
+  const rememberMe = (req.body as { rememberMe?: unknown })?.rememberMe === true;
 
   const email = parsed.data.email.toLowerCase();
   const [user] = await db
     .select()
     .from(usersTable)
-    .where(eq(usersTable.email, email));
+    // Soft-deleted users can't log in. Returning the same "Invalid
+    // credentials" message we use for "no such user" prevents an
+    // attacker from probing whether a given email *used to* exist.
+    .where(and(eq(usersTable.email, email), isNull(usersTable.deletedAt)));
 
   if (!user) {
     res.status(401).json({ error: "Invalid credentials" });
@@ -81,7 +95,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
 
-  const token = signToken({ userId: user.id, role: user.role });
+  const token = signToken({ userId: user.id, role: user.role }, { rememberMe });
   res.json({
     token,
     user: {
@@ -157,18 +171,41 @@ router.post("/auth/forgot-password", async (req, res): Promise<void> => {
     `${req.protocol}://${req.get("host") ?? "localhost"}`;
   const resetUrl = `${appBaseUrl.replace(/\/$/, "")}/reset-password?token=${token}`;
 
-  // Dev fallback: there's no email integration wired locally, so we surface
-  // the reset link in the response body and the server log. In production
-  // this branch is gated off and the link is delivered by email instead.
-  if (process.env["NODE_ENV"] !== "production") {
-    logger.info({ email, resetUrl }, "password reset link generated (dev)");
-    res.status(200).json({ ok: true, devResetUrl: resetUrl });
+  // Ensure the email exists in auth.users so the frontend can ask
+  // Supabase to send a recovery email (Supabase rejects
+  // resetPasswordForEmail for unknown accounts). The auth.users row
+  // exists purely as a "carrier" for Supabase's hosted email system —
+  // our actual auth still lives in public.users with the JWT we just
+  // generated. Best-effort: if Supabase Auth isn't configured, the
+  // dev-URL fallback below still works.
+  let supabaseAuthReady = false;
+  if (isSupabaseAuthEnabled()) {
+    supabaseAuthReady = await ensureAuthUserExists(email);
+  }
+
+  // Response shape:
+  //   - `devResetUrl`: only in dev, the in-band link the operator clicks
+  //     directly (no email needed). Lets us test the flow without
+  //     configuring SMTP.
+  //   - `viaSupabase: true`: signals the frontend it should call
+  //     `supabase.auth.resetPasswordForEmail()` itself to actually
+  //     trigger Supabase's email send (we can't do that from the
+  //     backend — it requires the anon key from the public auth API).
+  //   - bare `{ ok: true }` (no extras): prod fallback when no transport
+  //     is wired — same response shape as account-not-found so we don't
+  //     leak existence.
+  if (isDev()) {
+    logger.info({ email, resetUrl, supabaseAuthReady }, "password reset link generated (dev)");
+    res.status(200).json({ ok: true, devResetUrl: resetUrl, viaSupabase: supabaseAuthReady });
     return;
   }
 
-  // TODO(prod): hand `resetUrl` off to the email integration (Resend) here.
-  // Kept inline for now so the wiring stays visible — when an email service
-  // is configured we'll send and fall through to the standard 200 response.
+  if (supabaseAuthReady) {
+    logger.info({ email }, "password reset: auth.users prepped; frontend should call supabase.auth.resetPasswordForEmail");
+    res.status(200).json({ ok: true, viaSupabase: true });
+    return;
+  }
+
   logger.warn({ email }, "password reset requested but no email transport configured");
   res.status(200).json({ ok: true });
 });
@@ -217,6 +254,99 @@ router.post("/auth/reset-password", async (req, res): Promise<void> => {
     .set({ usedAt: new Date() })
     .where(eq(passwordResetTokensTable.token, parsed.data.token));
 
+  // Mirror the new password into auth.users so the Supabase-hosted email
+  // flow uses the same credential. Best-effort: any failure here only
+  // means a future email-driven reset has to bounce through admin-update
+  // again to re-sync. The user's public.users.password_hash (the actual
+  // login credential) is already saved above.
+  if (isSupabaseAuthEnabled()) {
+    const [user] = await db
+      .select({ email: usersTable.email })
+      .from(usersTable)
+      .where(eq(usersTable.id, record.userId));
+    if (user?.email) {
+      void updateAuthUserPassword(user.email, parsed.data.password).catch((err) =>
+        logger.warn({ err, userId: record.userId }, "supabase auth password sync failed"),
+      );
+    }
+  }
+
+  res.status(200).json({ ok: true });
+});
+
+/**
+ * Mirror of `/auth/reset-password` for users who came through the
+ * Supabase-email recovery flow. The frontend has already called
+ * `supabase.auth.updateUser({ password })` to rotate the credential on
+ * `auth.users`; this endpoint takes the resulting Supabase access token,
+ * validates it by calling Supabase's own `/auth/v1/user` (which fails on
+ * forged tokens since only Supabase signs them), then writes the same
+ * password through to `public.users.password_hash` so our JWT login keeps
+ * working with the new credential.
+ *
+ * Why two stores at all: we haven't fully migrated to Supabase Auth. Our
+ * login endpoint still bcrypt-compares against public.users. Until that
+ * migration ships, every successful reset has to keep both stores in
+ * sync; this endpoint is the second leg.
+ */
+const SyncPasswordBody = z.object({
+  access_token: z.string().min(10),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+router.post("/auth/sync-password-from-supabase", async (req, res): Promise<void> => {
+  const parsed = SyncPasswordBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const supabaseUrl = process.env["SUPABASE_URL"];
+  const serviceKey = process.env["SUPABASE_SERVICE_ROLE_KEY"];
+  if (!supabaseUrl || !serviceKey) {
+    res.status(503).json({ error: "Supabase Auth not configured on this server" });
+    return;
+  }
+
+  // Verify the access token by asking Supabase whose it is. This is the
+  // sole gate — a forged token won't validate because Supabase signs with
+  // a JWT secret we don't have to know.
+  let email: string;
+  try {
+    const ver = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/auth/v1/user`, {
+      headers: {
+        Authorization: `Bearer ${parsed.data.access_token}`,
+        apikey: serviceKey,
+      },
+    });
+    if (!ver.ok) {
+      res.status(401).json({ error: "Invalid Supabase session" });
+      return;
+    }
+    const u = (await ver.json()) as { email?: string };
+    if (!u.email) {
+      res.status(401).json({ error: "Supabase session missing email" });
+      return;
+    }
+    email = u.email.toLowerCase();
+  } catch (err) {
+    logger.warn({ err }, "supabase auth verify call threw");
+    res.status(502).json({ error: "Couldn't reach Supabase Auth" });
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(parsed.data.password, 10);
+  const result = await db
+    .update(usersTable)
+    .set({ passwordHash })
+    .where(and(eq(usersTable.email, email), isNull(usersTable.deletedAt)))
+    .returning({ id: usersTable.id });
+
+  if (result.length === 0) {
+    // The Supabase user exists but we have no matching row in public.users.
+    // Could happen if the auth.users row was created out-of-band. Don't
+    // leak whether the row exists — respond 200 either way so the
+    // attacker-probing-via-forged-jwt path doesn't reveal anything.
+    logger.warn({ email }, "sync-password: no matching public.users row");
+  }
   res.status(200).json({ ok: true });
 });
 
@@ -225,7 +355,7 @@ router.get("/auth/me", authMiddleware, async (req, res): Promise<void> => {
   const [user] = await db
     .select()
     .from(usersTable)
-    .where(eq(usersTable.id, userId));
+    .where(and(eq(usersTable.id, userId), isNull(usersTable.deletedAt)));
 
   if (!user) {
     res.status(404).json({ error: "User not found" });
@@ -238,6 +368,58 @@ router.get("/auth/me", authMiddleware, async (req, res): Promise<void> => {
     displayName: user.displayName,
     role: user.role,
   });
+});
+
+/**
+ * Soft-delete + anonymise the authenticated user. The row stays so
+ * existing FKs (submissions, escalations, labels) keep resolving — we
+ * just scrub PII and set `deleted_at`, after which login + /auth/me
+ * filter them out. The body must include the user's current password so
+ * a stolen JWT can't unilaterally delete the account.
+ *
+ * Email becomes `deleted-<id>-<random>@anonymized.local` so the unique
+ * constraint still holds AND a future user can re-claim the original
+ * email if they want.
+ */
+const DeleteAccountBody = z.object({
+  password: z.string().min(1),
+});
+router.delete("/auth/me", authMiddleware, async (req, res): Promise<void> => {
+  const parsed = DeleteAccountBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const { userId } = (req as any).user;
+  const [user] = await db
+    .select()
+    .from(usersTable)
+    .where(and(eq(usersTable.id, userId), isNull(usersTable.deletedAt)));
+  if (!user) {
+    res.status(404).json({ error: "Account not found" });
+    return;
+  }
+  const valid = await bcrypt.compare(parsed.data.password, user.passwordHash);
+  if (!valid) {
+    res.status(401).json({ error: "Wrong password" });
+    return;
+  }
+
+  // Anonymise: scramble email so future signups can reclaim the original,
+  // clear displayName, void password hash (any compare will fail).
+  const anonEmail = `deleted-${user.id}-${crypto.randomBytes(4).toString("hex")}@anonymized.local`;
+  await db
+    .update(usersTable)
+    .set({
+      email: anonEmail,
+      displayName: null,
+      passwordHash: "deleted",
+      deletedAt: new Date(),
+    })
+    .where(eq(usersTable.id, user.id));
+
+  logger.info({ userId: user.id, oldEmail: user.email }, "account soft-deleted");
+  res.status(200).json({ ok: true });
 });
 
 export default router;

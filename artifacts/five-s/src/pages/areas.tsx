@@ -22,6 +22,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { ReasoningBlock } from "@/pages/operator";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -432,7 +433,10 @@ function AreaConfigCard({ area }: { area: Area }) {
                 </div>
               )}
               {profile?.summary ? (
-                <p className="text-[13px] leading-snug text-foreground/85">{profile.summary}</p>
+                <ReasoningBlock
+                  text={profile.summary}
+                  className="text-[13px] leading-snug text-foreground/85"
+                />
               ) : (
                 <p className="text-[12.5px] text-muted-foreground italic">No summary yet — submit a video walk-through to start learning this area.</p>
               )}

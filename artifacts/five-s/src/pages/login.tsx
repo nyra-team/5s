@@ -22,14 +22,47 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { useEffect, useState } from "react";
+import { useEffect, useState, forwardRef } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { getSupabase } from "@/lib/supabase-client";
+
+// Password input with an inline eye toggle so users can verify what they
+// typed without retyping. Wraps the shared Input + an absolutely-positioned
+// button. Forwarding the ref lets react-hook-form's field.ref pass through
+// to the underlying <input> (otherwise validation focus jumps don't work).
+type PasswordInputProps = React.ComponentProps<typeof Input>;
+const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
+  function PasswordInput({ className, ...props }, ref) {
+    const [visible, setVisible] = useState(false);
+    return (
+      <div className="relative">
+        <Input
+          ref={ref}
+          {...props}
+          type={visible ? "text" : "password"}
+          className={`${className ?? ""} pr-11`}
+        />
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label={visible ? "Hide password" : "Show password"}
+          onClick={() => setVisible((v) => !v)}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:text-foreground"
+        >
+          {visible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+        </button>
+      </div>
+    );
+  },
+);
 
 type Mode = "login" | "signup" | "forgot";
 
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1, "Password is required"),
+  rememberMe: z.boolean().default(false),
 });
 
 const signupSchema = z.object({
@@ -77,6 +110,29 @@ function ForgotPasswordForm() {
       setSubmittedEmail(values.email);
       if (typeof body?.devResetUrl === "string") {
         setDevResetUrl(body.devResetUrl);
+      }
+
+      // If the backend confirmed the email exists in auth.users AND the
+      // Supabase client is configured on the frontend, trigger Supabase's
+      // hosted email send. The reset link Supabase generates lands the user
+      // back on our /reset-password page (carrying a Supabase magic-link
+      // code) where the page hands off to supabase.auth.updateUser to
+      // rotate the credential. Best-effort: we don't toast on Supabase
+      // failure because the dev-link path below is still useful.
+      if (body?.viaSupabase) {
+        const supabase = getSupabase();
+        if (supabase) {
+          const origin = window.location.origin;
+          const { error } = await supabase.auth.resetPasswordForEmail(
+            values.email,
+            { redirectTo: `${origin}/reset-password` },
+          );
+          if (error) {
+            // Don't surface to user — the email transport is best-effort.
+            // The dev fallback (if present) still works.
+            console.warn("supabase.auth.resetPasswordForEmail failed:", error.message);
+          }
+        }
       }
     } catch (err) {
       toast({
@@ -154,12 +210,16 @@ function LoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
 
   const form = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { email: "", password: "" },
+    defaultValues: { email: "", password: "", rememberMe: false },
   });
 
   const onSubmit = (values: LoginValues) => {
+    // `rememberMe` isn't in the generated LoginBody zod schema yet, so the
+    // typed mutation argument doesn't include it — pass through as a
+    // loose-typed override. The api-server reads it directly off req.body
+    // and extends the JWT expiry to 30 days when true.
     loginMutation.mutate(
-      { data: values },
+      { data: values as unknown as { email: string; password: string } },
       {
         onSuccess: (data) => login(data.token),
         onError: () => {
@@ -200,26 +260,36 @@ function LoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
           name="password"
           render={({ field }) => (
             <FormItem>
-              <div className="flex items-center justify-between">
-                <FormLabel className="text-[13px] font-medium text-muted-foreground">Password</FormLabel>
-                <button
-                  type="button"
-                  onClick={onForgotPassword}
-                  className="text-[12px] text-primary hover:underline focus:outline-none focus-visible:underline"
-                >
-                  Forgot password?
-                </button>
-              </div>
+              <FormLabel className="text-[13px] font-medium text-muted-foreground">Password</FormLabel>
               <FormControl>
-                <Input
+                <PasswordInput
                   placeholder="••••••••"
-                  type="password"
                   autoComplete="current-password"
                   className="h-12 rounded-xl text-[15px] bg-secondary/60 border-transparent focus-visible:bg-card focus-visible:border-ring"
                   {...field}
                 />
               </FormControl>
               <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="rememberMe"
+          render={({ field }) => (
+            <FormItem className="flex items-center gap-2 mt-1">
+              <FormControl>
+                <input
+                  type="checkbox"
+                  checked={!!field.value}
+                  onChange={(e) => field.onChange(e.target.checked)}
+                  className="w-4 h-4 rounded border-input accent-primary cursor-pointer"
+                  data-testid="login-remember-me"
+                />
+              </FormControl>
+              <FormLabel className="text-[13px] text-muted-foreground !m-0 cursor-pointer select-none">
+                Keep me signed in on this device
+              </FormLabel>
             </FormItem>
           )}
         />
@@ -230,6 +300,15 @@ function LoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
         >
           {loginMutation.isPending ? "Signing in…" : "Sign In"}
         </Button>
+        <div className="text-center pt-1">
+          <button
+            type="button"
+            onClick={onForgotPassword}
+            className="text-[13px] text-primary hover:underline focus:outline-none focus-visible:underline"
+          >
+            Forgot password?
+          </button>
+        </div>
       </form>
     </Form>
   );
@@ -321,9 +400,8 @@ function SignupForm() {
             <FormItem>
               <FormLabel className="text-[13px] font-medium text-muted-foreground">Password</FormLabel>
               <FormControl>
-                <Input
+                <PasswordInput
                   placeholder="At least 8 characters"
-                  type="password"
                   autoComplete="new-password"
                   className="h-12 rounded-xl text-[15px] bg-secondary/60 border-transparent focus-visible:bg-card focus-visible:border-ring"
                   {...field}

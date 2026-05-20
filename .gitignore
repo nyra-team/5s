@@ -60,3 +60,6 @@ Thumbs.db
 # media here at runtime; these files are never source-controlled.
 artifacts/api-server/uploads/
 artifacts/*/uploads/
+
+# Local dev logs from start.sh
+logs/

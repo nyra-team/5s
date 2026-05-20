@@ -13,6 +13,7 @@ import {
 import { GetSubmissionParams, ListSubmissionsQueryParams } from "@workspace/api-zod";
 import { authMiddleware } from "../lib/auth";
 import { upload } from "../lib/upload";
+import { uploadFileToStorage, storagePathForFilename, isStorageEnabled } from "../lib/supabase-storage.js";
 import { getCurrentShift, getISTShiftRange, getISTDayRange, getShiftConfig } from "../lib/scoring";
 import { loadEffectiveShiftConfig } from "../lib/facility-settings.js";
 import {
@@ -232,6 +233,44 @@ function extractFile(req: any) {
   const files = (req.files ?? {}) as Record<string, Express.Multer.File[]>;
   const f = files.media?.[0] ?? files.photo?.[0] ?? req.file;
   return f as Express.Multer.File | undefined;
+}
+
+/**
+ * Replicate a freshly-scored submission's media + keyframes into Supabase
+ * Storage so the files survive the local box recycling. Async + best-effort:
+ *
+ *   - the operator's response has already gone out by the time this runs,
+ *     so a Storage outage adds zero latency to the upload UX
+ *   - we don't await; failures only show up as log lines
+ *   - the local copies stay on disk and `/api/uploads/*` prefers local
+ *     serving, so a missed replication doesn't break image rendering
+ *     either — it just means that particular file can't survive a box
+ *     reset until the next scoring touches it
+ *
+ * Skipped entirely when SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY aren't set.
+ */
+function replicateMediaToStorage(opts: {
+  mediaUrl: string;            // "/uploads/<filename>" — original media
+  contentType: string;         // multer's detected mimetype
+  keyframeUrls: string[];      // "/uploads/<frame>.jpg" each
+}): void {
+  if (!isStorageEnabled()) return;
+  const uploadsDir = path.resolve(process.cwd(), "uploads");
+  // Snapshot the URL list so a downstream caller mutating the array
+  // doesn't race the async map below.
+  const urls = [opts.mediaUrl, ...opts.keyframeUrls];
+  void Promise.all(
+    urls.map(async (url) => {
+      const filename = path.basename(url);
+      const local = path.join(uploadsDir, filename);
+      // Keyframes are always JPEG (we recompress before storing).
+      const ct = url === opts.mediaUrl ? opts.contentType : "image/jpeg";
+      const ok = await uploadFileToStorage(local, storagePathForFilename(filename), ct);
+      if (!ok) {
+        logger.warn({ filename }, "storage replication failed; local copy still serves");
+      }
+    }),
+  ).catch((err) => logger.warn({ err }, "storage replication pipeline threw"));
 }
 
 /**
@@ -603,6 +642,16 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
     })
     .returning();
 
+  // Replicate the uploaded media + extracted keyframes into Supabase
+  // Storage. Fire-and-forget: a Storage hiccup must never fail a scored
+  // submission — the file still lives on local disk and the `/api/uploads`
+  // serving falls back to local when Storage is unreachable.
+  replicateMediaToStorage({
+    mediaUrl,
+    contentType: file.mimetype,
+    keyframeUrls: scoring.keyframeUrls,
+  });
+
   // Update learned profile
   try {
     await ingestProfileExtract(areaId, scoring.profile);
@@ -806,6 +855,14 @@ router.put("/submissions/:id/reupload", authMiddleware, uploadFields, async (req
     })
     .where(eq(submissionsTable.id, id))
     .returning();
+
+  // Replicate re-uploaded media + new keyframes into Storage. Same
+  // fire-and-forget semantics as the create path; safe to fail silently.
+  replicateMediaToStorage({
+    mediaUrl,
+    contentType: file.mimetype,
+    keyframeUrls: scoring.keyframeUrls,
+  });
 
   try { await ingestProfileExtract(existing.areaId, scoring.profile); } catch (err) { logger.error({ err }, "ingest profile failed"); }
   try { await recordCheck(existing.areaId, machineTag ?? null, new Date()); } catch (err) { logger.error({ err }, "recordCheck failed"); }

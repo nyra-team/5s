@@ -16,3 +16,4 @@ export * from "./facility-settings";
 export * from "./area-detection-events";
 export * from "./ai-settings";
 export * from "./password-reset-tokens";
+export * from "./ai-score-cache";

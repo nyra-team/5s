@@ -36,11 +36,18 @@ vi.mock("@workspace/db", () => ({
   db: {
     insert: () => ({
       values: async () => undefined,
+      onConflictDoUpdate: async () => undefined,
     }),
     select: () => emptySelectChain(),
+    update: () => ({
+      set: () => ({
+        where: async () => undefined,
+      }),
+    }),
   },
   aiScoringMetricsTable: {},
   aiSettingsTable: {},
+  aiScoreCacheTable: { cacheKey: "cache_key", hitCount: "hit_count" },
 }));
 
 const { callVLM } = await import("../ai-scoring.js");
@@ -73,14 +80,21 @@ const callOpts = {
   environmentType: "factory" as const,
 };
 
-const EXPECTED_REQUEST_KEYS = new Set([
+// Keys that must always be present on the VLM request.
+const REQUIRED_REQUEST_KEYS = new Set([
   "model",
-  "response_format",
   "max_completion_tokens",
   "top_p",
   "seed",
   "messages",
 ]);
+// Keys that are conditionally present. `response_format` ships only when
+// the active model is in the gpt-5 family — Anthropic's OpenAI-compat
+// endpoint rejects `response_format: json_object` so we omit it for any
+// claude-* model and rely on the JSON-repair loop + code-fence strip
+// instead.
+const OPTIONAL_REQUEST_KEYS = new Set(["response_format"]);
+const ALL_REQUEST_KEYS = new Set([...REQUIRED_REQUEST_KEYS, ...OPTIONAL_REQUEST_KEYS]);
 
 // Parameters gpt-5 silently rejects (or that we've explicitly chosen not to
 // send). If any of these reappear in the request body, the regression that
@@ -126,6 +140,7 @@ describe("callVLM request payload", () => {
     const req = createMock.mock.calls[0][0];
 
     expect(req.model).toBe("gpt-5-mini");
+    // gpt-5 branch: response_format is present.
     expect(req.response_format).toEqual({ type: "json_object" });
     // Must be high enough to cover the gpt-5 family's hidden reasoning tokens AND the
     // structured JSON output — see the comment on `baseRequest` in
@@ -141,12 +156,13 @@ describe("callVLM request payload", () => {
 
     // Lock the surface area: any new top-level field is something a future
     // model rev might not support. Adding one should be a deliberate choice
-    // that updates this list (and the EXPECTED_REQUEST_KEYS allowlist).
+    // that updates ALL_REQUEST_KEYS. Required keys must all be present;
+    // optional keys (response_format) may be absent for Claude.
     const actualKeys = new Set(Object.keys(req));
     for (const k of actualKeys) {
-      expect(EXPECTED_REQUEST_KEYS, `unexpected request field "${k}"`).toContain(k);
+      expect(ALL_REQUEST_KEYS, `unexpected request field "${k}"`).toContain(k);
     }
-    for (const k of EXPECTED_REQUEST_KEYS) {
+    for (const k of REQUIRED_REQUEST_KEYS) {
       expect(actualKeys, `missing required request field "${k}"`).toContain(k);
     }
   });

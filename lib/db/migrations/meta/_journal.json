@@ -57,6 +57,27 @@
       "when": 1778756107179,
       "tag": "0007_perfect_robin_chapel",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1778857000000,
+      "tag": "0008_ai_score_cache",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778858000000,
+      "tag": "0009_user_soft_delete",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1778859000000,
+      "tag": "0010_score_cache_dhashes",
+      "breakpoints": true
     }
   ]
 }

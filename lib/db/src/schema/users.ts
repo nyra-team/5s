@@ -1,4 +1,4 @@
-import { pgTable, text, serial, boolean, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, boolean, integer, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -31,6 +31,12 @@ export const usersTable = pgTable("users", {
   quietHoursStart: text("quiet_hours_start").notNull().default("22:00"),
   quietHoursEnd: text("quiet_hours_end").notNull().default("07:00"),
   quietHoursWeekdayMask: integer("quiet_hours_weekday_mask").notNull().default(127),
+  // Soft-deletion timestamp. When non-null the user can no longer log in
+  // and their PII (email, displayName) has been overwritten with an
+  // anonymised placeholder. The row itself stays so historical FKs
+  // (submissions, labels, escalations) keep resolving — only the human
+  // identification is scrubbed.
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true });

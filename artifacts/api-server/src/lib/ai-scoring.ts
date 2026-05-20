@@ -19,8 +19,11 @@ import {
   areAllFramesTooDark,
   type KeyframeMetrics,
 } from "./keyframes.js";
-import { db, aiScoringMetricsTable, type EnvironmentType } from "@workspace/db";
+import crypto from "node:crypto";
+import { eq, sql, and } from "drizzle-orm";
+import { db, aiScoringMetricsTable, aiScoreCacheTable, type EnvironmentType } from "@workspace/db";
 import { loadEffectiveVlmModel } from "./ai-settings.js";
+import { computeDHash } from "./keyframes.js";
 
 /**
  * Distinct, operator-actionable error codes raised when the scoring pipeline
@@ -1081,6 +1084,267 @@ where x, y, w, h are normalized (0.0–1.0) with x,y being the TOP-LEFT corner o
   };
 }
 
+/**
+ * 24-hour TTL on cached scoring results. A re-capture of the same area
+ * within a day, with no visual change, returns the cached score and skips
+ * the VLM round-trip entirely (which is the bulk of scoring latency).
+ *
+ * The TTL exists for two reasons:
+ *   1. The VLM's notion of "acceptable" can drift if the model version
+ *      changes mid-day (operator override on /ai-settings); 24h ensures a
+ *      stale judgement from a retired model doesn't linger indefinitely.
+ *   2. Even with no scene change, a workspace can become non-compliant
+ *      via people / time-of-day signals. A daily refresh costs one VLM
+ *      call per area per day.
+ */
+const SCORE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Disable the score cache entirely by setting AI_SCORE_CACHE=0. Useful
+ * when validating that the VLM produces consistent results across
+ * different versions of the prompt / response schema.
+ */
+function scoreCacheEnabled(): boolean {
+  const raw = process.env["AI_SCORE_CACHE"];
+  if (raw === undefined || raw === "") return true;
+  return !["0", "false", "no", "off"].includes(raw.toLowerCase());
+}
+
+/**
+ * Per-frame Hamming-distance threshold for the fuzzy cache fallback.
+ * dHash is a 64-bit perceptual hash; an empirical-textbook value of 5 has
+ * the lowest false-positive rate while still catching near-identical
+ * captures (slight lighting, angle, ffmpeg-frame-pick jitter). Bump via
+ * env if the cache misses too often on what's plainly the same scene.
+ */
+function getFuzzyCacheThreshold(): number {
+  const raw = Number(process.env["AI_SCORE_CACHE_HAMMING_THRESHOLD"]);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 5;
+}
+
+/** Limit on the fuzzy-fallback scan. We only need recent entries; older
+ * captures can't represent the area's current visual state. */
+const FUZZY_CACHE_SCAN_LIMIT = 30;
+
+async function computeFrameDhashes(framePaths: string[]): Promise<string[] | null> {
+  const hashes = await Promise.all(
+    framePaths.map(async (p) => {
+      try {
+        const h = await computeDHash(p);
+        return h.toString("hex");
+      } catch (err) {
+        logger.warn({ err, framePath: p }, "score cache: dHash failed; bypassing cache for this frame");
+        return null;
+      }
+    }),
+  );
+  if (hashes.some((h) => h === null)) return null;
+  return hashes as string[];
+}
+
+function cacheKeyFromDhashes(areaId: number, modelVersion: string, dhashes: string[]): string {
+  // Sort so the cache key doesn't depend on the operator's frame order —
+  // visually identical sets must collide regardless of permutation.
+  const sorted = [...dhashes].sort().join(",");
+  return crypto
+    .createHash("sha256")
+    .update(`v1|${areaId}|${modelVersion}|${sorted}`)
+    .digest("hex");
+}
+
+function hammingDistanceHex(a: string, b: string): number {
+  // Both inputs are equal-length hex strings produced by dHash (8 bytes
+  // → 16 hex chars). Compare byte-by-byte; popcount each XOR.
+  if (a.length !== b.length) return Infinity;
+  let d = 0;
+  for (let i = 0; i < a.length; i += 2) {
+    const xa = parseInt(a.slice(i, i + 2), 16);
+    const xb = parseInt(b.slice(i, i + 2), 16);
+    let x = xa ^ xb;
+    while (x) {
+      d += x & 1;
+      x >>= 1;
+    }
+  }
+  return d;
+}
+
+/**
+ * Greedy bipartite-style match: for each incoming frame, find the closest
+ * stored frame still unclaimed. Returns the maximum pairwise distance —
+ * the "worst" frame match. Callers compare that to the threshold; if the
+ * worst frame is still within threshold, every frame matched well enough.
+ *
+ * O(n²) over frame count (~6 frames). Tiny.
+ */
+function maxPairwiseHammingDistance(incoming: string[], stored: string[]): number {
+  if (incoming.length !== stored.length) return Infinity;
+  if (incoming.length === 0) return 0;
+  const claimed = new Array(stored.length).fill(false);
+  let worst = 0;
+  for (const inc of incoming) {
+    let bestDist = Infinity;
+    let bestIdx = -1;
+    for (let j = 0; j < stored.length; j++) {
+      if (claimed[j]) continue;
+      const d = hammingDistanceHex(inc, stored[j]);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = j;
+      }
+    }
+    if (bestIdx < 0) return Infinity;
+    claimed[bestIdx] = true;
+    if (bestDist > worst) worst = bestDist;
+  }
+  return worst;
+}
+
+interface CacheHitInfo {
+  result: AIScoringResult;
+  /** "exact" = bit-identical, "fuzzy" = perceptually close. Logged for
+   * observability so a high fuzzy-hit ratio surfaces in dashboards. */
+  matchType: "exact" | "fuzzy";
+  matchedKey: string;
+  worstDistance: number;
+}
+
+/**
+ * Read-through cache lookup with two-tier match:
+ *   1. Exact: lookup by sha256-hashed cache key.
+ *   2. Fuzzy: scan recent entries for the same (areaId, modelVersion)
+ *      and accept any whose stored dhashes match the incoming dhashes
+ *      within the per-frame Hamming threshold. This is what gives us
+ *      "same physical scene re-captured produces the same score" —
+ *      slight ffmpeg frame-pick drift no longer forces a new VLM call.
+ */
+async function lookupScoreCache(
+  cacheKey: string,
+  areaId: number,
+  modelVersion: string,
+  dhashes: string[],
+): Promise<CacheHitInfo | null> {
+  if (!cacheKey) return null;
+  const threshold = getFuzzyCacheThreshold();
+
+  try {
+    // Tier 1: exact match on the cache key.
+    const [exact] = await db
+      .select()
+      .from(aiScoreCacheTable)
+      .where(eq(aiScoreCacheTable.cacheKey, cacheKey))
+      .limit(1);
+    if (exact && Date.now() - exact.lastHitAt.getTime() <= SCORE_CACHE_TTL_MS) {
+      db.update(aiScoreCacheTable)
+        .set({
+          hitCount: sql`${aiScoreCacheTable.hitCount} + 1`,
+          lastHitAt: new Date(),
+        })
+        .where(eq(aiScoreCacheTable.cacheKey, cacheKey))
+        .catch((err) => logger.warn({ err }, "score cache: hit-counter update failed"));
+      return {
+        result: exact.resultJson as AIScoringResult,
+        matchType: "exact",
+        matchedKey: cacheKey,
+        worstDistance: 0,
+      };
+    }
+
+    // Tier 2: fuzzy fallback. Pull recent rows for the same area+model.
+    const ttlCutoff = new Date(Date.now() - SCORE_CACHE_TTL_MS);
+    const candidates = await db
+      .select()
+      .from(aiScoreCacheTable)
+      .where(
+        and(
+          eq(aiScoreCacheTable.areaId, areaId),
+          eq(aiScoreCacheTable.modelVersion, modelVersion),
+        ),
+      )
+      .orderBy(sql`${aiScoreCacheTable.lastHitAt} DESC`)
+      .limit(FUZZY_CACHE_SCAN_LIMIT);
+
+    let best: { row: typeof candidates[number]; worst: number } | null = null;
+    for (const row of candidates) {
+      if (row.lastHitAt < ttlCutoff) continue;
+      const stored = Array.isArray(row.dhashesJson) ? (row.dhashesJson as string[]) : [];
+      if (stored.length === 0) continue; // legacy entry written before this column existed
+      const worst = maxPairwiseHammingDistance(dhashes, stored);
+      if (worst <= threshold && (!best || worst < best.worst)) {
+        best = { row, worst };
+      }
+    }
+    if (best) {
+      logger.info(
+        {
+          event: "ai_score_cache_fuzzy_hit",
+          areaId,
+          modelVersion,
+          worstDistance: best.worst,
+          threshold,
+        },
+        "ai score cache fuzzy hit — reusing perceptually-similar prior result",
+      );
+      db.update(aiScoreCacheTable)
+        .set({
+          hitCount: sql`${aiScoreCacheTable.hitCount} + 1`,
+          lastHitAt: new Date(),
+        })
+        .where(eq(aiScoreCacheTable.cacheKey, best.row.cacheKey))
+        .catch((err) => logger.warn({ err }, "score cache: fuzzy hit-counter update failed"));
+      return {
+        result: best.row.resultJson as AIScoringResult,
+        matchType: "fuzzy",
+        matchedKey: best.row.cacheKey,
+        worstDistance: best.worst,
+      };
+    }
+
+    return null;
+  } catch (err) {
+    logger.warn({ err, cacheKey }, "score cache: read failed; falling back to live VLM call");
+    return null;
+  }
+}
+
+async function storeScoreCache(
+  cacheKey: string,
+  areaId: number,
+  modelVersion: string,
+  dhashes: string[],
+  result: AIScoringResult,
+): Promise<void> {
+  if (!cacheKey) return;
+  try {
+    // INSERT … ON CONFLICT (cache_key) DO UPDATE — refreshes lastHitAt
+    // for entries that survived two concurrent misses (race during the
+    // first ever scoring of an area), preserving hit_count from the
+    // earlier writer when present. We also refresh dhashes so a future
+    // fuzzy lookup sees the canonical hashes for the cached result.
+    await db
+      .insert(aiScoreCacheTable)
+      .values({
+        cacheKey,
+        areaId,
+        modelVersion,
+        dhashesJson: dhashes as unknown as object,
+        resultJson: result as unknown as object,
+        hitCount: 0,
+        lastHitAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: aiScoreCacheTable.cacheKey,
+        set: {
+          dhashesJson: dhashes as unknown as object,
+          resultJson: result as unknown as object,
+          lastHitAt: new Date(),
+        },
+      });
+  } catch (err) {
+    logger.warn({ err, cacheKey }, "score cache: write failed; result still returned");
+  }
+}
+
 async function scoreSubmissionDefault(input: ScoringInput): Promise<ScoringOutput> {
   const uploadsDir = path.resolve(process.cwd(), "uploads");
   const fullMediaPath = path.isAbsolute(input.mediaAbsPath)
@@ -1174,24 +1438,77 @@ async function scoreSubmissionDefault(input: ScoringInput): Promise<ScoringOutpu
       }
     }
 
+    // Read-through cache, two-tier:
+    //   1. Exact match by sha256(area, sorted dhashes, model) — same
+    //      bytes uploaded twice short-circuit instantly.
+    //   2. Fuzzy match — accept any recent cache row for the same
+    //      area+model whose dhashes match the incoming frames within
+    //      the configured Hamming threshold. This is what makes the
+    //      "same physical scene re-captured produces the same score"
+    //      promise hold up under ffmpeg frame-pick drift.
+    //
+    // The keyframe URLs we hand back are still the operator's CURRENT
+    // submission — only the AI judgement is reused.
+    const effectiveModel = await loadEffectiveVlmModel();
+    const modelVersion = `${effectiveModel}-${input.environmentType ?? "factory"}-v1`;
+    const cacheEnabled = scoreCacheEnabled();
+    const dhashes = cacheEnabled ? await computeFrameDhashes(framePaths) : null;
+    const cacheKey = cacheEnabled && dhashes
+      ? cacheKeyFromDhashes(input.areaId, modelVersion, dhashes)
+      : "";
+
     const tVlm = Date.now();
-    const result = await callVLM({
-      framePaths,
-      areaName: input.areaName,
-      machineTag: input.machineTag,
-      learnedProfile: input.learnedProfile,
-      environmentType: input.environmentType,
-    });
+    let result: AIScoringResult;
+    let cacheHit = false;
+    const cached =
+      cacheEnabled && dhashes
+        ? await lookupScoreCache(cacheKey, input.areaId, modelVersion, dhashes)
+        : null;
+    if (cached) {
+      result = cached.result;
+      cacheHit = true;
+      logger.info(
+        {
+          event: "ai_score_cache_hit",
+          matchType: cached.matchType,
+          worstDistance: cached.worstDistance,
+          areaId: input.areaId,
+          modelVersion,
+          cacheKey: cached.matchedKey.slice(0, 12) + "…",
+        },
+        `ai score cache ${cached.matchType} hit — skipping VLM call`,
+      );
+    } else {
+      result = await callVLM({
+        framePaths,
+        areaName: input.areaName,
+        machineTag: input.machineTag,
+        learnedProfile: input.learnedProfile,
+        environmentType: input.environmentType,
+      });
+      // Fire-and-forget: cache the freshly-computed result so the NEXT
+      // re-capture of the same area can short-circuit. Persist the
+      // dhashes too so the fuzzy fallback can score them.
+      if (cacheEnabled && cacheKey && dhashes) {
+        storeScoreCache(cacheKey, input.areaId, modelVersion, dhashes, result).catch((err) =>
+          logger.warn({ err }, "score cache: deferred write failed"),
+        );
+      }
+    }
     const vlmMs = Date.now() - tVlm;
 
     if (keyframeMetrics) {
       // Combined per-audit structured event: ffmpeg → dedup → compress → VLM.
+      // `cacheHit` lets the dashboard show "cache hit rate" once the Phase 6
+      // stats are wired; it also makes it cheap to spot a cache-skipped run
+      // that took ~0 ms in the VLM column.
       logger.info(
         {
           event: "video_analysis",
           videoAbsPath: fullMediaPath,
           ...keyframeMetrics,
           vlmMs,
+          cacheHit,
           totalAnalysisMs: keyframeMetrics.totalMs + vlmMs,
         },
         "video analysis completed",

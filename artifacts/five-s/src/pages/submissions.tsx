@@ -34,6 +34,7 @@ import {
 import type { KeyframeMetrics } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
 import { MaskedImage, extractRegions } from "@/components/masked-image";
+import { ReasoningBlock } from "@/pages/operator";
 
 const SHIFT_FILTER_OPTIONS = [
   { value: "", label: "All" },
@@ -97,12 +98,13 @@ function PillarBar({ label, value, max = 5, reasoning }: { label: string; value:
         </div>
       </div>
       {reasoning && (
-        <p
-          className="text-[12px] leading-snug text-muted-foreground pl-0.5"
-          data-testid={`pillar-reasoning-${label}`}
-        >
-          {reasoning}
-        </p>
+        <div className="pl-0.5">
+          <ReasoningBlock
+            text={reasoning}
+            className="text-[12px] leading-snug text-muted-foreground"
+            testId={`pillar-reasoning-${label}`}
+          />
+        </div>
       )}
     </div>
   );

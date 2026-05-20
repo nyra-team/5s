@@ -26,11 +26,20 @@ if (!basePath) {
   );
 }
 
-// In dev, proxy /api/* to the api-server so same-origin URLs (e.g.
-// `<img src="/api/uploads/x.jpg">`) work without forcing each call site to
-// know the api-server's absolute URL. Mirrors the production topology
-// where api and frontend are served from the same origin.
-const apiTarget = process.env.VITE_API_URL || "http://localhost:8090";
+// In dev, proxy /api/* to the api-server so same-origin URLs work without
+// forcing each call site to know the api-server's absolute URL. This also
+// lets the app work from other devices on the same network — the phone
+// hits the dev box on :3000 and we proxy `/api/*` to the api-server
+// server-side, so the browser never tries to resolve `localhost:8090`.
+//
+// `VITE_API_PROXY_TARGET` is server-side only (vite.config.ts runs on the
+// dev machine, never shipped to the browser). It defaults to localhost
+// because the api-server runs on the same host as vite. `VITE_API_URL`
+// is kept as a deprecated alias so existing setups keep working.
+const apiTarget =
+  process.env.VITE_API_PROXY_TARGET ||
+  process.env.VITE_API_URL ||
+  "http://localhost:8090";
 
 export default defineConfig({
   base: basePath,

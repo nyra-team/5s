@@ -94,7 +94,7 @@ import { useFacilitySettingsChangeListener } from "@/lib/facility-settings";
 import { useEffectiveOperatorThresholds } from "@/lib/operator-thresholds";
 import { EnvironmentChecklist, normalizeEnvironment } from "@/lib/environment";
 import { useMinuteTick } from "@/hooks/use-minute-tick";
-import { MaskedImage, extractRegions } from "@/components/masked-image";
+import { MaskedImage, extractRegions, type IssueRegion } from "@/components/masked-image";
 
 const RECENT_STRIP_PREF_KEY = "operator.recentStrip.collapsed";
 
@@ -302,10 +302,49 @@ function severityStyles(s: SuggestionSeverity): {
   };
 }
 
+/**
+ * Pick the subset of issue regions that this recommendation refers to.
+ * The VLM emits recommendations and issues separately, but they share
+ * `location` and `principle` strings; we match on those (most-precise
+ * principle first, then location). If no clear link can be inferred we
+ * surface every flagged region so the operator at least sees what the
+ * model was reacting to. Pure function — easy to unit-test.
+ */
+export function regionsForRecommendation(
+  recommendation: { location?: string | null; principle?: string | null } | null | undefined,
+  allRegions: IssueRegion[],
+  issuesForMatching: ReadonlyArray<{ location?: string | null; principle?: string | null; region?: { frameIndex: number; box: [number, number, number, number] } | null }>,
+): IssueRegion[] {
+  if (!recommendation || allRegions.length === 0) return allRegions;
+  const principle = (recommendation.principle ?? "").trim().toLowerCase();
+  const location = (recommendation.location ?? "").trim().toLowerCase();
+  const byPrinciple = principle
+    ? issuesForMatching.filter(
+        (i) => i.region && (i.principle ?? "").trim().toLowerCase() === principle,
+      )
+    : [];
+  const byLocation = byPrinciple.length === 0 && location
+    ? issuesForMatching.filter(
+        (i) => i.region && (i.location ?? "").trim().toLowerCase() === location,
+      )
+    : [];
+  const matched = (byPrinciple.length > 0 ? byPrinciple : byLocation)
+    .map((i) => i.region!)
+    .filter((r): r is NonNullable<typeof r> => !!r);
+  // Fall back to "all flagged frames" when no link is inferable — better
+  // than rendering an action item with no visual context.
+  return matched.length > 0
+    ? matched.map((r) => ({ frameIndex: r.frameIndex, box: r.box }))
+    : allRegions;
+}
+
 export function SuggestionRow({
   text,
   index,
   aiSeverity,
+  regions,
+  keyframeUrls,
+  imageUrl,
 }: {
   text: string;
   index: number;
@@ -314,30 +353,92 @@ export function SuggestionRow({
   // it) we fall back to keyword-based inference so the row still gets a useful
   // colour cue instead of silently defaulting to low.
   aiSeverity?: SuggestionSeverity | null;
+  // Filtered regions for this recommendation. Empty array hides the thumb
+  // strip. Each thumbnail surfaces the frame that contains the region with
+  // a semi-transparent red overlay (the same MaskedImage component as the
+  // hero image).
+  regions?: IssueRegion[];
+  // Keyframe URLs (relative to /api) — the source URL used to render each
+  // thumbnail. For image-only submissions, `imageUrl` is used as the
+  // single-frame fallback.
+  keyframeUrls?: string[];
+  imageUrl?: string | null;
 }) {
   const sev: SuggestionSeverity = aiSeverity ?? inferSuggestionSeverity(text);
   const style = severityStyles(sev);
   const sourceAttr = aiSeverity ? "ai" : "inferred";
+
+  // Build the thumbnail strip: one thumb per unique frameIndex referenced
+  // by `regions`. We keep the original frame ordering so the strip reads
+  // left-to-right in the same order the operator captured the walk-through.
+  const thumbs: { src: string; regions: IssueRegion[]; frameIndex: number }[] = (() => {
+    if (!regions || regions.length === 0) return [];
+    const byFrame = new Map<number, IssueRegion[]>();
+    for (const r of regions) {
+      if (!byFrame.has(r.frameIndex)) byFrame.set(r.frameIndex, []);
+      byFrame.get(r.frameIndex)!.push(r);
+    }
+    return [...byFrame.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([frameIndex, frameRegions]) => {
+        const src = keyframeUrls?.[frameIndex]
+          ? `/api${keyframeUrls[frameIndex]}`
+          : imageUrl
+            ? `/api${imageUrl}`
+            : null;
+        return src ? { src, regions: frameRegions, frameIndex } : null;
+      })
+      .filter((x): x is { src: string; regions: IssueRegion[]; frameIndex: number } => !!x);
+  })();
+
   return (
     <li
-      className={`text-[13.5px] flex gap-2 items-start bg-secondary/60 p-3 pl-2.5 rounded-xl ${style.rail}`}
+      className={`text-[13.5px] flex flex-col gap-2 bg-secondary/60 p-3 pl-2.5 rounded-xl ${style.rail}`}
       data-testid={`suggestion-row-${index}`}
       data-severity={sev}
       data-severity-source={sourceAttr}
     >
-      <ArrowRight className={`w-4 h-4 shrink-0 mt-0.5 ${style.iconColor}`} aria-hidden="true" />
-      <span className="leading-snug text-foreground/90 flex-1 min-w-0">{text}</span>
-      <span
-        className={`shrink-0 px-1.5 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wide ${style.pillBg} ${style.pillText}`}
-        aria-label={`Severity: ${style.label}`}
-        title={
-          aiSeverity
-            ? `AI severity: ${style.label}`
-            : `Inferred severity: ${style.label}`
-        }
-      >
-        {style.label}
-      </span>
+      <div className="flex gap-2 items-start">
+        <ArrowRight className={`w-4 h-4 shrink-0 mt-0.5 ${style.iconColor}`} aria-hidden="true" />
+        <span className="leading-snug text-foreground/90 flex-1 min-w-0">{text}</span>
+        <span
+          className={`shrink-0 px-1.5 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wide ${style.pillBg} ${style.pillText}`}
+          aria-label={`Severity: ${style.label}`}
+          title={
+            aiSeverity
+              ? `AI severity: ${style.label}`
+              : `Inferred severity: ${style.label}`
+          }
+        >
+          {style.label}
+        </span>
+      </div>
+      {thumbs.length > 0 && (
+        <div
+          className="flex gap-1.5 ml-6 overflow-x-auto scrollbar-none -mx-0.5 px-0.5"
+          data-testid={`suggestion-row-${index}-thumbs`}
+        >
+          {thumbs.map((t) => (
+            <div
+              key={t.frameIndex}
+              className="relative rounded-md overflow-hidden shrink-0 bg-card shadow-soft"
+              title={`Frame ${t.frameIndex + 1}`}
+            >
+              <MaskedImage
+                src={t.src}
+                alt={`Frame ${t.frameIndex + 1}`}
+                regions={t.regions}
+                frameIndex={t.frameIndex}
+                className="w-20 h-14"
+                imgClassName="w-full h-full object-cover"
+              />
+              <span className="absolute bottom-0 right-0 px-1 text-[9px] font-semibold bg-black/60 text-white rounded-tl">
+                F{t.frameIndex + 1}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </li>
   );
 }
@@ -350,6 +451,103 @@ export function SuggestionRow({
  * inference over `issue + evidence` for older payloads that pre-date the
  * severity field.
  */
+/**
+ * Render the VLM's evidence string. The model often emits multi-frame
+ * descriptions like "Frame 1: cable on floor; Frame 4: tangled cables;
+ * Frame 5: …", which read as a wall of text. When we detect that pattern
+ * we split on the per-frame separator and render a bulleted list — much
+ * easier to skim. Plain prose (no Frame-N markers) falls through to the
+ * original paragraph rendering.
+ */
+function EvidenceBlock({ evidence }: { evidence: string }) {
+  const text = evidence.trim();
+  // Match "Frame N:" at the start of a segment, with segments separated by
+  // semicolons OR by another "Frame N:" beginning. We split into chunks
+  // starting with a Frame-N marker; anything before the first marker is
+  // kept as a lead-in paragraph.
+  const markerRe = /(\bFrames?\s+\d+(?:[-,\s\d]*\d+)?\s*:)/g;
+  const markers = [...text.matchAll(markerRe)];
+  if (markers.length < 2) {
+    return <p className="text-[12.5px] leading-snug text-muted-foreground">{text}</p>;
+  }
+  const items: { label: string; body: string }[] = [];
+  for (let i = 0; i < markers.length; i++) {
+    const start = markers[i].index ?? 0;
+    const end = i + 1 < markers.length ? markers[i + 1].index ?? text.length : text.length;
+    const label = markers[i][1].replace(/:$/, "");
+    const body = text.slice(start + markers[i][1].length, end).trim().replace(/[;.]\s*$/, "");
+    if (body) items.push({ label, body });
+  }
+  const leadIn = markers[0].index && markers[0].index > 0
+    ? text.slice(0, markers[0].index).trim().replace(/[;.]\s*$/, "")
+    : null;
+  return (
+    <div className="text-[12.5px] leading-snug text-muted-foreground space-y-1">
+      {leadIn && <p>{leadIn}</p>}
+      <ul className="space-y-0.5">
+        {items.map((it, i) => (
+          <li key={i} className="flex gap-1.5">
+            <span className="font-medium text-foreground/70 shrink-0">{it.label}:</span>
+            <span>{it.body}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Render multi-sentence prose as a bullet list when there are 2+
+ * sentences. Used for pillar reasoning (Set 2/5, Sort 3/5, etc.) where
+ * the VLM emits 4–6 sentences of analysis per pillar — a single
+ * paragraph reads as a wall of text. Single-sentence reasoning falls
+ * through to a paragraph (one sentence in a bullet would be sillier).
+ *
+ * Sentence boundary detection: split on `. ` followed by an uppercase
+ * letter (so "e.g." doesn't break) OR on the marker-style "Frame N:"
+ * patterns the model uses. Trailing punctuation is normalised so each
+ * bullet ends with a single period regardless of how the model emitted it.
+ */
+export function ReasoningBlock({
+  text,
+  className,
+  testId,
+}: {
+  text: string;
+  className?: string;
+  testId?: string;
+}) {
+  const trimmed = text.trim();
+  // Split on `. ` + uppercase OR `. ` + digit ("Frame 5..."). Keeps
+  // common abbreviations (e.g., i.e., U.S.) from getting mis-split.
+  const sentences = trimmed
+    .split(/(?<=\.)\s+(?=[A-Z0-9])/g)
+    .map((s) => s.trim().replace(/^[•\-\s]+/, ""))
+    .filter(Boolean);
+
+  if (sentences.length < 2) {
+    return (
+      <p
+        className={className ?? "text-[12.5px] leading-snug text-muted-foreground"}
+        data-testid={testId}
+      >
+        {trimmed}
+      </p>
+    );
+  }
+
+  return (
+    <ul
+      className={`${className ?? "text-[12.5px] leading-snug text-muted-foreground"} space-y-0.5 list-disc list-outside pl-4`}
+      data-testid={testId}
+    >
+      {sentences.map((s, i) => (
+        <li key={i}>{s.endsWith(".") ? s : `${s}.`}</li>
+      ))}
+    </ul>
+  );
+}
+
 export function IssueRow({
   issue,
   index,
@@ -375,9 +573,7 @@ export function IssueRow({
       <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${style.iconColor}`} aria-hidden="true" />
       <div className="flex-1 min-w-0 space-y-1">
         <p className="leading-snug text-foreground/90">{issue.issue}</p>
-        {issue.evidence && (
-          <p className="text-[12.5px] leading-snug text-muted-foreground">{issue.evidence}</p>
-        )}
+        {issue.evidence && <EvidenceBlock evidence={issue.evidence} />}
         {(meta.length > 0 || issue.pillar) && (
           <div className="flex items-center gap-1.5 flex-wrap text-[11.5px] text-muted-foreground/80">
             {meta.length > 0 && <span>{meta.join(" · ")}</span>}
@@ -1337,12 +1533,12 @@ function RecentDetailDialog({
                                 <span className="text-[12.5px] font-semibold tabular-nums">{value}/5</span>
                               </div>
                               {reason ? (
-                                <p
-                                  className="text-[12.5px] leading-snug text-muted-foreground mt-1"
-                                  data-testid={`recent-pillar-reasoning-${key}`}
-                                >
-                                  {reason}
-                                </p>
+                                <div className="mt-1">
+                                  <ReasoningBlock
+                                    text={reason}
+                                    testId={`recent-pillar-reasoning-${key}`}
+                                  />
+                                </div>
                               ) : (
                                 <p className="text-[12px] italic text-muted-foreground/70 mt-1">
                                   No reasoning recorded.
@@ -1374,6 +1570,17 @@ function RecentDetailDialog({
                             aiSeverity={normalizeAiSeverity(
                               data.aiRecommendationsJson?.[i]?.severity ?? null,
                             )}
+                            regions={regionsForRecommendation(
+                              data.aiRecommendationsJson?.[i] ?? null,
+                              extractRegions(data.aiIssuesJson),
+                              (data.aiIssuesJson ?? []) as ReadonlyArray<{
+                                location?: string | null;
+                                principle?: string | null;
+                                region?: { frameIndex: number; box: [number, number, number, number] } | null;
+                              }>,
+                            )}
+                            keyframeUrls={data.keyframesJson ?? []}
+                            imageUrl={data.imageUrl}
                           />
                         ))}
                       </ul>
@@ -1726,19 +1933,30 @@ export function AreaCard({
         action: detailAction,
       });
     } else if (result && topSuggestion) {
+      // Successful score: lead with "Scoring completed" so the operator
+      // sees a clear close-of-loop signal for the long-running call. The
+      // percent + tone live alongside the title; the first action item
+      // becomes the description so they get one concrete next step
+      // without opening the dialog. View details opens the full report.
       const percent = Math.round(result.scoreTotal * 4);
       const tone = scoreTone(percent);
       toastHandle = toast({
-        title: `${msg} — ${percent}%`,
+        title: `Scoring completed — ${percent}%`,
         description: topSuggestion,
         className: `${tone.bg} ${tone.text} border-transparent`,
         action: detailAction,
+        // Bump the visible duration so the operator doesn't miss it on
+        // mobile (default shadcn toast auto-closes around 5 s; scoring
+        // takes 20-60 s so the operator was probably looking elsewhere
+        // when it finished).
+        duration: 12_000,
       });
     } else {
       toastHandle = toast({
-        title: msg,
+        title: result ? "Scoring completed" : msg,
         description: isVideo(media) ? "Walk-through scored across keyframes." : "Photo scored.",
         action: detailAction,
+        duration: 12_000,
       });
     }
     queryClient.invalidateQueries({ queryKey: getGetOperatorStatusQueryKey() });
@@ -1910,49 +2128,72 @@ export function AreaCard({
               </motion.span>
             )}
           </div>
-          <div className="px-5 pb-5 flex-1 space-y-4">
-            <div>
-              <p className="eyebrow flex items-center gap-1.5 mb-3">
-                <Info className="w-3 h-3" /> Action items
-              </p>
-              <ul className="space-y-2">
-                {sub.suggestionsJson?.map((s, i) => (
-                  <SuggestionRow
-                    key={i}
-                    text={s}
-                    index={i}
-                    // Same indices as aiRecommendationsJson; falls back to
-                    // keyword inference for older submissions without the
-                    // recommendations payload.
-                    aiSeverity={normalizeAiSeverity(
-                      sub.aiRecommendationsJson?.[i]?.severity ?? null,
+          {/* Action items and Observed issues sit side-by-side at lg+ so
+              an operator reviewing the audit on a laptop sees what to FIX
+              alongside what's WRONG, with no scrolling between them. On
+              mobile/tablet they stack vertically (action items first,
+              issues below). When there are no observed issues, action
+              items take the full row width. */}
+          {(() => {
+            const hasIssues = !!sub.aiIssuesJson && sub.aiIssuesJson.length > 0;
+            return (
+              <div
+                className={`px-5 pb-5 flex-1 grid grid-cols-1 ${hasIssues ? "lg:grid-cols-2" : ""} gap-4`}
+              >
+                <div>
+                  <p className="eyebrow flex items-center gap-1.5 mb-3">
+                    <Info className="w-3 h-3" /> Action items
+                  </p>
+                  <ul className="space-y-2">
+                    {sub.suggestionsJson?.map((s, i) => (
+                      <SuggestionRow
+                        key={i}
+                        text={s}
+                        index={i}
+                        // Same indices as aiRecommendationsJson; falls
+                        // back to keyword inference for older submissions
+                        // without the recommendations payload.
+                        aiSeverity={normalizeAiSeverity(
+                          sub.aiRecommendationsJson?.[i]?.severity ?? null,
+                        )}
+                        regions={regionsForRecommendation(
+                          sub.aiRecommendationsJson?.[i] ?? null,
+                          extractRegions(sub.aiIssuesJson),
+                          (sub.aiIssuesJson ?? []) as ReadonlyArray<{
+                            location?: string | null;
+                            principle?: string | null;
+                            region?: { frameIndex: number; box: [number, number, number, number] } | null;
+                          }>,
+                        )}
+                        keyframeUrls={sub.keyframesJson ?? []}
+                        imageUrl={sub.imageUrl}
+                      />
+                    ))}
+                    {(!sub.suggestionsJson || sub.suggestionsJson.length === 0) && (
+                      <li className="text-[13.5px] text-muted-foreground italic bg-secondary/60 p-3 rounded-xl">
+                        No immediate action required.
+                      </li>
                     )}
-                  />
-                ))}
-                {(!sub.suggestionsJson || sub.suggestionsJson.length === 0) && (
-                  <li className="text-[13.5px] text-muted-foreground italic bg-secondary/60 p-3 rounded-xl">
-                    No immediate action required.
-                  </li>
+                  </ul>
+                </div>
+                {/* Observed issues — what the AI flagged as wrong, with
+                    severity. Hidden entirely for older submissions whose
+                    payload predates aiIssuesJson. */}
+                {hasIssues && (
+                  <div data-testid={`area-observed-issues-${status.areaId}`}>
+                    <p className="eyebrow flex items-center gap-1.5 mb-3">
+                      <AlertTriangle className="w-3 h-3" /> Observed issues
+                    </p>
+                    <ul className="space-y-2">
+                      {sub.aiIssuesJson!.map((issue, i) => (
+                        <IssueRow key={i} issue={issue} index={i} />
+                      ))}
+                    </ul>
+                  </div>
                 )}
-              </ul>
-            </div>
-            {/* Observed issues — what the AI flagged as wrong, with severity.
-                Sits underneath "Action items" so the operator sees the *why*
-                behind each recommendation. Hidden entirely for older
-                submissions whose payload predates aiIssuesJson. */}
-            {sub.aiIssuesJson && sub.aiIssuesJson.length > 0 && (
-              <div data-testid={`area-observed-issues-${status.areaId}`}>
-                <p className="eyebrow flex items-center gap-1.5 mb-3">
-                  <AlertTriangle className="w-3 h-3" /> Observed issues
-                </p>
-                <ul className="space-y-2">
-                  {sub.aiIssuesJson.map((issue, i) => (
-                    <IssueRow key={i} issue={issue} index={i} />
-                  ))}
-                </ul>
               </div>
-            )}
-          </div>
+            );
+          })()}
           <div className="p-4 border-t border-border/70">
             <Button
               variant="outline"

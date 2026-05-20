@@ -39,6 +39,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { EnvironmentBadge, normalizeEnvironment } from "@/lib/environment";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { LiveShiftBlock } from "@/pages/live";
 
 // Three states a panel/card can be in. Distinguishing these in markup is what
 // stops a 500 from looking identical to "no data yet" — managers need to know
@@ -213,6 +214,51 @@ function panelStatus(opts: {
   return "ready";
 }
 
+/**
+ * Three trend / diagnostic panels (operator dismiss, learning trend,
+ * area detection agreement) bundled inside a collapsed details element.
+ * They're useful when investigating a specific drift but they crowd the
+ * daily-scan dashboard, so we hide them behind a single "Show trend
+ * diagnostics" toggle. The panels' data queries fire only after the
+ * details element opens, since they live inside React tree that doesn't
+ * mount until then.
+ */
+function DashboardTrendsExpandable() {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="bg-card rounded-2xl shadow-soft" data-testid="dashboard-trends-expandable">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="w-full flex items-center justify-between p-5 sm:p-6 text-left hover-overlay rounded-2xl transition-colors"
+      >
+        <div>
+          <p className="eyebrow">Diagnostics</p>
+          <h2 className="text-lg font-semibold tracking-tight mt-1">
+            Trend diagnostics
+          </h2>
+          <p className="text-[12.5px] text-muted-foreground mt-1">
+            Operator dismiss rate · Learning trend · Area detection agreement
+          </p>
+        </div>
+        <ChevronDown
+          className={`w-5 h-5 text-muted-foreground transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+      {open && (
+        <div className="px-5 pb-5 sm:px-6 sm:pb-6 space-y-6">
+          <OperatorDismissPanel />
+          <LearningTrendPanel />
+          <DetectionAgreementPanel />
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function Dashboard() {
   const today = format(new Date(), "yyyy-MM-dd");
 
@@ -263,6 +309,16 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-10 pb-12">
+      {/* Live Shift block sits above Factory Overview so the manager
+          sees what needs attention right now (pending areas, overdue
+          checks, low scores, open escalations) before scrolling into the
+          weekly trend charts. The block reuses LiveShiftBlock from the
+          /live page; the standalone /live route still works for
+          deep-links from emails and escalation notifications. */}
+      <section data-testid="dashboard-live-shift">
+        <LiveShiftBlock compact />
+      </section>
+
       <header className="space-y-2">
         <p className="eyebrow">{format(new Date(), "EEEE, MMMM d")}</p>
         <h1 className="text-[34px] font-semibold tracking-tight leading-tight">Factory overview</h1>
@@ -337,21 +393,23 @@ export default function Dashboard() {
         )}
       </section>
 
-      <AiReliabilityPanel />
-
-      <AiCostPanel />
-
-      <BackfillReasoningPanel />
+      {/* AiReliabilityPanel, AiCostPanel, BackfillReasoningPanel, and
+          LearningStatusPanel have moved off the dashboard — they now live
+          under Settings & Stats (the gear icon in the top-right). The
+          dashboard surfaces operational state (live shift, compliance,
+          scores, operator coverage) rather than AI ops state. The four
+          function definitions remain below the page export so Phase 2
+          can compose them into the new settings page without re-deriving
+          their data queries. */}
 
       <OperatorCoveragePanel />
 
-      <LearningStatusPanel />
-
-      <OperatorDismissPanel />
-
-      <LearningTrendPanel />
-
-      <DetectionAgreementPanel />
+      {/* Three diagnostic panels (operator dismiss, learning trend, area
+          detection agreement) live inside a collapsed details element so
+          the dashboard stays scannable. Managers expand them when
+          investigating a specific drift; they don't add value to the
+          daily scan. */}
+      <DashboardTrendsExpandable />
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-card rounded-2xl shadow-soft p-6" data-testid="scores-by-area-panel">
@@ -510,7 +568,7 @@ function formatRetryRate(rate: number): string {
   return `${Math.round(pct)}%`;
 }
 
-function AiReliabilityPanel() {
+export function AiReliabilityPanel() {
   const { data, isLoading } = useGetDashboardAiReliability();
 
   if (isLoading || !data) {
@@ -778,7 +836,7 @@ function shortenModelVersion(v: string): string {
   return v.replace(/-v\d+$/, "");
 }
 
-function AiCostPanel() {
+export function AiCostPanel() {
   const { data, isLoading } = useGetDashboardAiCost();
 
   if (isLoading || !data) {
@@ -831,7 +889,7 @@ const BACKFILL_BATCH_SIZE = 25;
 // many older audits still say "No reasoning recorded." in their detail dialog
 // and trigger a batch fill from the dashboard instead of curl-ing the admin
 // endpoint by hand.
-function BackfillReasoningPanel() {
+export function BackfillReasoningPanel() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError: statusError } = useGetBackfillReasoningStatus();
   const mutation = useBackfillReasoning();
@@ -1063,7 +1121,7 @@ function AiCostWindowTable({
 
 const TRAINING_TARGET = 5;
 
-function LearningStatusPanel() {
+export function LearningStatusPanel() {
   const { data: areas, isLoading } = useListAreas();
   if (isLoading) {
     return (
@@ -2044,33 +2102,34 @@ function OperatorDismissRow({
 //   - assignedCount === 1: a single misconfiguration locks the operator out
 //     of the rest of the site, so we list these too as a soft warning.
 // Clicking an operator jumps to /areas where the manager can fix it.
+/**
+ * Compact one-line coverage tile for the manager dashboard. Replaces the
+ * old detailed list (which felt like a laundry-list at a glance). The
+ * tile shows: status pill (✓ healthy / ⚠ N operators need attention) and
+ * a one-line breakdown of "zero areas / one area" counts. Clicking it
+ * deep-links to /areas where assignments are actually edited — which is
+ * where a manager goes anyway after spotting a problem.
+ */
 function OperatorCoveragePanel() {
   const { data, isLoading } = useGetDashboardOperatorCoverage({ maxAreas: 1 });
 
   if (isLoading) {
     return (
-      <section className="bg-card rounded-2xl shadow-soft p-6">
-        <div className="h-20 bg-secondary rounded-xl animate-pulse" />
+      <section className="bg-card rounded-2xl shadow-soft p-5">
+        <div className="h-14 bg-secondary rounded-xl animate-pulse" />
       </section>
     );
   }
   if (!data) return null;
-
-  // Don't render the panel at all on facilities that have no operators or
-  // no areas yet — there's literally nothing actionable to show, and the
-  // empty state would be misleading ("0 operators have no coverage" when
-  // there are no operators at all).
+  // Facilities with no operators or areas: nothing useful to surface.
   if (data.totalOperators === 0 || data.totalAreas === 0) return null;
 
-  const zeroOps = data.operators.filter((o) => o.assignedCount === 0);
-  const oneOps = data.operators.filter((o) => o.assignedCount === 1);
-  const allCovered = data.operators.length === 0;
+  const zeroCount = data.operators.filter((o) => o.assignedCount === 0).length;
+  const oneCount = data.operators.filter((o) => o.assignedCount === 1).length;
+  const totalNeeding = zeroCount + oneCount;
+  const allCovered = totalNeeding === 0;
 
-  // Severity tone: red whenever any operator has zero areas (potentially
-  // locked out / silently sees everything), amber when only the one-area
-  // soft warning is firing, green when nothing to flag.
-  const tone: "good" | "warn" | "bad" =
-    zeroOps.length > 0 ? "bad" : oneOps.length > 0 ? "warn" : "good";
+  const tone: "good" | "warn" | "bad" = zeroCount > 0 ? "bad" : oneCount > 0 ? "warn" : "good";
   const iconClass =
     tone === "bad"
       ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
@@ -2078,55 +2137,35 @@ function OperatorCoveragePanel() {
       ? "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
       : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300";
 
+  const breakdownBits: string[] = [];
+  if (zeroCount > 0) breakdownBits.push(`${zeroCount} unassigned`);
+  if (oneCount > 0) breakdownBits.push(`${oneCount} with only 1 area`);
+  const breakdown = breakdownBits.join(" · ");
+
   return (
-    <section
-      className="bg-card rounded-2xl shadow-soft p-6"
+    <Link
+      href="/areas"
+      className="block bg-card rounded-2xl shadow-soft p-5 hover:shadow-elevated transition-shadow"
       data-testid="dashboard-operator-coverage"
     >
-      <div className="flex flex-col gap-4 mb-5 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="eyebrow">Assignments</p>
-          <h2 className="text-lg font-semibold tracking-tight mt-1">
-            Operators with little or no area coverage
-          </h2>
-          <p className="text-[13px] text-muted-foreground mt-1 max-w-xl">
-            Operators with zero assigned areas currently see every area (legacy
-            fallback) — usually a forgotten setup step. One-area operators are
-            shown as a soft warning. Tap an operator to fix their assignments.
-          </p>
-        </div>
-        <div
-          className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${iconClass}`}
-        >
+      <div className="flex items-center gap-4">
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${iconClass}`}>
           <UserX className="w-4 h-4" />
         </div>
-      </div>
-
-      {allCovered ? (
-        <div
-          className="rounded-xl bg-secondary/30 px-4 py-6 text-center text-[13px] text-muted-foreground"
-          data-testid="dashboard-operator-coverage-empty"
-        >
-          All {data.totalOperators} operator{data.totalOperators === 1 ? "" : "s"} have at least 2 assigned areas. Coverage looks healthy.
+        <div className="min-w-0 flex-1">
+          <p className="eyebrow">Operator coverage</p>
+          <p className="text-[15px] font-semibold tracking-tight mt-0.5">
+            {allCovered
+              ? `Healthy — all ${data.totalOperators} operator${data.totalOperators === 1 ? "" : "s"} have ≥ 2 areas`
+              : `${totalNeeding} operator${totalNeeding === 1 ? "" : "s"} need attention`}
+          </p>
+          {!allCovered && (
+            <p className="text-[12.5px] text-muted-foreground mt-0.5">{breakdown}</p>
+          )}
         </div>
-      ) : (
-        <ul
-          className="divide-y divide-border rounded-xl bg-secondary/20 overflow-hidden"
-          data-testid="dashboard-operator-coverage-list"
-        >
-          {data.operators.map((op) => (
-            <OperatorCoverageRow
-              key={op.operatorId}
-              operatorId={op.operatorId}
-              operatorEmail={op.operatorEmail}
-              assignedCount={op.assignedCount}
-              assignedAreaNames={op.assignedAreaNames}
-              totalAreas={data.totalAreas}
-            />
-          ))}
-        </ul>
-      )}
-    </section>
+        <ChevronRight className="w-4 h-4 text-muted-foreground/70 shrink-0" />
+      </div>
+    </Link>
   );
 }
 

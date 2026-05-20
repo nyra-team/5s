@@ -137,7 +137,7 @@ export function resolveCandidateCap(maxFrames: number, optsOverride?: number): n
  * a Hamming distance ≤ ~5 are visually near-identical, regardless of minor
  * compression artifacts. Returned as 8 bytes so we can cheaply XOR.
  */
-async function computeDHash(absPath: string): Promise<Buffer> {
+export async function computeDHash(absPath: string): Promise<Buffer> {
   // 9x8 grayscale → compare each pixel to its right-hand neighbor → 8 rows x 8 bits.
   const raw = await sharp(absPath)
     .grayscale()

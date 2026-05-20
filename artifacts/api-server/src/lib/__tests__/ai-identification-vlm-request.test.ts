@@ -83,12 +83,17 @@ afterEach(() => {
   }
 });
 
-const EXPECTED_REQUEST_KEYS = new Set([
+// Required keys must always be present; response_format is only sent
+// when the active model is gpt-5 family. Anthropic's OpenAI-compat
+// endpoint rejects `response_format: json_object`, so we omit it for
+// claude-* models and rely on the JSON-parse path + fence strip.
+const REQUIRED_REQUEST_KEYS = new Set([
   "model",
-  "response_format",
   "max_completion_tokens",
   "messages",
 ]);
+const OPTIONAL_REQUEST_KEYS = new Set(["response_format"]);
+const ALL_REQUEST_KEYS = new Set([...REQUIRED_REQUEST_KEYS, ...OPTIONAL_REQUEST_KEYS]);
 
 // Parameters gpt-5 silently rejects (or that we've explicitly chosen not to
 // send). Mirrors the FORBIDDEN_PARAMS list in ai-scoring-vlm-request.test.ts —
@@ -134,12 +139,13 @@ describe("callIdentificationVLM request payload", () => {
 
     // Lock the surface area: any new top-level field is something a future
     // model rev might not support. Adding one should be a deliberate choice
-    // that updates this list (and the EXPECTED_REQUEST_KEYS allowlist).
+    // that updates ALL_REQUEST_KEYS. Required keys must all be present;
+    // response_format is optional (absent for Claude).
     const actualKeys = new Set(Object.keys(req));
     for (const k of actualKeys) {
-      expect(EXPECTED_REQUEST_KEYS, `unexpected request field "${k}"`).toContain(k);
+      expect(ALL_REQUEST_KEYS, `unexpected request field "${k}"`).toContain(k);
     }
-    for (const k of EXPECTED_REQUEST_KEYS) {
+    for (const k of REQUIRED_REQUEST_KEYS) {
       expect(actualKeys, `missing required request field "${k}"`).toContain(k);
     }
   });
