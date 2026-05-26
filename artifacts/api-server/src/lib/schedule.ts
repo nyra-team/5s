@@ -17,6 +17,9 @@ export async function recomputeCadence(areaId: number, machine: string | null): 
   const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
   const conds = [eq(submissionsTable.areaId, areaId), gte(submissionsTable.createdAt, since)];
   if (machine) conds.push(eq(submissionsTable.machineTag, machine));
+  // Background-scoring placeholder rows carry scoreTotal=0; they'd otherwise
+  // be counted as "fails" and shorten cadence based on phantom failures.
+  conds.push(sql`coalesce(${submissionsTable.scoringMode}, '') <> 'PENDING'`);
   const rows = await db
     .select({
       total: sql<number>`count(*)::int`,

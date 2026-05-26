@@ -219,15 +219,9 @@ export default function ResetPassword() {
       </div>
       <div className="w-full max-w-md flex flex-col gap-9 relative z-10">
         <div className="flex flex-col items-center text-center gap-5">
-          <img
-            src="/granules-logo.png"
-            alt="Granules"
-            className="w-20 h-20 drop-shadow-[0_8px_24px_rgba(37,99,235,0.18)] select-none"
-            draggable={false}
-          />
           <div className="space-y-2">
             <p className="brand-wordmark text-[11px] text-blue-700 dark:text-blue-300">
-              Granules · 5S Compliance
+              5S Compliance
             </p>
             <h1 className="font-heading text-[32px] leading-tight font-bold tracking-tight text-foreground">
               Set new password

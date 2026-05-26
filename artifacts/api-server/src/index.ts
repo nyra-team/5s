@@ -10,6 +10,7 @@ import { startRepingScheduler } from "./lib/reping-scheduler";
 import { startMetricsRetentionScheduler } from "./lib/metrics-retention";
 import { startAiReliabilityMonitor } from "./lib/ai-reliability";
 import { startBackfillReasoningScheduler } from "./lib/backfill-reasoning-scheduler";
+import { recoverOrphanedPendingSubmissions } from "./lib/scoring-recovery";
 
 const rawPort = process.env["PORT"];
 
@@ -88,6 +89,12 @@ logger.info({ port }, "Server listening");
 // inside the sweep itself.
 recoverPendingEscalationNotifications().catch((err) =>
   logger.error({ err }, "Startup escalation recovery failed unexpectedly"),
+);
+
+// Collapse any submissions left PENDING by a crashed scoring task in the
+// previous run so operators don't see a permanently-spinning "Scoring…" card.
+recoverOrphanedPendingSubmissions().catch((err) =>
+  logger.error({ err }, "Startup scoring recovery failed unexpectedly"),
 );
 
 startRepingScheduler();

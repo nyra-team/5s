@@ -8,6 +8,7 @@ import { AuthProvider } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
 import { Layout } from "@/components/layout";
 import { ProtectedRoute } from "@/components/protected-route";
+import { useScoringCompletionToasts } from "@/hooks/use-scoring-completion-toasts";
 
 // Pages that ship on the initial paint (login flow + operator home).
 // Anything operators don't need on first paint is lazy-imported below so
@@ -41,6 +42,14 @@ function RouteLoading() {
 }
 
 const queryClient = new QueryClient();
+
+// Mounts the global background-scoring completion poller. Sits between
+// AuthProvider (needed for the role check) and the route switch so the
+// toast fires no matter which screen the operator is on when scoring lands.
+function GlobalEffects() {
+  useScoringCompletionToasts();
+  return null;
+}
 
 function Router() {
   return (
@@ -150,6 +159,7 @@ function App() {
         <MotionConfig reducedMotion="user">
           <AuthProvider>
             <TooltipProvider>
+              <GlobalEffects />
               <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
                 <Router />
               </WouterRouter>

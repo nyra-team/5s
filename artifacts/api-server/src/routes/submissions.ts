@@ -153,6 +153,13 @@ router.get("/submissions", authMiddleware, async (req, res): Promise<void> => {
   const conditions = [];
   const cfg = await loadEffectiveShiftConfig();
 
+  // Hide rows whose scoring is still running — they carry placeholder 0 scores
+  // until the background pipeline finishes, and averaging those into manager
+  // dashboards would crater the displayed totals. The operator's own
+  // /operator/recent endpoint still shows PENDING rows so the in-flight
+  // submission appears on their home strip as a "Scoring..." card.
+  conditions.push(sql`coalesce(${submissionsTable.scoringMode}, '') <> 'PENDING'`);
+
   if (query.success && query.data.shift) conditions.push(eq(submissionsTable.shift, query.data.shift));
   if (query.success && query.data.areaId) conditions.push(eq(submissionsTable.areaId, query.data.areaId));
   if (query.success && query.data.date) {
@@ -531,6 +538,124 @@ router.post("/submissions/identify-area", authMiddleware, uploadFields, async (r
   }
 });
 
+// Background scoring + post-processing for a row that was already inserted in
+// the PENDING state by POST /submissions. Runs after the 201 has gone out so
+// the operator can keep uploading videos for other areas while scoring
+// finishes. Any failure is folded into the row's scoringMode so the operator
+// UI's completion-toast poller can render an actionable message — we never
+// leave a row stuck in PENDING.
+async function runBackgroundScoring(args: {
+  submissionId: number;
+  areaId: number;
+  areaName: string;
+  environmentType: string;
+  file: Express.Multer.File;
+  machineTag: string | null;
+  mediaUrl: string;
+}): Promise<void> {
+  const { submissionId, areaId, areaName, environmentType, file, machineTag, mediaUrl } = args;
+
+  let pipeline;
+  try {
+    pipeline = await runScoringPipeline({ areaId, areaName, environmentType, file, machineTag });
+  } catch (err) {
+    // Scoring failed. Mark the row with a non-PENDING scoringMode so the
+    // operator's toast poller flips out of "scoring..." and shows the
+    // matching error hint (rate-limit, timeout, video unreadable, etc.).
+    // ScoringError codes are surfaced verbatim; everything else collapses
+    // to the generic "FALLBACK" the UI already understands.
+    const failureMode = err instanceof ScoringError ? err.code : "FALLBACK";
+    if (err instanceof ScoringError) {
+      logger.warn({ err, code: err.code, submissionId }, "Background scoring raised structured error");
+    } else {
+      logger.error({ err, submissionId }, "Background scoring failed");
+    }
+    try {
+      await db
+        .update(submissionsTable)
+        .set({ scoringMode: failureMode })
+        .where(eq(submissionsTable.id, submissionId));
+    } catch (updErr) {
+      logger.error({ err: updErr, submissionId }, "Failed to mark submission as scoring-failed");
+    }
+    return;
+  }
+
+  const { scoring } = pipeline;
+  const finalScoreTotal = scoring.aiTotalScore;
+  const finalScoreJson = scoring.aiPillarsJson;
+  const finalSuggestions = scoring.aiRecommendationsJson?.length
+    ? scoring.aiRecommendationsJson.map((r) => r.action)
+    : [AI_UNAVAILABLE_FALLBACK_ACTION];
+
+  const [updated] = await db
+    .update(submissionsTable)
+    .set({
+      scoreTotal: finalScoreTotal,
+      scoreJson: finalScoreJson,
+      suggestionsJson: finalSuggestions,
+      keyframesJson: scoring.keyframeUrls.length ? scoring.keyframeUrls : null,
+      keyframeMetricsJson: scoring.keyframeMetrics ?? null,
+      failingPillarsJson: scoring.failingPillars,
+      embeddingHash: scoring.embeddingHash || null,
+      aiTotalScore: scoring.aiTotalScore,
+      aiPillarsJson: scoring.aiPillarsJson,
+      aiRecommendationsJson: scoring.aiRecommendationsJson,
+      aiIssuesJson: scoring.aiIssuesJson,
+      aiReasoningJson: scoring.aiReasoningJson,
+      modelVersion: scoring.modelVersion,
+      scoringMode: scoring.scoringMode,
+      // Snapshot the VLM-extracted profile fields per submission so the
+      // auto-retune loop can rebuild this area's profile from corrected
+      // history without re-running the (expensive) VLM.
+      profileExtractJson: scoring.profile,
+    })
+    .where(eq(submissionsTable.id, submissionId))
+    .returning();
+
+  // Replicate the uploaded media + extracted keyframes into Supabase Storage.
+  replicateMediaToStorage({
+    mediaUrl,
+    contentType: file.mimetype,
+    keyframeUrls: scoring.keyframeUrls,
+  });
+
+  try {
+    await ingestProfileExtract(areaId, scoring.profile);
+  } catch (err) {
+    logger.error({ err, submissionId }, "Failed to ingest profile extract");
+  }
+
+  flagAreaIfBelowAgreementThreshold(areaId).catch((err) =>
+    logger.error({ err, areaId }, "auto-flag: unhandled error"),
+  );
+
+  // Auto-escalate on failure. Needs the operator's email; fetch lazily so the
+  // happy path (no escalation) still does one less query.
+  if (updated) {
+    const scorePercent = Math.round(finalScoreTotal * 4);
+    if (scorePercent < ESCALATION_THRESHOLD_PERCENT) {
+      try {
+        const [user] = await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
+        await maybeCreateEscalation({
+          submissionId: updated.id,
+          areaId,
+          areaName,
+          operatorId: updated.userId,
+          operatorEmail: user?.email ?? "",
+          scoreTotal: finalScoreTotal,
+          scorePercent,
+          failingPillars: scoring.failingPillars,
+          recommendedActions: finalSuggestions.slice(0, 5),
+          evidenceUrls: scoring.keyframeUrls.length ? scoring.keyframeUrls : [mediaUrl],
+        });
+      } catch (err) {
+        logger.error({ err, submissionId }, "Failed to create escalation");
+      }
+    }
+  }
+}
+
 router.post("/submissions", authMiddleware, uploadFields, async (req, res): Promise<void> => {
   const { userId } = (req as any).user;
   const areaId = parseInt(req.body.areaId, 10);
@@ -579,37 +704,13 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
     return;
   }
 
-  let pipeline;
-  try {
-    pipeline = await runScoringPipeline({ areaId, areaName: area.name, environmentType: area.environmentType, file, machineTag });
-  } catch (err) {
-    // The pipeline now distinguishes structured `ScoringError`s (rate-limit,
-    // timeout, malformed JSON, dark frames, unreadable video) from generic
-    // infrastructure failures. Map the structured ones to their distinct
-    // operator-actionable codes; everything else stays as the catch-all
-    // SCORING_FAILED so the existing operator UI fallback still applies.
-    if (err instanceof ScoringError) {
-      logger.warn({ err, code: err.code }, "Scoring pipeline raised structured error");
-      const { status, body } = buildScoringErrorResponse(err);
-      res.status(status).json(body);
-      return;
-    }
-    logger.error({ err }, "Scoring pipeline failed");
-    res.status(502).json({
-      error: "Failed to score submission",
-      code: "SCORING_FAILED",
-      hint: "We couldn't analyse this capture. Try again with brighter lighting and a steadier angle.",
-      retryable: true,
-    });
-    return;
-  }
-
-  const { scoring, mediaType, mediaUrl } = pipeline;
-  const finalScoreTotal = scoring.aiTotalScore;
-  const finalScoreJson = scoring.aiPillarsJson;
-  const finalSuggestions = scoring.aiRecommendationsJson?.length
-    ? scoring.aiRecommendationsJson.map((r) => r.action)
-    : [AI_UNAVAILABLE_FALLBACK_ACTION];
+  // Insert a PENDING stub row immediately so the operator can move on to the
+  // next area while scoring runs in the background. The frontend's global
+  // completion poller flips this row's `scoringMode` from PENDING to
+  // AI/FALLBACK/etc. when the background pipeline finishes and surfaces a
+  // bottom-right toast on whichever screen the operator is on.
+  const mediaType: "image" | "video" = isVideoFile(file) ? "video" : "image";
+  const mediaUrl = `/uploads/${file.filename}`;
 
   const [submission] = await db
     .insert(submissionsTable)
@@ -618,69 +719,32 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
       tappedAreaId,
       userId,
       shift,
-      scoreTotal: finalScoreTotal,
-      scoreJson: finalScoreJson,
-      suggestionsJson: finalSuggestions,
+      scoreTotal: 0,
+      scoreJson: [],
+      suggestionsJson: [],
       imageUrl: mediaUrl,
       mediaType,
-      keyframesJson: scoring.keyframeUrls.length ? scoring.keyframeUrls : null,
-      keyframeMetricsJson: scoring.keyframeMetrics ?? null,
       machineTag,
-      failingPillarsJson: scoring.failingPillars,
-      embeddingHash: scoring.embeddingHash || null,
-      aiTotalScore: scoring.aiTotalScore,
-      aiPillarsJson: scoring.aiPillarsJson,
-      aiRecommendationsJson: scoring.aiRecommendationsJson,
-      aiIssuesJson: scoring.aiIssuesJson,
-      aiReasoningJson: scoring.aiReasoningJson,
-      modelVersion: scoring.modelVersion,
-      scoringMode: scoring.scoringMode,
-      // Snapshot the VLM-extracted profile fields per submission so the
-      // auto-retune loop can rebuild this area's profile from corrected
-      // history without re-running the (expensive) VLM.
-      profileExtractJson: scoring.profile,
+      scoringMode: "PENDING",
     })
     .returning();
 
-  // Replicate the uploaded media + extracted keyframes into Supabase
-  // Storage. Fire-and-forget: a Storage hiccup must never fail a scored
-  // submission — the file still lives on local disk and the `/api/uploads`
-  // serving falls back to local when Storage is unreachable.
-  replicateMediaToStorage({
-    mediaUrl,
-    contentType: file.mimetype,
-    keyframeUrls: scoring.keyframeUrls,
-  });
-
-  // Update learned profile
-  try {
-    await ingestProfileExtract(areaId, scoring.profile);
-  } catch (err) {
-    logger.error({ err }, "Failed to ingest profile extract");
-  }
-
-  // Drift / correction signals for the auto-retune loop. We persist these
-  // as rows in `area_detection_events` (queryable, joinable) and ALSO keep
-  // a structured log line for backwards compatibility with any downstream
-  // alerting that already greps for the `kind:` value. A future profile
-  // rebuild (see lib/ai-identification.ts) can mine corrections from the
-  // table without scanning every submission row.
-  //   - tappedAreaId !== areaId: the chosen area drifted from the
-  //     operator's intent (either AI auto-switch or explicit manual change).
-  //     When the AI suggested the chosen area, that's an AI-driven override
-  //     of intent.
-  //   - aiSuggestedAreaId is provided AND chosen area !== AI suggestion:
-  //     the operator explicitly overrode the AI's top suggestion — the
-  //     highest signal correction we can capture.
+  // Drift / correction signals + nudge dismissal + schedule recordCheck run
+  // synchronously: they don't depend on scoring output and the operator's UI
+  // expects badges/cadence to update the moment the upload lands.
   if (tappedAreaId !== null && tappedAreaId !== areaId) {
-    await recordAreaDetectionEvent({
-      submissionId: submission.id,
-      userId,
-      areaId,
-      tappedAreaId,
-      aiSuggestedAreaId,
-      kind: AREA_DETECTION_EVENT_KIND.DRIFT,
-    });
+    try {
+      await recordAreaDetectionEvent({
+        submissionId: submission.id,
+        userId,
+        areaId,
+        tappedAreaId,
+        aiSuggestedAreaId,
+        kind: AREA_DETECTION_EVENT_KIND.DRIFT,
+      });
+    } catch (err) {
+      logger.error({ err, submissionId: submission.id }, "recordAreaDetectionEvent DRIFT failed");
+    }
     logger.info(
       {
         submissionId: submission.id,
@@ -695,14 +759,18 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
     );
   }
   if (aiSuggestedAreaId != null && aiSuggestedAreaId !== areaId) {
-    await recordAreaDetectionEvent({
-      submissionId: submission.id,
-      userId,
-      areaId,
-      tappedAreaId,
-      aiSuggestedAreaId,
-      kind: AREA_DETECTION_EVENT_KIND.CORRECTION,
-    });
+    try {
+      await recordAreaDetectionEvent({
+        submissionId: submission.id,
+        userId,
+        areaId,
+        tappedAreaId,
+        aiSuggestedAreaId,
+        kind: AREA_DETECTION_EVENT_KIND.CORRECTION,
+      });
+    } catch (err) {
+      logger.error({ err, submissionId: submission.id }, "recordAreaDetectionEvent CORRECTION failed");
+    }
     logger.info(
       {
         submissionId: submission.id,
@@ -717,19 +785,8 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
     );
   }
 
-  // Auto-flag this area for profile rebuild if its recent agreement has
-  // dropped below the configured threshold. Fire-and-forget so a slow
-  // aggregation query never wedges the submission response — failures
-  // are logged inside the helper.
-  flagAreaIfBelowAgreementThreshold(areaId).catch((err) =>
-    logger.error({ err, areaId }, "auto-flag: unhandled error"),
-  );
-
-  // Update schedule cadence and last-check time (area baseline + per-machine if tagged)
   try { await recordCheck(areaId, machineTag ?? null, submission.createdAt); } catch (err) { logger.error({ err }, "recordCheck failed"); }
 
-  // Implicitly clear any active manager nudges this submission satisfies so the
-  // operator's badge disappears and Live shift no longer flags the area.
   try {
     await dismissNudgesForSubmission({ areaId, shift, machineTag: machineTag ?? null, userId });
   } catch (err) {
@@ -738,24 +795,17 @@ router.post("/submissions", authMiddleware, uploadFields, async (req, res): Prom
 
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
 
-  // Auto-escalate on failure
-  const scorePercent = Math.round(finalScoreTotal * 4);
-  try {
-    await maybeCreateEscalation({
-      submissionId: submission.id,
-      areaId,
-      areaName: area.name,
-      operatorId: userId,
-      operatorEmail: user?.email ?? "",
-      scoreTotal: finalScoreTotal,
-      scorePercent,
-      failingPillars: scoring.failingPillars,
-      recommendedActions: finalSuggestions.slice(0, 5),
-      evidenceUrls: scoring.keyframeUrls.length ? scoring.keyframeUrls : [mediaUrl],
-    });
-  } catch (err) {
-    logger.error({ err }, "Failed to create escalation");
-  }
+  // Kick off the slow scoring pipeline without awaiting it. Errors bubble
+  // into the row's scoringMode so the operator's UI poller surfaces them.
+  void runBackgroundScoring({
+    submissionId: submission.id,
+    areaId,
+    areaName: area.name,
+    environmentType: area.environmentType,
+    file,
+    machineTag,
+    mediaUrl,
+  }).catch((err) => logger.error({ err, submissionId: submission.id }, "background scoring unhandled rejection"));
 
   res.status(201).json({
     ...submission,

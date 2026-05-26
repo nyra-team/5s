@@ -400,7 +400,31 @@ export function SuggestionRow({
     >
       <div className="flex gap-2 items-start">
         <ArrowRight className={`w-4 h-4 shrink-0 mt-0.5 ${style.iconColor}`} aria-hidden="true" />
-        <span className="leading-snug text-foreground/90 flex-1 min-w-0">{text}</span>
+        {(() => {
+          const split = bulletize(text);
+          if (!split) {
+            return (
+              <span className="leading-snug text-foreground/90 flex-1 min-w-0">
+                {text}
+              </span>
+            );
+          }
+          return (
+            <div className="flex-1 min-w-0 space-y-1">
+              {split.lead && (
+                <p className="leading-snug text-foreground/90">{split.lead}:</p>
+              )}
+              <ul
+                className="list-disc list-outside pl-4 space-y-0.5 text-foreground/85 leading-snug"
+                data-testid={`suggestion-row-${index}-subbullets`}
+              >
+                {split.points.map((p, i) => (
+                  <li key={i}>{p}</li>
+                ))}
+              </ul>
+            </div>
+          );
+        })()}
         <span
           className={`shrink-0 px-1.5 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wide ${style.pillBg} ${style.pillText}`}
           aria-label={`Severity: ${style.label}`}
@@ -452,6 +476,92 @@ export function SuggestionRow({
  * severity field.
  */
 /**
+ * Break a free-form action item / issue string into crisp sub-points when the
+ * model packed several clauses into one suggestion. Returns:
+ *   - { lead, points } when 2+ sub-points are detected; `lead` is optional
+ *     and used for the "Header: a, b, c" colon-list pattern.
+ *   - null when the text is already a single crisp point — caller renders it
+ *     as a flat line instead of a 1-item bullet list (which reads sillier).
+ *
+ * Splitters we *do* trust:
+ *   - semicolons ("Clean machine; wipe spill; tag area")
+ *   - explicit numbered/bulleted prefixes ("1) X 2) Y 3) Z")
+ *   - sentence boundaries when there are 3+ sentences (a long paragraph)
+ *   - "Header: a, b, c" colon-then-comma-list (uses `Header` as lead and
+ *     promotes each comma item to a sub-bullet)
+ *
+ * Splitters we *don't* trust:
+ *   - plain commas without a colon header — too noisy, easily breaks
+ *     legitimate "and/or/then" phrasing.
+ */
+export function bulletize(text: string): { lead: string | null; points: string[] } | null {
+  const cleaned = text.trim().replace(/^[•\-\*]+\s*/, "");
+  if (!cleaned) return null;
+
+  // 1) Numbered / parenthesised: "1) foo 2) bar 3) baz" or "1. foo 2. bar"
+  const numberedRe = /(?:^|\s)\d+[).]\s+/g;
+  const numberedMatches = [...cleaned.matchAll(numberedRe)];
+  if (numberedMatches.length >= 2) {
+    const points: string[] = [];
+    for (let i = 0; i < numberedMatches.length; i++) {
+      const start = (numberedMatches[i].index ?? 0) + numberedMatches[i][0].length;
+      const end = i + 1 < numberedMatches.length
+        ? numberedMatches[i + 1].index ?? cleaned.length
+        : cleaned.length;
+      const piece = cleaned.slice(start, end).trim().replace(/[.;,]\s*$/, "");
+      if (piece) points.push(piece);
+    }
+    const leadIdx = numberedMatches[0].index ?? 0;
+    const lead = leadIdx > 0 ? cleaned.slice(0, leadIdx).trim().replace(/[:.]$/, "") : null;
+    if (points.length >= 2) return { lead: lead || null, points };
+  }
+
+  // 2) Semicolon-separated clauses
+  if (cleaned.includes(";")) {
+    const parts = cleaned
+      .split(";")
+      .map((s) => s.trim().replace(/[.,;]\s*$/, ""))
+      .filter(Boolean);
+    if (parts.length >= 2) return { lead: null, points: parts };
+  }
+
+  // 3) "Header: a, b, c" — colon then a 2+ item comma list. Skip when the
+  // colon part itself looks like a sentence (more than ~8 words) so we
+  // don't shred prose like "Note: this only matters when X, otherwise Y".
+  const colonIdx = cleaned.indexOf(":");
+  if (colonIdx > 0 && colonIdx < cleaned.length - 1) {
+    const head = cleaned.slice(0, colonIdx).trim();
+    const tail = cleaned.slice(colonIdx + 1).trim();
+    const looksLikeHeader = head.split(/\s+/).length <= 8 && !/[.!?]$/.test(head);
+    if (looksLikeHeader && tail.includes(",")) {
+      const tailParts = tail
+        .split(",")
+        .map((s) => s.trim().replace(/[.,;]\s*$/, ""))
+        .filter(Boolean);
+      if (tailParts.length >= 2) {
+        return { lead: head, points: tailParts };
+      }
+    }
+  }
+
+  // 4) Multi-sentence prose (3+ sentences). Two sentences is borderline —
+  // keep as a flat line to avoid bullet-noise on simple "Do X. Then Y."
+  // pairs.
+  const sentences = cleaned
+    .split(/(?<=\.)\s+(?=[A-Z0-9])/g)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (sentences.length >= 3) {
+    return {
+      lead: null,
+      points: sentences.map((s) => (s.endsWith(".") ? s.slice(0, -1) : s)),
+    };
+  }
+
+  return null;
+}
+
+/**
  * Render the VLM's evidence string. The model often emits multi-frame
  * descriptions like "Frame 1: cable on floor; Frame 4: tangled cables;
  * Frame 5: …", which read as a wall of text. When we detect that pattern
@@ -468,7 +578,24 @@ function EvidenceBlock({ evidence }: { evidence: string }) {
   const markerRe = /(\bFrames?\s+\d+(?:[-,\s\d]*\d+)?\s*:)/g;
   const markers = [...text.matchAll(markerRe)];
   if (markers.length < 2) {
-    return <p className="text-[12.5px] leading-snug text-muted-foreground">{text}</p>;
+    // No per-frame markers, but the model may still have packed multiple
+    // observations into one string (semicolons, "Header: a, b, c", or 3+
+    // sentences). Promote those into sub-bullets the same way action items
+    // do so the operator sees crisp points instead of a paragraph wall.
+    const split = bulletize(text);
+    if (!split) {
+      return <p className="text-[12.5px] leading-snug text-muted-foreground">{text}</p>;
+    }
+    return (
+      <div className="text-[12.5px] leading-snug text-muted-foreground space-y-1">
+        {split.lead && <p>{split.lead}:</p>}
+        <ul className="list-disc list-outside pl-4 space-y-0.5">
+          {split.points.map((p, i) => (
+            <li key={i}>{p}</li>
+          ))}
+        </ul>
+      </div>
+    );
   }
   const items: { label: string; body: string }[] = [];
   for (let i = 0; i < markers.length; i++) {
@@ -572,7 +699,27 @@ export function IssueRow({
     >
       <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${style.iconColor}`} aria-hidden="true" />
       <div className="flex-1 min-w-0 space-y-1">
-        <p className="leading-snug text-foreground/90">{issue.issue}</p>
+        {(() => {
+          const split = bulletize(issue.issue);
+          if (!split) {
+            return <p className="leading-snug text-foreground/90">{issue.issue}</p>;
+          }
+          return (
+            <>
+              {split.lead && (
+                <p className="leading-snug text-foreground/90">{split.lead}:</p>
+              )}
+              <ul
+                className="list-disc list-outside pl-4 space-y-0.5 text-foreground/85 leading-snug"
+                data-testid={`issue-row-${index}-subbullets`}
+              >
+                {split.points.map((p, i) => (
+                  <li key={i}>{p}</li>
+                ))}
+              </ul>
+            </>
+          );
+        })()}
         {issue.evidence && <EvidenceBlock evidence={issue.evidence} />}
         {(meta.length > 0 || issue.pillar) && (
           <div className="flex items-center gap-1.5 flex-wrap text-[11.5px] text-muted-foreground/80">
@@ -933,7 +1080,11 @@ export default function OperatorHome() {
 
       <section className="space-y-5">
         <h2 className="text-xl font-semibold tracking-tight">Assigned areas</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        {/* Single-column stack on every breakpoint so each card gets full
+            width — at desktop sizes the action-items + observed-issues
+            split inside the card has room to breathe and reads cleanly
+            one-area-at-a-time instead of being squashed into a 2-up grid. */}
+        <div className="grid grid-cols-1 gap-5">
           <AnimatePresence mode="popLayout" initial={false}>
             {sortedStatuses.map((status) => (
               <motion.div
@@ -1906,6 +2057,18 @@ export function AreaCard({
           </ToastAction>
         )
       : undefined;
+    // PENDING = the upload landed but scoring is still running in the
+    // background so the operator can keep capturing videos for other areas.
+    // The matching "Scoring completed — X%" toast for THIS submission fires
+    // from the global completion poller in App.tsx once the row flips out of
+    // PENDING, no matter which screen the operator is on by then.
+    if (result?.scoringMode === "PENDING") {
+      toastHandle = toast({
+        title: `${msg} — scoring in background`,
+        description: "You can keep capturing other areas; we'll notify you when scoring finishes.",
+        duration: 4_000,
+      });
+    } else
     // FALLBACK = the upload landed and the row was saved, but the VLM didn't
     // produce a real score. Surface that distinctly so the operator knows to
     // re-capture rather than thinking they got a real "0%" audit.
@@ -2043,6 +2206,54 @@ export function AreaCard({
 
   if (status.submitted && status.submission) {
     const sub = status.submission;
+
+    // PENDING = upload landed, scoring still running in the background. We
+    // don't have a real score or action items yet so we render a slim
+    // "Scoring…" card instead of the full Completed variant — otherwise it
+    // would briefly show "0%" with empty action items until the background
+    // pipeline finishes. The card flips to the full Completed render on the
+    // next /operator/status refetch after scoring lands.
+    if (sub.scoringMode === "PENDING") {
+      const isVideoSubPending = sub.mediaType === "video";
+      return (
+        <div
+          className="bg-card rounded-2xl shadow-elevated overflow-hidden flex flex-col"
+          data-testid={`area-card-scoring-${status.areaId}`}
+        >
+          <div className="aspect-[16/10] overflow-hidden bg-muted relative">
+            <img
+              src={`/api${sub.imageUrl}`}
+              alt={status.areaName}
+              className="w-full h-full object-cover opacity-90"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
+            {isVideoSubPending && (
+              <span className="absolute top-3 left-3 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-black/60 text-white">
+                <Video className="w-3 h-3" /> Video walk-through
+              </span>
+            )}
+            <div className="absolute bottom-4 left-5 right-5 text-white flex items-end justify-between gap-3">
+              <div>
+                <h3 className="font-semibold text-[19px] tracking-tight">{status.areaName}</h3>
+                <p className="text-[13px] opacity-85">
+                  Submitted {format(new Date(sub.createdAt), "h:mm a")}
+                </p>
+              </div>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-semibold bg-white/15 text-white backdrop-blur-sm">
+                <span className="inline-block w-3 h-3 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />
+                Scoring…
+              </span>
+            </div>
+          </div>
+          <div className="px-5 pt-4 pb-5 flex items-center gap-2 text-muted-foreground">
+            <span className="text-[13px]">
+              We're analysing your capture. You can keep moving — we'll notify you when this finishes.
+            </span>
+          </div>
+        </div>
+      );
+    }
+
     const scorePercent = sub.scoreTotal * 4;
     const tone = scoreTone(scorePercent);
     const isVideoSub = sub.mediaType === "video";

@@ -43,6 +43,12 @@ import { loadEffectiveShiftConfig } from "../lib/facility-settings.js";
 
 const router: IRouter = Router();
 
+// SQL fragment that excludes submissions whose scoring is still running. The
+// PENDING rows carry a placeholder 0 in `scoreTotal` until the background
+// pipeline finishes, so averaging them in would drag every dashboard's
+// reported score down for the duration of the scoring window (~30-60s).
+const NOT_PENDING = sql`coalesce(${submissionsTable.scoringMode}, '') <> 'PENDING'`;
+
 // Date ranges are anchored to the facility's configured shift timezone so
 // "today" and per-shift filters match the clock operators see, regardless of
 // where the server is running. A Date passed in (used by an internal call
@@ -113,7 +119,8 @@ router.get("/dashboard/scores", authMiddleware, requireRole("MANAGER"), async (r
   const { start, end } = getDayRange(cfg, dateStr);
   const dateCondition = and(
     gte(submissionsTable.createdAt, start),
-    lt(submissionsTable.createdAt, end)
+    lt(submissionsTable.createdAt, end),
+    NOT_PENDING,
   );
 
   if (groupBy === "shift") {
@@ -142,6 +149,7 @@ router.get("/dashboard/scores", authMiddleware, requireRole("MANAGER"), async (r
         count: count(),
       })
       .from(submissionsTable)
+      .where(NOT_PENDING)
       .groupBy(sql`to_char(${submissionsTable.createdAt}, 'YYYY-MM-DD')`)
       .orderBy(sql`to_char(${submissionsTable.createdAt}, 'YYYY-MM-DD')`);
 
@@ -163,6 +171,7 @@ router.get("/dashboard/scores", authMiddleware, requireRole("MANAGER"), async (r
       .innerJoin(areasTable, eq(submissionsTable.areaId, areasTable.id))
       .where(dateCondition)
       .groupBy(areasTable.name);
+    // dateCondition already excludes PENDING via the shared filter.
 
     res.json(
       rows.map((r) => ({
@@ -189,7 +198,8 @@ router.get("/dashboard/summary", authMiddleware, requireRole("MANAGER"), async (
     .where(
       and(
         gte(submissionsTable.createdAt, start),
-        lt(submissionsTable.createdAt, end)
+        lt(submissionsTable.createdAt, end),
+        NOT_PENDING,
       )
     );
 
@@ -472,11 +482,13 @@ router.get("/dashboard/trends", authMiddleware, requireRole("MANAGER"), async (r
     ? and(
         gte(submissionsTable.createdAt, windowStart),
         lt(submissionsTable.createdAt, windowEnd),
-        eq(submissionsTable.shift, shift)
+        eq(submissionsTable.shift, shift),
+        NOT_PENDING,
       )
     : and(
         gte(submissionsTable.createdAt, windowStart),
-        lt(submissionsTable.createdAt, windowEnd)
+        lt(submissionsTable.createdAt, windowEnd),
+        NOT_PENDING,
       );
 
   const dailyRows = await db

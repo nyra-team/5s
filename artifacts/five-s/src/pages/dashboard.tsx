@@ -38,7 +38,6 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { EnvironmentBadge, normalizeEnvironment } from "@/lib/environment";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { LiveShiftBlock } from "@/pages/live";
 
 // Three states a panel/card can be in. Distinguishing these in markup is what
@@ -267,7 +266,6 @@ export default function Dashboard() {
   const scoresByAreaQ = useGetDashboardScores({ date: today, groupBy: "area" });
   const scoresByShiftQ = useGetDashboardScores({ date: today, groupBy: "shift" });
   const escalationCountQ = useGetEscalationCount();
-  const isMobile = useIsMobile();
 
   const summary = summaryQ.data;
   const compliance = complianceQ.data;
@@ -436,64 +434,41 @@ export default function Dashboard() {
               />
             ) : (
             <ResponsiveContainer width="100%" height="100%">
-              {isMobile ? (
-                // On phones, area-name labels along the bottom collide and clip. Flip
-                // the chart to a vertical layout so each area gets its own row with a
-                // readable left-side label, mirroring the "By Shift" chart.
-                <BarChart
-                  data={scoresByArea?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))}
-                  margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
-                  layout="vertical"
-                >
-                  <CartesianGrid strokeDasharray="2 4" horizontal={false} stroke="hsl(var(--border))" />
-                  <XAxis
-                    type="number"
-                    domain={[0, 100]}
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-                  />
-                  <YAxis
-                    dataKey="label"
-                    type="category"
-                    axisLine={false}
-                    tickLine={false}
-                    width={92}
-                    tick={{ fontSize: 12, fontWeight: 500, fill: "hsl(var(--foreground))" }}
-                  />
-                  <ChartTooltip
-                    cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
-                    contentStyle={tooltipStyle}
-                    formatter={(value: number) => [`${value}%`, "Avg Score"]}
-                  />
-                  <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[0, 8, 8, 0]} barSize={20} />
-                </BarChart>
-              ) : (
-                <BarChart data={scoresByArea?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
-                  <CartesianGrid strokeDasharray="2 4" vertical={false} stroke="hsl(var(--border))" />
-                  <XAxis
-                    dataKey="label"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-                    angle={-30}
-                    textAnchor="end"
-                    height={60}
-                  />
-                  <YAxis
-                    domain={[0, 100]}
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-                  />
-                  <ChartTooltip
-                    cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
-                    contentStyle={tooltipStyle}
-                    formatter={(value: number) => [`${value}%`, "Avg Score"]}
-                  />
-                  <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} maxBarSize={42} />
-                </BarChart>
-              )}
+              {/* Horizontal-bar / vertical layout at every breakpoint. The
+                  previous desktop chart rotated area names -30° at fontSize 11
+                  inside a 60px X-axis band, which cramped longer multi-word
+                  names like "Granules Towers" and "Product Armor" into
+                  unreadable angled strings. A left-side category axis at 140px
+                  gives each name a full horizontal line with no rotation. */}
+              <BarChart
+                data={scoresByArea?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))}
+                margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+                layout="vertical"
+              >
+                <CartesianGrid strokeDasharray="2 4" horizontal={false} stroke="hsl(var(--border))" />
+                <XAxis
+                  type="number"
+                  domain={[0, 100]}
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                />
+                <YAxis
+                  dataKey="label"
+                  type="category"
+                  axisLine={false}
+                  tickLine={false}
+                  width={140}
+                  interval={0}
+                  tick={{ fontSize: 12, fontWeight: 500, fill: "hsl(var(--foreground))" }}
+                />
+                <ChartTooltip
+                  cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
+                  contentStyle={tooltipStyle}
+                  formatter={(value: number) => [`${value}%`, "Avg Score"]}
+                />
+                <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[0, 8, 8, 0]} barSize={20} />
+              </BarChart>
             </ResponsiveContainer>
             )}
           </div>
@@ -523,7 +498,12 @@ export default function Dashboard() {
               />
             ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={scoresByShift?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))} margin={{ top: 10, right: 10, left: -10, bottom: 0 }} layout="vertical">
+              {/* Wider left-side label column + zero left margin so long area/
+                  tower names (e.g. "Granules towers", "Product Armor Area 1",
+                  "Product armor warehouse") sit fully inside the panel
+                  instead of spilling out under the card. `interval={0}`
+                  prevents Recharts from skipping labels when bars are thin. */}
+              <BarChart data={scoresByShift?.map((s) => ({ ...s, avgScore: Math.round(s.avgScore * 4) }))} margin={{ top: 10, right: 10, left: 0, bottom: 0 }} layout="vertical">
                 <CartesianGrid strokeDasharray="2 4" horizontal={false} stroke="hsl(var(--border))" />
                 <XAxis
                   type="number"
@@ -537,7 +517,9 @@ export default function Dashboard() {
                   type="category"
                   axisLine={false}
                   tickLine={false}
-                  tick={{ fontSize: 13, fontWeight: 500, fill: "hsl(var(--foreground))" }}
+                  width={160}
+                  interval={0}
+                  tick={{ fontSize: 12, fontWeight: 500, fill: "hsl(var(--foreground))" }}
                 />
                 <ChartTooltip
                   cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
