@@ -16,11 +16,18 @@ import {
 
 const router: IRouter = Router();
 
+// Self-signup never grants elevated access. Everyone starts as an active
+// OPERATOR; if they ask for manager access we record it as a pending request
+// (`requestedRole`) for an admin to approve. We still accept the legacy
+// `role` field from older clients but treat a "MANAGER" value as a *request*,
+// not a grant — there is no way to self-provision a MANAGER or ADMIN account.
 const SignupBody = z.object({
   email: z.string().email(),
   password: z.string().min(8, "Password must be at least 8 characters"),
   displayName: z.string().trim().min(1).max(120).optional(),
-  role: z.enum(["OPERATOR", "MANAGER"]).default("OPERATOR"),
+  requestedRole: z.enum(["MANAGER"]).optional(),
+  // Legacy field from the pre-approval signup form; mapped to a request below.
+  role: z.enum(["OPERATOR", "MANAGER"]).optional(),
 });
 
 router.post("/auth/signup", async (req, res): Promise<void> => {
@@ -40,13 +47,19 @@ router.post("/auth/signup", async (req, res): Promise<void> => {
     return;
   }
 
+  // A manager request can arrive via the new `requestedRole` field or the
+  // legacy `role: "MANAGER"` grant — both become a pending request.
+  const wantsManager =
+    parsed.data.requestedRole === "MANAGER" || parsed.data.role === "MANAGER";
+
   const passwordHash = await bcrypt.hash(parsed.data.password, 10);
   const [user] = await db
     .insert(usersTable)
     .values({
       email,
       passwordHash,
-      role: parsed.data.role,
+      role: "OPERATOR",
+      requestedRole: wantsManager ? "MANAGER" : null,
       displayName: parsed.data.displayName ?? null,
     })
     .returning();
@@ -59,6 +72,7 @@ router.post("/auth/signup", async (req, res): Promise<void> => {
       email: user.email,
       displayName: user.displayName,
       role: user.role,
+      requestedRole: user.requestedRole,
     },
   });
 });
@@ -103,6 +117,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
       email: user.email,
       displayName: user.displayName,
       role: user.role,
+      requestedRole: user.requestedRole,
     },
   });
 });
@@ -367,6 +382,7 @@ router.get("/auth/me", authMiddleware, async (req, res): Promise<void> => {
     email: user.email,
     displayName: user.displayName,
     role: user.role,
+    requestedRole: user.requestedRole,
   });
 });
 

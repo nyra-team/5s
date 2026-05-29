@@ -93,7 +93,7 @@ export interface KeyframeResult {
 export const KEYFRAME_LOG_EVENT = "keyframe_extraction";
 
 export interface KeyframeOptions {
-  /** Hard cap on number of frames returned. Default: 6. */
+  /** Hard cap on number of frames returned. Default: 10. */
   maxFrames?: number;
   /**
    * Hard cap on the number of *raw* candidate frames pulled out of ffmpeg
@@ -425,7 +425,7 @@ export async function extractKeyframes(
   videoAbsPath: string,
   opts: KeyframeOptions = {}
 ): Promise<KeyframeResult> {
-  const maxFrames = opts.maxFrames ?? 6;
+  const maxFrames = opts.maxFrames ?? 10;
   const sceneThreshold = opts.sceneThreshold ?? 0.3;
   const hammingThreshold = opts.dedupHammingThreshold ?? 5;
   const fallbackInterval = opts.fallbackIntervalSec ?? 2;

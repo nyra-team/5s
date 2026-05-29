@@ -1,10 +1,11 @@
 import { useAuth } from "@/lib/auth";
 import { Link, useLocation } from "wouter";
-import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List, Inbox, Settings } from "lucide-react";
+import { LogOut, ClipboardList, LayoutDashboard, LayoutGrid, List, Inbox, Settings, Users } from "lucide-react";
 import { useGetEscalationCount, useGetMyNotificationPreferences } from "@workspace/api-client-react";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { QuietHoursStatusBadge } from "@/components/quiet-hours-status-badge";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { useShiftConfig } from "@/lib/shift-config";
 
 /**
@@ -64,6 +65,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/submissions", label: "Submissions", icon: List, badge: 0 },
     { href: "/areas", label: "Areas", icon: LayoutGrid, badge: 0 },
     { href: "/escalations", label: "Escalations", icon: Inbox, badge: openCount },
+    // Admins get a User-management tab in the same strip. ADMIN inherits the
+    // manager nav above, plus this approvals/roster screen.
+    ...(user.role === "ADMIN"
+      ? [{ href: "/users", label: "Users", icon: Users, badge: 0 }]
+      : []),
   ];
 
   return (
@@ -93,6 +99,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <span className="text-[13px] text-muted-foreground hidden sm:inline-block ml-2">
               {user.email}
             </span>
+            {/* Theme toggle — operators only here. Managers reach theme via
+                the settings gear (→ /settings) which operators don't get, so
+                this gives operators a direct light/dark/system/auto control
+                without exposing the rest of the manager settings surface. */}
+            {isOperator && <ThemeToggle />}
             {/* Settings gear — managers only. Hosts the configuration tabs
                 (notifications, thresholds, shifts, AI, theme) that used to
                 live in the top nav. Sits left of Sign-out so the chrome

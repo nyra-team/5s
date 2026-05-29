@@ -78,6 +78,13 @@
       "when": 1778859000000,
       "tag": "0010_score_cache_dhashes",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1778860000000,
+      "tag": "0011_user_requested_role",
+      "breakpoints": true
     }
   ]
 }

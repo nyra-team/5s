@@ -327,10 +327,19 @@ function SignupForm() {
   const onSubmit = async (values: SignupValues) => {
     setPending(true);
     try {
+      // Self-signup can't grant a role — everyone starts as an active
+      // operator. Choosing "Manager" only records a request for an admin to
+      // approve, so we send `requestedRole` (not `role`) to the API.
+      const payload = {
+        email: values.email,
+        password: values.password,
+        displayName: values.displayName,
+        ...(values.role === "MANAGER" ? { requestedRole: "MANAGER" as const } : {}),
+      };
       const res = await fetch(`${API_BASE_URL}/api/auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
+        body: JSON.stringify(payload),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -340,6 +349,12 @@ function SignupForm() {
           description: body?.error ?? `Request failed (${res.status})`,
         });
         return;
+      }
+      if (values.role === "MANAGER") {
+        toast({
+          title: "Account created — manager access pending",
+          description: "You're signed in as an operator. An admin will review your manager request.",
+        });
       }
       login(body.token);
     } catch (err) {
@@ -416,7 +431,7 @@ function SignupForm() {
           name="role"
           render={({ field }) => (
             <FormItem>
-              <FormLabel className="text-[13px] font-medium text-muted-foreground">Role</FormLabel>
+              <FormLabel className="text-[13px] font-medium text-muted-foreground">Access level</FormLabel>
               <FormControl>
                 <Select value={field.value} onValueChange={field.onChange}>
                   <SelectTrigger className="h-12 rounded-xl text-[15px] bg-secondary/60 border-transparent focus-visible:bg-card focus-visible:border-ring">
@@ -424,10 +439,15 @@ function SignupForm() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="OPERATOR">Operator</SelectItem>
-                    <SelectItem value="MANAGER">Manager</SelectItem>
+                    <SelectItem value="MANAGER">Manager (needs admin approval)</SelectItem>
                   </SelectContent>
                 </Select>
               </FormControl>
+              {field.value === "MANAGER" && (
+                <p className="text-[12px] text-muted-foreground mt-1">
+                  You'll start as an operator right away. An admin reviews and approves manager access.
+                </p>
+              )}
               <FormMessage />
             </FormItem>
           )}

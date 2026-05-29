@@ -41,13 +41,23 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   }
 }
 
+/**
+ * Gate a route to a specific role. ADMIN is a global superuser: it satisfies
+ * every `requireRole(...)` check, so admins can reach manager- and
+ * operator-scoped routes without us having to enumerate "MANAGER or ADMIN" at
+ * every call site. MANAGER and OPERATOR keep their exact-match semantics —
+ * adding the ADMIN tier on top doesn't widen what they can do.
+ */
 export function requireRole(role: string) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const user = (req as any).user as JwtPayload | undefined;
-    if (!user || user.role !== role) {
+    if (!user || (user.role !== role && user.role !== "ADMIN")) {
       res.status(403).json({ error: "Forbidden" });
       return;
     }
     next();
   };
 }
+
+/** Convenience guard for routes only an ADMIN may touch (user management). */
+export const requireAdmin = requireRole("ADMIN");

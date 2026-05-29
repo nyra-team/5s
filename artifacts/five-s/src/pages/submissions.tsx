@@ -34,6 +34,7 @@ import {
 import type { KeyframeMetrics } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
 import { MaskedImage, extractRegions } from "@/components/masked-image";
+import { useLightbox, type LightboxFrame } from "@/components/frame-lightbox";
 import { ReasoningBlock } from "@/pages/operator";
 
 const SHIFT_FILTER_OPTIONS = [
@@ -314,6 +315,20 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
   const keyframeMetrics: KeyframeMetrics | null =
     isVideoSub && sub.keyframeMetricsJson ? sub.keyframeMetricsJson : null;
 
+  // Tap-to-enlarge for the sampled keyframe strip. Hand the whole
+  // submission's issue regions to every frame — MaskedImage filters them by
+  // `frameIndex`, so each enlarged frame only lights up its own boxes, exactly
+  // as the thumbnails do. Opening at the tapped index lets managers page
+  // through the rest of the walk-through with the arrows.
+  const openLightbox = useLightbox();
+  const keyframeRegions = extractRegions(sub.aiIssuesJson);
+  const keyframeFrames: LightboxFrame[] = keyframes.map((k, i) => ({
+    src: `/api${k}`,
+    alt: `Frame ${i + 1}`,
+    regions: keyframeRegions,
+    frameIndex: i,
+  }));
+
   return (
     <DialogContent
       className="
@@ -351,17 +366,24 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
               <p className="eyebrow flex items-center gap-1.5 mb-2"><Video className="w-3 h-3" /> Sampled keyframes ({keyframes.length})</p>
               <div className="grid grid-cols-3 gap-2">
                 {keyframes.map((k, i) => (
-                  <div key={i} className="rounded-lg overflow-hidden bg-card shadow-soft">
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => openLightbox(keyframeFrames, i)}
+                    className="rounded-lg overflow-hidden bg-card shadow-soft text-left cursor-zoom-in transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    title={`Frame ${i + 1} — tap to enlarge`}
+                    aria-label={`Enlarge frame ${i + 1}`}
+                  >
                     <MaskedImage
                       src={`/api${k}`}
                       alt={`Frame ${i + 1}`}
-                      regions={extractRegions(sub.aiIssuesJson)}
+                      regions={keyframeRegions}
                       frameIndex={i}
                       className="w-full h-20"
                       imgClassName="w-full h-full object-cover"
                     />
                     <div className="text-[10.5px] text-center py-0.5 text-muted-foreground">Frame {i + 1}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -466,17 +488,24 @@ function SubmissionDetail({ submissionId, autoFocusLabelForm }: { submissionId: 
               <p className="eyebrow flex items-center gap-1.5 mb-2"><Video className="w-3 h-3" /> Sampled keyframes ({keyframes.length})</p>
               <div className="grid grid-cols-3 gap-2">
                 {keyframes.map((k, i) => (
-                  <div key={i} className="rounded-lg overflow-hidden bg-secondary shadow-soft">
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => openLightbox(keyframeFrames, i)}
+                    className="rounded-lg overflow-hidden bg-secondary shadow-soft text-left cursor-zoom-in transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    title={`Frame ${i + 1} — tap to enlarge`}
+                    aria-label={`Enlarge frame ${i + 1}`}
+                  >
                     <MaskedImage
                       src={`/api${k}`}
                       alt={`Frame ${i + 1}`}
-                      regions={extractRegions(sub.aiIssuesJson)}
+                      regions={keyframeRegions}
                       frameIndex={i}
                       className="w-full h-20"
                       imgClassName="w-full h-full object-cover"
                     />
                     <div className="text-[10.5px] text-center py-0.5 text-muted-foreground">Frame {i + 1}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </section>

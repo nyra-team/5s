@@ -57,6 +57,7 @@ export type UserRole = (typeof UserRole)[keyof typeof UserRole];
 export const UserRole = {
   OPERATOR: "OPERATOR",
   MANAGER: "MANAGER",
+  ADMIN: "ADMIN",
 } as const;
 
 export interface User {
@@ -65,6 +66,8 @@ export interface User {
   /** Optional human-readable name. UI falls back to the email's local-part when null. */
   displayName?: string | null;
   role: UserRole;
+  /** Elevation the user has requested but not yet been granted (e.g. "MANAGER"). Null when none pending. */
+  requestedRole?: string | null;
 }
 
 export interface LoginResponse {

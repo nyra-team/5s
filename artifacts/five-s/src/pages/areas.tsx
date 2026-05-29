@@ -35,6 +35,7 @@ import {
 import { EnvironmentBadge, EnvironmentChecklist, ENVIRONMENT_LABELS, ENVIRONMENT_CHECKLIST, type EnvironmentType } from "@/lib/environment";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth";
 import { format } from "date-fns";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -46,6 +47,10 @@ export default function Areas() {
   const createArea = useCreateArea();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  // Adding areas is admin-only (the API enforces it too); managers still
+  // manage existing areas, so we only hide the create affordance for them.
+  const { user } = useAuth();
+  const canAddArea = user?.role === "ADMIN";
   const [newAreaName, setNewAreaName] = useState("");
   const [newEnvType, setNewEnvType] = useState<EnvironmentType>("factory");
   const [showAddForm, setShowAddForm] = useState(false);
@@ -90,7 +95,7 @@ export default function Areas() {
           </h1>
           <p className="text-muted-foreground text-[15px]">Manage factory areas, see what the AI has learned, and assign operators by area or by person.</p>
         </div>
-        {view === "areas" && !showAddForm && (
+        {view === "areas" && !showAddForm && canAddArea && (
           <Button onClick={() => setShowAddForm(true)} className="rounded-full h-11 px-5" data-testid="button-add-area">
             <Plus className="w-4 h-4 mr-1.5" /> Add area
           </Button>
@@ -169,7 +174,11 @@ export default function Areas() {
           {areas?.length === 0 && (
             <div className="text-center py-16 text-muted-foreground">
               <p className="text-[15px] font-medium">No areas configured</p>
-              <p className="text-[13px] mt-1 opacity-80">Click "Add area" to create your first manufacturing area.</p>
+              <p className="text-[13px] mt-1 opacity-80">
+                {canAddArea
+                  ? 'Click "Add area" to create your first manufacturing area.'
+                  : "An admin needs to add manufacturing areas before they show up here."}
+              </p>
             </div>
           )}
         </TabsContent>

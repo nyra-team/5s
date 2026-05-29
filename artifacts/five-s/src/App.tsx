@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
+import { LightboxProvider } from "@/components/frame-lightbox";
 import { Layout } from "@/components/layout";
 import { ProtectedRoute } from "@/components/protected-route";
 import { useScoringCompletionToasts } from "@/hooks/use-scoring-completion-toasts";
@@ -30,6 +31,7 @@ const OperatorThresholds = lazy(() => import("@/pages/operator-thresholds"));
 const AiSettingsPage = lazy(() => import("@/pages/ai-settings"));
 const FacilitySettingsPage = lazy(() => import("@/pages/facility-settings"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
+const AdminUsers = lazy(() => import("@/pages/admin-users"));
 
 // Light-weight loader shown while a lazy route resolves. Sub-100 ms on a
 // warm cache; the spinner is mostly for cold first-loads or slow networks.
@@ -146,6 +148,14 @@ function Router() {
         </ProtectedRoute>
       </Route>
 
+      <Route path="/users">
+        <ProtectedRoute allowedRoles={["ADMIN"]}>
+          <Layout>
+            <AdminUsers />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+
       <Route component={NotFound} />
     </Switch>
     </Suspense>
@@ -159,11 +169,13 @@ function App() {
         <MotionConfig reducedMotion="user">
           <AuthProvider>
             <TooltipProvider>
-              <GlobalEffects />
-              <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-                <Router />
-              </WouterRouter>
-              <Toaster />
+              <LightboxProvider>
+                <GlobalEffects />
+                <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+                  <Router />
+                </WouterRouter>
+                <Toaster />
+              </LightboxProvider>
             </TooltipProvider>
           </AuthProvider>
         </MotionConfig>

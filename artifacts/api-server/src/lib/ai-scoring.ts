@@ -810,7 +810,11 @@ export async function callVLM(opts: CallVlmOptions): Promise<AIScoringResult> {
 
 For each issue you report, attach a "region" object pointing at the smallest visible frame area that proves the issue:
   "region": { "frameIndex": 0-based index of the frame, "box": [x, y, w, h] }
-where x, y, w, h are normalized (0.0–1.0) with x,y being the TOP-LEFT corner of the box and w,h being its width/height. Frames are numbered starting from 0 in the order shown ("FRAME 1" is frameIndex 0, "FRAME 2" is frameIndex 1, etc.). Omit "region" only when the issue is genuinely non-spatial (e.g. "no labels anywhere in area"). Boxes must lie inside the frame; clip if needed. Be tight: cover only the offending object/zone, not the whole frame.`;
+where x, y, w, h are normalized (0.0–1.0) with x,y being the TOP-LEFT corner of the box and w,h being its width/height. Each frame is labelled with its exact "frameIndex=N" above the image — use that number. "FRAME 1" is frameIndex 0, "FRAME 2" is frameIndex 1, etc.
+
+CRITICAL: set frameIndex to the frame the issue is ACTUALLY visible in. Do NOT default every issue to frameIndex 0. Different issues will usually live in different frames; if an issue appears in several frames, cite the single clearest one. Reusing frameIndex 0 for an issue you can only see in a later frame is an error.
+
+Omit "region" only when the issue is genuinely non-spatial (e.g. "no labels anywhere in area"). Boxes must lie inside the frame; clip if needed. Be tight: cover only the offending object/zone, not the whole frame.`;
 
   const baseContent: any[] = [{ type: "text", text: userText }];
 
@@ -818,7 +822,10 @@ where x, y, w, h are normalized (0.0–1.0) with x,y being the TOP-LEFT corner o
     const p = framePaths[i];
     if (!fs.existsSync(p)) continue;
     const b64 = imageToBase64(p);
-    baseContent.push({ type: "text", text: `FRAME ${i + 1}:` });
+    // Label each frame with its 0-based frameIndex directly so the model
+    // doesn't have to convert "FRAME 1" → frameIndex 0 (a conversion it
+    // frequently gets wrong by anchoring every issue to frameIndex 0).
+    baseContent.push({ type: "text", text: `FRAME ${i + 1} (frameIndex=${i}):` });
     baseContent.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}` } });
   }
 
@@ -872,7 +879,7 @@ where x, y, w, h are normalized (0.0–1.0) with x,y being the TOP-LEFT corner o
     {
       "issue": string, "evidence": string, "location": string,
       "pillar": string, "principle": string, "severity": "high|medium|low",
-      "region": { "frameIndex": 0, "box": [x, y, w, h] }   // optional; normalized 0-1, top-left origin
+      "region": { "frameIndex": <index of the frame the issue is visible in>, "box": [x, y, w, h] }   // optional; normalized 0-1, top-left origin
     }
   ],
   "recommendations": [...],
@@ -1365,7 +1372,7 @@ async function scoreSubmissionDefault(input: ScoringInput): Promise<ScoringOutpu
   try {
     if (input.mediaType === "video") {
       try {
-        const kf = await extractKeyframes(fullMediaPath, { maxFrames: 6 });
+        const kf = await extractKeyframes(fullMediaPath, { maxFrames: 10 });
         framePaths = kf.frameAbsPaths;
         frameUrls = kf.frameUrls;
         keyframeMetrics = kf.metrics;

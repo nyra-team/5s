@@ -34,7 +34,9 @@ router.get("/areas", authMiddleware, async (_req, res): Promise<void> => {
   );
 });
 
-router.post("/areas", authMiddleware, requireRole("MANAGER"), async (req, res): Promise<void> => {
+// Creating a new area is admin-only — managers can view, edit, and delete the
+// areas they own but the roster of areas itself is curated by admins.
+router.post("/areas", authMiddleware, requireRole("ADMIN"), async (req, res): Promise<void> => {
   const parsed = CreateAreaBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });

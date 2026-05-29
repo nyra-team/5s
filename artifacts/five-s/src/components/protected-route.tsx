@@ -8,6 +8,20 @@ interface ProtectedRouteProps {
   allowedRoles?: UserRole[];
 }
 
+/**
+ * True if `role` may view a route gated to `allowedRoles`. ADMIN is a
+ * superuser: it inherits everything MANAGER can reach (dashboards, areas,
+ * etc.) on top of its own ADMIN-only routes — mirroring the backend's
+ * requireRole, where ADMIN satisfies every guard. OPERATOR/MANAGER keep exact
+ * matching.
+ */
+function roleAllowed(role: UserRole, allowedRoles?: UserRole[]): boolean {
+  if (!allowedRoles) return true;
+  if (allowedRoles.includes(role)) return true;
+  if (role === "ADMIN" && allowedRoles.includes("MANAGER")) return true;
+  return false;
+}
+
 export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   const { user, isLoading } = useAuth();
   const [, setLocation] = useLocation();
@@ -15,8 +29,10 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
   useEffect(() => {
     if (!isLoading && !user) {
       setLocation("/login");
-    } else if (!isLoading && user && allowedRoles && !allowedRoles.includes(user.role)) {
-      if (user.role === "MANAGER") {
+    } else if (!isLoading && user && !roleAllowed(user.role, allowedRoles)) {
+      // Send privileged users to a screen they can actually see rather than
+      // bouncing them to the operator home they can't use.
+      if (user.role === "MANAGER" || user.role === "ADMIN") {
         setLocation("/dashboard");
       } else {
         setLocation("/");
@@ -32,7 +48,7 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
     );
   }
 
-  if (allowedRoles && !allowedRoles.includes(user.role)) {
+  if (!roleAllowed(user.role, allowedRoles)) {
     return null;
   }
 

@@ -95,6 +95,7 @@ import { useEffectiveOperatorThresholds } from "@/lib/operator-thresholds";
 import { EnvironmentChecklist, normalizeEnvironment } from "@/lib/environment";
 import { useMinuteTick } from "@/hooks/use-minute-tick";
 import { MaskedImage, extractRegions, type IssueRegion } from "@/components/masked-image";
+import { useLightbox, type LightboxFrame } from "@/components/frame-lightbox";
 
 const RECENT_STRIP_PREF_KEY = "operator.recentStrip.collapsed";
 
@@ -338,6 +339,37 @@ export function regionsForRecommendation(
     : allRegions;
 }
 
+/**
+ * Build the full set of frames for a submission to feed the lightbox. For a
+ * video walk-through that's every extracted keyframe (so the operator can page
+ * through the whole clip); for a photo it's the single image. The submission's
+ * issue regions ride along on every frame — MaskedImage filters them per
+ * `frameIndex`, so each frame only lights up its own boxes.
+ */
+function submissionFrames(
+  sub: {
+    keyframesJson?: string[] | null;
+    imageUrl?: string | null;
+    aiIssuesJson?: unknown;
+  },
+  isVideo: boolean,
+  areaName: string,
+): LightboxFrame[] {
+  const regions = extractRegions(sub.aiIssuesJson);
+  if (isVideo && sub.keyframesJson && sub.keyframesJson.length > 0) {
+    return sub.keyframesJson.map((url, i) => ({
+      src: `/api${url}`,
+      alt: `Frame ${i + 1}`,
+      regions,
+      frameIndex: i,
+    }));
+  }
+  if (sub.imageUrl) {
+    return [{ src: `/api${sub.imageUrl}`, alt: areaName, regions, frameIndex: 0 }];
+  }
+  return [];
+}
+
 export function SuggestionRow({
   text,
   index,
@@ -367,6 +399,7 @@ export function SuggestionRow({
   const sev: SuggestionSeverity = aiSeverity ?? inferSuggestionSeverity(text);
   const style = severityStyles(sev);
   const sourceAttr = aiSeverity ? "ai" : "inferred";
+  const openLightbox = useLightbox();
 
   // Build the thumbnail strip: one thumb per unique frameIndex referenced
   // by `regions`. We keep the original frame ordering so the strip reads
@@ -442,24 +475,40 @@ export function SuggestionRow({
           className="flex gap-1.5 ml-6 overflow-x-auto scrollbar-none -mx-0.5 px-0.5"
           data-testid={`suggestion-row-${index}-thumbs`}
         >
-          {thumbs.map((t) => (
-            <div
+          {thumbs.map((t, ti) => (
+            <button
+              type="button"
               key={t.frameIndex}
-              className="relative rounded-md overflow-hidden shrink-0 bg-card shadow-soft"
-              title={`Frame ${t.frameIndex + 1}`}
+              onClick={() =>
+                openLightbox(
+                  thumbs.map(
+                    (tt): LightboxFrame => ({
+                      src: tt.src,
+                      alt: `Frame ${tt.frameIndex + 1}`,
+                      regions: tt.regions,
+                      frameIndex: tt.frameIndex,
+                    }),
+                  ),
+                  ti,
+                )
+              }
+              className="relative rounded-md overflow-hidden shrink-0 bg-card shadow-soft cursor-zoom-in transition-transform hover:scale-[1.03] active:scale-[0.98] motion-reduce:transition-none motion-reduce:hover:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+              title={`Frame ${t.frameIndex + 1} — tap to enlarge`}
+              aria-label={`Enlarge frame ${t.frameIndex + 1}`}
+              data-testid={`suggestion-row-${index}-thumb-${t.frameIndex}`}
             >
               <MaskedImage
                 src={t.src}
                 alt={`Frame ${t.frameIndex + 1}`}
                 regions={t.regions}
                 frameIndex={t.frameIndex}
-                className="w-20 h-14"
+                className="w-20 h-14 pointer-events-none"
                 imgClassName="w-full h-full object-cover"
               />
               <span className="absolute bottom-0 right-0 px-1 text-[9px] font-semibold bg-black/60 text-white rounded-tl">
                 F{t.frameIndex + 1}
               </span>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -1502,6 +1551,7 @@ function RecentDetailDialog({
   const { toast } = useToast();
   const reupload = useReuploadSubmission();
   const reuploadInputRef = useRef<HTMLInputElement>(null);
+  const openLightbox = useLightbox();
 
   // FALLBACK = the upload landed and the row was saved, but the AI couldn't
   // grade it. The pillar reasoning / "Action items" sections are seeded with
@@ -1570,14 +1620,24 @@ function RecentDetailDialog({
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="rounded-xl overflow-hidden bg-secondary/60">
+            <button
+              type="button"
+              onClick={() =>
+                openLightbox(
+                  submissionFrames(data, data.mediaType === "video", data.areaName),
+                )
+              }
+              className="block w-full rounded-xl overflow-hidden bg-secondary/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              aria-label="Enlarge captured frames"
+              data-testid="recent-detail-hero"
+            >
               {data.mediaType === "video" && data.keyframesJson && data.keyframesJson.length > 0 ? (
                 <MaskedImage
                   src={`/api${data.keyframesJson[0]}`}
                   alt={data.areaName}
                   regions={extractRegions(data.aiIssuesJson)}
                   frameIndex={0}
-                  className="w-full h-56"
+                  className="w-full h-56 pointer-events-none"
                 />
               ) : (
                 <MaskedImage
@@ -1585,10 +1645,10 @@ function RecentDetailDialog({
                   alt={data.areaName}
                   regions={extractRegions(data.aiIssuesJson)}
                   frameIndex={0}
-                  className="w-full h-56"
+                  className="w-full h-56 pointer-events-none"
                 />
               )}
-            </div>
+            </button>
             {isFallback ? (
               <>
                 {/* `videoUnreadable` is a stricter sub-case of FALLBACK: ffmpeg
@@ -1789,6 +1849,7 @@ export function AreaCard({
   // ("Last checked X ago", "Next due in X", "Draft saved X ago") stay
   // fresh without waiting for the next data refetch.
   useMinuteTick();
+  const openLightbox = useLightbox();
   const [isCaptureOpen, setIsCaptureOpen] = useState(false);
   const [isReuploadMode, setIsReuploadMode] = useState(false);
   const [media, setMedia] = useState<File | null>(null);
@@ -2278,11 +2339,17 @@ export function AreaCard({
     return (
       <>
         <div className="bg-card rounded-2xl shadow-elevated overflow-hidden flex flex-col transition-transform duration-150 active:scale-[0.99] motion-reduce:active:scale-100 motion-reduce:transition-none">
-          <div className="aspect-[16/10] overflow-hidden bg-muted relative">
+          <button
+            type="button"
+            onClick={() => openLightbox(submissionFrames(sub, isVideoSub, status.areaName))}
+            className="aspect-[16/10] w-full overflow-hidden bg-muted relative cursor-zoom-in group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset"
+            aria-label="Enlarge captured frames"
+            data-testid={`area-card-hero-${status.areaId}`}
+          >
             {isVideoSub && sub.keyframesJson && sub.keyframesJson.length > 0 ? (
-              <img src={`/api${sub.keyframesJson[0]}`} alt={status.areaName} className="w-full h-full object-cover" />
+              <img src={`/api${sub.keyframesJson[0]}`} alt={status.areaName} className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.02] motion-reduce:transition-none motion-reduce:group-hover:scale-100" />
             ) : (
-              <img src={`/api${sub.imageUrl}`} alt={status.areaName} className="w-full h-full object-cover" />
+              <img src={`/api${sub.imageUrl}`} alt={status.areaName} className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.02] motion-reduce:transition-none motion-reduce:group-hover:scale-100" />
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
             {isVideoSub && (
@@ -2305,7 +2372,7 @@ export function AreaCard({
                 {Math.round(scorePercent)}%
               </motion.div>
             </div>
-          </div>
+          </button>
           <div className="px-5 pt-4 pb-2 flex items-center gap-2 text-emerald-600 dark:text-emerald-400 flex-wrap">
             <CheckCircle2 className="w-[18px] h-[18px]" />
             <span className="text-[13px] font-semibold">Completed</span>

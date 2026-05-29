@@ -7,6 +7,13 @@ export const usersTable = pgTable("users", {
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull().default("OPERATOR"),
+  // Elevation a self-signed-up operator has asked for but not yet been
+  // granted. New accounts are always created as OPERATOR (active immediately);
+  // if the person asked for manager access at signup we record "MANAGER" here
+  // and an ADMIN approves it (role := requested_role, then cleared) from the
+  // user-management screen. Null = no pending request. ADMIN can never be
+  // self-requested — only an existing admin grants it directly.
+  requestedRole: text("requested_role"),
   // Optional human-readable name shown in the UI in place of the email's
   // local-part (e.g. on the manager's "Dismissed by …" chip). Nullable so
   // existing rows and self-signups that never set a name keep working —
