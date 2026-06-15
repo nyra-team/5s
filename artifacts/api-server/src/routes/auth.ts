@@ -13,6 +13,7 @@ import {
   updateAuthUserPassword,
   isSupabaseAuthEnabled,
 } from "../lib/supabase-auth";
+import { hasEmailConfig, sendPasswordResetEmail } from "../lib/mailer";
 
 const router: IRouter = Router();
 
@@ -186,37 +187,56 @@ router.post("/auth/forgot-password", async (req, res): Promise<void> => {
     `${req.protocol}://${req.get("host") ?? "localhost"}`;
   const resetUrl = `${appBaseUrl.replace(/\/$/, "")}/reset-password?token=${token}`;
 
-  // Ensure the email exists in auth.users so the frontend can ask
-  // Supabase to send a recovery email (Supabase rejects
-  // resetPasswordForEmail for unknown accounts). The auth.users row
-  // exists purely as a "carrier" for Supabase's hosted email system —
-  // our actual auth still lives in public.users with the JWT we just
-  // generated. Best-effort: if Supabase Auth isn't configured, the
-  // dev-URL fallback below still works.
+  const ttlMinutes = Math.round(RESET_TOKEN_TTL_MS / 60000);
+
+  // Primary transport: email the reset link directly over SMTP. The link
+  // carries our own backend-issued token (?token=…), which the
+  // /reset-password page validates via POST /auth/reset-password — no
+  // Supabase round-trip required. Send failure is non-fatal: we log it and
+  // fall through to the Supabase fallback below so a transient SMTP outage
+  // doesn't leave the user with no path at all.
+  let emailed = false;
+  if (hasEmailConfig()) {
+    try {
+      await sendPasswordResetEmail(email, resetUrl, ttlMinutes);
+      emailed = true;
+    } catch (err) {
+      logger.error({ err, email }, "password reset email send failed (SMTP); will try fallback");
+    }
+  }
+
+  // Fallback transport: only if SMTP is unconfigured or the send failed,
+  // prime Supabase's hosted recovery email so the frontend can trigger it.
+  // Ensures an auth.users "carrier" row exists (Supabase rejects
+  // resetPasswordForEmail for unknown accounts); our real auth still lives
+  // in public.users with the token we just generated.
   let supabaseAuthReady = false;
-  if (isSupabaseAuthEnabled()) {
+  if (!emailed && isSupabaseAuthEnabled()) {
     supabaseAuthReady = await ensureAuthUserExists(email);
   }
 
   // Response shape:
   //   - `devResetUrl`: only in dev, the in-band link the operator clicks
-  //     directly (no email needed). Lets us test the flow without
-  //     configuring SMTP.
-  //   - `viaSupabase: true`: signals the frontend it should call
-  //     `supabase.auth.resetPasswordForEmail()` itself to actually
-  //     trigger Supabase's email send (we can't do that from the
-  //     backend — it requires the anon key from the public auth API).
-  //   - bare `{ ok: true }` (no extras): prod fallback when no transport
-  //     is wired — same response shape as account-not-found so we don't
-  //     leak existence.
+  //     directly. Lets us test the flow without inspecting an inbox.
+  //   - `viaSupabase: true`: SMTP unavailable — signals the frontend to call
+  //     `supabase.auth.resetPasswordForEmail()` itself (the backend can't —
+  //     that needs the anon key from the public auth API).
+  //   - bare `{ ok: true }`: the SMTP email was sent (or no transport is
+  //     wired at all) — same shape as account-not-found so existence can't
+  //     be probed.
   if (isDev()) {
-    logger.info({ email, resetUrl, supabaseAuthReady }, "password reset link generated (dev)");
-    res.status(200).json({ ok: true, devResetUrl: resetUrl, viaSupabase: supabaseAuthReady });
+    logger.info({ email, resetUrl, emailed, supabaseAuthReady }, "password reset link generated (dev)");
+    res.status(200).json({ ok: true, devResetUrl: resetUrl, emailed, viaSupabase: supabaseAuthReady });
+    return;
+  }
+
+  if (emailed) {
+    res.status(200).json({ ok: true });
     return;
   }
 
   if (supabaseAuthReady) {
-    logger.info({ email }, "password reset: auth.users prepped; frontend should call supabase.auth.resetPasswordForEmail");
+    logger.info({ email }, "password reset: SMTP unavailable; frontend should call supabase.auth.resetPasswordForEmail");
     res.status(200).json({ ok: true, viaSupabase: true });
     return;
   }
