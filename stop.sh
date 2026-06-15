@@ -11,7 +11,6 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SENTINEL="5S-tracker"
 
 pid_on_port() {
   ss -tlnp "sport = :$1" 2>/dev/null \
@@ -20,16 +19,19 @@ pid_on_port() {
     | cut -d= -f2
 }
 
-# Verify a PID's working directory contains the sentinel string. Used for
-# the :3000 vite where false positives would be expensive (would kill an
-# unrelated vite dev server). For the api-server on :8090 the port is
+# Verify a PID's working directory is inside THIS repo. Used for the :3000
+# vite where false positives would be expensive (would kill an unrelated
+# vite dev server — the dev box runs vite for other projects on :5173-5179).
+# Anchoring on $REPO_ROOT is exact: both the dev server (cwd artifacts/five-s)
+# and `vite preview` run under the repo, and no sibling project's vite will
+# ever have a cwd under this path. For the api-server on :8090 the port is
 # unambiguous so we don't bother.
 pid_belongs_to_repo() {
   local pid=$1
   [[ -r "/proc/$pid/cwd" ]] || return 1
   local cwd
   cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)
-  [[ "$cwd" == *"$SENTINEL"* ]]
+  [[ "$cwd" == "$REPO_ROOT" || "$cwd" == "$REPO_ROOT"/* ]]
 }
 
 stop_pid() {
@@ -59,7 +61,7 @@ if [[ -n "$WEB_PID" ]]; then
   if pid_belongs_to_repo "$WEB_PID"; then
     stop_pid "$WEB_PID" "vite"
   else
-    echo "[stop] :3000 is held by pid=$WEB_PID but its cwd doesn't include '$SENTINEL' — leaving it alone"
+    echo "[stop] :3000 is held by pid=$WEB_PID but its cwd is outside '$REPO_ROOT' — leaving it alone"
   fi
 else
   echo "[stop] nothing on :3000"

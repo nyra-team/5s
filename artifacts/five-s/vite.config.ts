@@ -92,5 +92,15 @@ export default defineConfig({
     port,
     host: "0.0.0.0",
     allowedHosts: true,
+    // `vite preview` serves the production build (dist/public). It needs the
+    // same `/api` proxy as the dev server so the SPA's relative `/api/*`
+    // calls reach the api-server (otherwise they'd 404 against the static
+    // server). Mirrors `server.proxy` above.
+    proxy: {
+      "/api": {
+        target: apiTarget,
+        changeOrigin: true,
+      },
+    },
   },
 });
